@@ -1,0 +1,201 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      # Throwaway database for the test suite. These credentials guard nothing: the container
+      # lives for this job only. No repository secrets or cloud credentials are used here.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: qcloud
+          POSTGRES_PASSWORD: qcloud
+          POSTGRES_DB: qcloud_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U qcloud -d qcloud_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      QCLOUD_TEST_DATABASE_URL: postgres://qcloud:qcloud@127.0.0.1:55432/qcloud_test
+      # In CI an unreachable database must fail the run, not skip the suites.
+      QCLOUD_REQUIRE_DB: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Format check
+        run: bun run format:check
+
+      - name: Architecture (file size, transport boundary)
+        run: bun run architecture
+
+      - name: Test
+        run: bun test
+
+      # Links, generated documents, the configuration reference, and every `bash test` block of the quickstarts against
+      # the service Postgres. An unreachable database fails it (QCLOUD_REQUIRE_DB above).
+      - name: Documentation
+        run: bun run docs:check
+
+  transports:
+    # The one contract suite and the one scenario set, once per transport (task 41). The emulators come
+    # from the compose file (ElasticMQ needs its config mounted, which a service container cannot do), and a
+    # transport that is down fails the run: `test:contract` and `test:scenarios` set QCLOUD_REQUIRE_*.
+    name: Transport ${{ matrix.transport }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - transport: local
+            profile: ''
+          - transport: gcp-emulator
+            profile: pubsub
+          - transport: aws-emulator
+            profile: sqs
+    env:
+      QCLOUD_TEST_DATABASE_URL: postgres://qcloud:qcloud@127.0.0.1:55432/qcloud_test
+      QCLOUD_REQUIRE_DB: '1'
+      COMPOSE: docker compose -f docker-compose.test.yml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Start Postgres and the emulator
+        run: |
+          if [ -n "${{ matrix.profile }}" ]; then
+            $COMPOSE --profile "${{ matrix.profile }}" up -d --wait
+          else
+            $COMPOSE up -d --wait
+          fi
+
+      - name: Contract suite
+        run: bun run test:contract --transport=${{ matrix.transport }}
+
+      - name: End-to-end scenarios
+        run: bun run test:scenarios --transport=${{ matrix.transport }}
+
+      - name: Service logs
+        if: failure()
+        run: $COMPOSE --profile pubsub --profile sqs logs --no-color --tail 200
+
+      - name: Stop services
+        if: always()
+        run: $COMPOSE --profile pubsub --profile sqs down
+
+  e2e:
+    name: Panel end to end (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # Throwaway database, as in the gate job: the runtime makes its own schema and drops it.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: qcloud
+          POSTGRES_PASSWORD: qcloud
+          POSTGRES_DB: qcloud_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U qcloud -d qcloud_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      QCLOUD_TEST_DATABASE_URL: postgres://qcloud:qcloud@127.0.0.1:55432/qcloud_test
+      QCLOUD_REQUIRE_DB: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Install browser
+        working-directory: packages/panel
+        run: bunx playwright install --with-deps chromium
+
+      - name: Panel end to end
+        run: bun run test:e2e --project=chromium
+
+  terraform:
+    name: Terraform (GCP and AWS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # A missing terraform must fail the run, not skip the check.
+      QCLOUD_REQUIRE_TERRAFORM: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+          terraform_wrapper: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # fmt, init, validate, then a plan of infra/gcp/example against a placeholder token (no credentials,
+      # no project) and the assertions of task 21; the same for infra/aws/example (task 42), whose provider takes
+      # placeholder keys and skips every call (offline_plan); then the two control planes (tasks 36 and 43), the
+      # AWS one checked against the data plane's control_plane_inputs. The scripts drop every GOOGLE_* and AWS_*
+      # variable themselves. Nothing is applied and no cloud is contacted.
+      - name: Format, validate and plan
+        run: bun run check:terraform

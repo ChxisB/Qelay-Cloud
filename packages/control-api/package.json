@@ -1,0 +1,36 @@
+{
+  "name": "@qelay-cloud/control-api",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "qcloud-api": "./src/bin.ts"
+  },
+  "files": [
+    "src",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@qelay-cloud/core": "workspace:*",
+    "@qelay-cloud/store-postgres": "workspace:*",
+    "@qelay-cloud/transports": "workspace:*",
+    "jose": "6.2.12",
+    "qelay-cloud": "workspace:*",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@qelay-cloud/transport-aws": "workspace:*",
+    "@qelay-cloud/transport-gcp": "workspace:*",
+    "@qelay-cloud/transport-local": "workspace:*"
+  }
+}

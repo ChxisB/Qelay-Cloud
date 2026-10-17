@@ -1,0 +1,289 @@
+import { useState } from 'react';
+import { Button } from '@/components/ui/Button';
+import { Field, Input } from '@/components/ui/form';
+import type {
+  QueueGroupSnapshot,
+  QueueOperationsRepository,
+} from '../application/QueueOperationsRepository';
+import { QueueGroupReadback } from './QueueGroupReadback';
+import type { QueueOperationRunner } from './QueueOperationsPanel';
+
+export function QueueGroupConsole({
+  queue,
+  repository,
+  busy,
+  run,
+}: {
+  queue: string;
+  repository: QueueOperationsRepository;
+  busy: string;
+  run: QueueOperationRunner;
+}) {
+  const [groupId, setGroupId] = useState('default');
+  const [maxJobs, setMaxJobs] = useState('');
+  const [maxCount, setMaxCount] = useState('100');
+  const [start, setStart] = useState('0');
+  const [end, setEnd] = useState('24');
+  const [rateMax, setRateMax] = useState('100');
+  const [duration, setDuration] = useState('60000');
+  const [concurrency, setConcurrency] = useState('1');
+  // The readback is tagged with the group it was read for: a stale (or late)
+  // snapshot of another group must never drive this group's Pause/Resume state.
+  const [readback, setReadback] = useState<{
+    groupId: string;
+    snapshot: QueueGroupSnapshot;
+  } | null>(null);
+
+  const id = validGroupId(groupId);
+  const snapshot = readback?.groupId === groupId ? readback.snapshot : null;
+  const setSnapshot = (value: QueueGroupSnapshot) => setReadback({ groupId, snapshot: value });
+  const pageRange = groupPageRange(start, end);
+  const rateMaxValue = positiveInteger(rateMax);
+  const durationValue = positiveInteger(duration);
+  const rateValid = rateMaxValue !== null && durationValue !== null;
+  const concurrencyValue = positiveInteger(concurrency);
+  const read = () => {
+    const threshold = optionalInteger(maxJobs, 0);
+    const count = optionalInteger(maxCount, 1);
+    if (!id || threshold === null || count === null || !pageRange) return;
+    run(
+      'Reading group',
+      () => repository.group(queue, id, threshold, count, pageRange.start, pageRange.end),
+      setSnapshot
+    );
+  };
+  const setRate = () => {
+    const max = positiveInteger(rateMax);
+    const milliseconds = positiveInteger(duration);
+    if (!id || max === null || milliseconds === null) return;
+    run(
+      'Setting group rate limit',
+      async (isCurrent) => {
+        await repository.setGroupRateLimit(queue, id, max, milliseconds);
+        if (!isCurrent()) throw new Error('Queue operations target changed.');
+        return repository.group(queue, id);
+      },
+      setSnapshot,
+      true
+    );
+  };
+  const setConcurrencyLimit = () => {
+    const value = positiveInteger(concurrency);
+    if (!id || value === null) return;
+    run(
+      'Setting group concurrency',
+      async (isCurrent) => {
+        await repository.setGroupConcurrency(queue, id, value);
+        if (!isCurrent()) throw new Error('Queue operations target changed.');
+        return repository.group(queue, id);
+      },
+      setSnapshot,
+      true
+    );
+  };
+  const setPaused = (paused: boolean) => {
+    if (!id) return;
+    run(
+      paused ? 'Pausing group' : 'Resuming group',
+      async (isCurrent) => {
+        if (paused) await repository.pauseGroup(queue, id);
+        else await repository.resumeGroup(queue, id);
+        if (!isCurrent()) throw new Error('Queue operations target changed.');
+        return repository.group(queue, id);
+      },
+      setSnapshot,
+      true
+    );
+  };
+
+  return (
+    <section className="xl:col-span-2" aria-labelledby="queue-groups-title">
+      <h3 id="queue-groups-title" className="mb-3 text-sm font-medium text-fg">
+        Groups
+      </h3>
+      <div className="grid gap-3 sm:grid-cols-4 xl:grid-cols-8">
+        <Field label="Group ID">
+          <Input
+            value={groupId}
+            maxLength={256}
+            onChange={(event) => {
+              setGroupId(event.target.value);
+              setReadback(null);
+            }}
+          />
+        </Field>
+        <Field label="TTL maxJobs" hint="Optional">
+          <Input
+            type="number"
+            min={0}
+            value={maxJobs}
+            onChange={(event) => setMaxJobs(event.target.value)}
+          />
+        </Field>
+        <Field label="Groups maxCount">
+          <Input
+            type="number"
+            min={1}
+            value={maxCount}
+            onChange={(event) => setMaxCount(event.target.value)}
+          />
+        </Field>
+        <Field label="Jobs start">
+          <Input
+            type="number"
+            min={0}
+            max={1_000_000}
+            value={start}
+            onChange={(event) => setStart(event.target.value)}
+          />
+        </Field>
+        <Field label="Jobs end" hint="Inclusive; max 100">
+          <Input
+            type="number"
+            min={0}
+            max={1_000_000}
+            value={end}
+            onChange={(event) => setEnd(event.target.value)}
+          />
+        </Field>
+        <Field label="Rate max">
+          <Input
+            type="number"
+            min={1}
+            value={rateMax}
+            onChange={(event) => setRateMax(event.target.value)}
+          />
+        </Field>
+        <Field label="Duration (ms)">
+          <Input
+            type="number"
+            min={1}
+            value={duration}
+            onChange={(event) => setDuration(event.target.value)}
+          />
+        </Field>
+        <Field label="Concurrency">
+          <Input
+            type="number"
+            min={1}
+            value={concurrency}
+            onChange={(event) => setConcurrency(event.target.value)}
+          />
+        </Field>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="sm" disabled={Boolean(busy) || !id || !pageRange} onClick={read}>
+          Read group
+        </Button>
+        <Button size="sm" disabled={Boolean(busy) || !id || !rateValid} onClick={setRate}>
+          Set rate limit
+        </Button>
+        <Button
+          size="sm"
+          disabled={Boolean(busy) || !id}
+          onClick={() =>
+            run(
+              'Clearing group rate limit',
+              async (isCurrent) => {
+                await repository.removeGroupRateLimit(queue, id!);
+                if (!isCurrent()) throw new Error('Queue operations target changed.');
+                return repository.group(queue, id!);
+              },
+              setSnapshot,
+              true
+            )
+          }
+        >
+          Clear rate limit
+        </Button>
+        <Button
+          size="sm"
+          disabled={Boolean(busy) || !id || concurrencyValue === null}
+          onClick={setConcurrencyLimit}
+        >
+          Set concurrency
+        </Button>
+        <Button
+          size="sm"
+          disabled={Boolean(busy) || !id || snapshot?.paused === true}
+          onClick={() => setPaused(true)}
+        >
+          Pause group
+        </Button>
+        <Button
+          size="sm"
+          disabled={Boolean(busy) || !id || snapshot?.paused === false}
+          onClick={() => setPaused(false)}
+        >
+          Resume group
+        </Button>
+        <Button
+          size="sm"
+          disabled={Boolean(busy) || !id}
+          onClick={() =>
+            run(
+              'Clearing group concurrency',
+              async (isCurrent) => {
+                await repository.removeGroupConcurrency(queue, id!);
+                if (!isCurrent()) throw new Error('Queue operations target changed.');
+                return repository.group(queue, id!);
+              },
+              setSnapshot,
+              true
+            )
+          }
+        >
+          Clear concurrency
+        </Button>
+      </div>
+      {!id && (
+        <p role="alert" className="mt-3 text-xs text-danger">
+          Group ID must contain 1–256 characters and no NUL.
+        </p>
+      )}
+      {!pageRange && (
+        <p role="alert" className="mt-3 text-xs text-danger">
+          Group job range must be an inclusive page of 1–100 jobs with whole indexes from 0 to
+          1000000.
+        </p>
+      )}
+      {!rateValid && (
+        <p role="alert" className="mt-3 text-xs text-danger">
+          Rate max and duration must be positive whole numbers.
+        </p>
+      )}
+      {concurrencyValue === null && (
+        <p role="alert" className="mt-3 text-xs text-danger">
+          Concurrency must be a positive whole number.
+        </p>
+      )}
+      {snapshot && <QueueGroupReadback snapshot={snapshot} />}
+    </section>
+  );
+}
+
+const validGroupId = (value: string) =>
+  value.length >= 1 && value.length <= 256 && !value.includes('\0') ? value : null;
+const positiveInteger = (value: string) => {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+};
+const optionalInteger = (value: string, minimum: number) => {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum ? parsed : null;
+};
+const groupPageRange = (start: string, end: string) => {
+  const first = optionalInteger(start, 0);
+  const last = optionalInteger(end, 0);
+  return first !== null &&
+    first !== undefined &&
+    first <= 1_000_000 &&
+    last !== null &&
+    last !== undefined &&
+    last <= 1_000_000 &&
+    last >= first &&
+    last - first < 100
+    ? { start: first, end: last }
+    : null;
+};

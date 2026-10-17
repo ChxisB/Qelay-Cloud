@@ -1,0 +1,286 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { act, createElement, type ReactElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
+import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
+import { AddJob } from '../src/pages/control/AddJob';
+import { BulkAddJobs } from '../src/pages/control/BulkAddJobs';
+import { CronManager } from '../src/pages/control/CronManager';
+import { ensureDom, settle } from './domSetup';
+
+const realFetch = globalThis.fetch;
+const realConfirm = window.confirm;
+const mounted = new Set<() => void>();
+
+const json = (body: unknown, status = 200) =>
+  Response.json(body, { status, headers: { 'content-type': 'application/json' } });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function render(element: ReactElement) {
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  let active = true;
+  const unmount = () => {
+    if (!active) return;
+    active = false;
+    act(() => root.unmount());
+    host.remove();
+    mounted.delete(unmount);
+  };
+  mounted.add(unmount);
+  act(() => root.render(element));
+  return { host, unmount };
+}
+
+function setValue(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  act(() => {
+    const prototype =
+      element.tagName === 'TEXTAREA'
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(element, value);
+    // happy-dom does not currently drive React 19's change plugin for every
+    // controlled input type. Invoke the exact onChange prop installed on this
+    // DOM node after setting its native value; the browser event path itself is
+    // covered in the broader form/a11y suites.
+    const propsKey = Object.getOwnPropertyNames(element).find((key) =>
+      key.startsWith('__reactProps$')
+    );
+    const props = propsKey
+      ? ((element as unknown as Record<string, unknown>)[propsKey] as {
+          onChange?: (event: { target: typeof element; currentTarget: typeof element }) => void;
+        })
+      : null;
+    if (!props?.onChange) throw new Error('Controlled input has no React onChange handler');
+    props.onChange({ target: element, currentTarget: element });
+  });
+}
+
+function dispatchTwice(element: Element, event: 'click' | 'submit') {
+  act(() => {
+    element.dispatchEvent(
+      event === 'click'
+        ? new window.MouseEvent('click', { bubbles: true })
+        : new window.Event('submit', { bubbles: true, cancelable: true })
+    );
+    element.dispatchEvent(
+      event === 'click'
+        ? new window.MouseEvent('click', { bubbles: true })
+        : new window.Event('submit', { bubbles: true, cancelable: true })
+    );
+  });
+}
+
+const queuePage = {
+  ok: true,
+  queues: [],
+  total: 0,
+  limit: 500,
+  offset: 0,
+  timestamp: 1,
+};
+
+beforeEach(() => {
+  ensureDom();
+  window.confirm = () => true;
+  useConnectionStore.setState({
+    baseUrl: 'http://server-a.test',
+    token: 'token-a',
+    agentToken: '',
+    refreshMs: 3_000,
+  });
+});
+
+afterEach(() => {
+  for (const unmount of [...mounted]) unmount();
+  globalThis.fetch = realFetch;
+  window.confirm = realConfirm;
+  useConnectionStore.setState({
+    baseUrl: '/api',
+    token: '',
+    agentToken: '',
+    refreshMs: 3_000,
+  });
+});
+
+describe('non-idempotent form mutexes', () => {
+  test('AddJob submits once in the same tick and reports acceptance, not creation', async () => {
+    const pending = deferred<Response>();
+    let posts = 0;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/dashboard/queues')) return Promise.resolve(json(queuePage));
+      if (init?.method === 'POST' && url.endsWith('/queues/orders/jobs')) {
+        posts += 1;
+        return pending.promise;
+      }
+      return Promise.resolve(json({ ok: false, error: 'unexpected request' }, 500));
+    }) as typeof fetch;
+
+    const { host } = render(createElement(MemoryRouter, null, createElement(AddJob)));
+    await settle(3);
+    const queueInput = host.querySelector<HTMLInputElement>('[name="target-queue"]')!;
+    setValue(queueInput, 'orders');
+    dispatchTwice(host.querySelector('form')!, 'submit');
+    if (posts !== 1) throw new Error(`AddJob did not post: ${host.textContent}`);
+    expect(posts).toBe(1);
+
+    await act(async () => {
+      pending.resolve(json({ ok: true, id: 'existing-id' }));
+      await settle(5);
+    });
+    expect(host.textContent).toContain('Accepted job ID existing-id');
+    expect(host.textContent).not.toContain('Created job');
+  });
+
+  test('AddJob preserves 2.9.3 group priority and max-size through the bulk wire', async () => {
+    let posted: Record<string, unknown> | null = null;
+    let singlePosts = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/dashboard/queues')) return json(queuePage);
+      if (init?.method === 'POST' && url.endsWith('/queues/orders/jobs/bulk')) {
+        posted = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return json({ ok: true, ids: ['group-job'] });
+      }
+      if (init?.method === 'POST' && url.endsWith('/queues/orders/jobs')) singlePosts += 1;
+      return json({ ok: false, error: 'unexpected request' }, 500);
+    }) as typeof fetch;
+
+    const { host } = render(createElement(MemoryRouter, null, createElement(AddJob)));
+    await settle(3);
+    setValue(host.querySelector<HTMLInputElement>('[name="target-queue"]')!, 'orders');
+    setValue(host.querySelector<HTMLInputElement>('[name="group-id"]')!, 'tenant-a');
+    setValue(host.querySelector<HTMLInputElement>('[name="group-max-size"]')!, '2');
+    setValue(host.querySelector<HTMLInputElement>('[name="priority"]')!, '1');
+    act(() =>
+      host
+        .querySelector('form')!
+        .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }))
+    );
+    await settle(8);
+
+    expect(singlePosts).toBe(0);
+    expect(posted).toEqual({
+      jobs: [
+        {
+          name: 'default',
+          data: { hello: 'world' },
+          priority: 1,
+          groupId: 'tenant-a',
+          groupMaxSize: 2,
+        },
+      ],
+    });
+    expect(host.textContent).toContain('Accepted 1 job submission');
+  });
+
+  test('BulkAddJobs submits once and treats repeated ids as deduplication ambiguity', async () => {
+    const pending = deferred<Response>();
+    let posts = 0;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/dashboard/queues')) return Promise.resolve(json(queuePage));
+      if (init?.method === 'POST' && url.endsWith('/queues/orders/jobs/bulk')) {
+        posts += 1;
+        return pending.promise;
+      }
+      return Promise.resolve(json({ ok: false, error: 'unexpected request' }, 500));
+    }) as typeof fetch;
+
+    const { host } = render(createElement(BulkAddJobs));
+    await settle(3);
+    setValue(host.querySelector<HTMLInputElement>('[name="bulk-target-queue"]')!, 'orders');
+    setValue(
+      host.querySelector<HTMLTextAreaElement>('[name="jobs-json"]')!,
+      '[{"data":{"n":1}},{"data":{"n":2}}]'
+    );
+    await settle(2);
+    const button = [...host.querySelectorAll('button')].find((node) =>
+      (node.textContent ?? '').includes('Import 2')
+    );
+    if (!button) throw new Error(`Bulk import button missing: ${host.textContent}`);
+    dispatchTwice(button, 'click');
+    expect(posts).toBe(1);
+
+    await act(async () => {
+      pending.resolve(json({ ok: true, ids: ['same-id', 'same-id'] }));
+      await settle(5);
+    });
+    expect(host.textContent).toContain('Accepted 2 job submissions in orders');
+    expect(host.textContent).toContain('1 distinct job ID');
+    expect(host.textContent).not.toContain('Created 1');
+  });
+
+  test('Cron create and delete each acquire a synchronous mutex', async () => {
+    const createPending = deferred<Response>();
+    const deletePending = deferred<Response>();
+    let creates = 0;
+    let deletes = 0;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'POST' && url.endsWith('/crons')) {
+        creates += 1;
+        return createPending.promise;
+      }
+      if (init?.method === 'DELETE' && url.endsWith('/crons/existing')) {
+        deletes += 1;
+        return deletePending.promise;
+      }
+      if (url.endsWith('/crons')) {
+        return Promise.resolve(
+          json({
+            ok: true,
+            crons: [
+              {
+                name: 'existing',
+                queue: 'orders',
+                schedule: '0 8 * * *',
+                nextRun: Date.now() + 60_000,
+                executions: 0,
+              },
+            ],
+          })
+        );
+      }
+      return Promise.resolve(json({ ok: false, error: 'unexpected request' }, 500));
+    }) as typeof fetch;
+
+    const { host } = render(createElement(CronManager));
+    await settle(5);
+    setValue(host.querySelector<HTMLInputElement>('[name="cron-name"]')!, 'daily');
+    setValue(host.querySelector<HTMLInputElement>('[name="cron-queue"]')!, 'orders');
+    setValue(host.querySelector<HTMLInputElement>('[name="cron-expression"]')!, '0 9 * * *');
+    dispatchTwice(host.querySelector('form')!, 'submit');
+    // Creation first performs a fail-closed GET /crons preflight. The lease is
+    // acquired before that await, so both same-tick submits still yield one POST.
+    expect(creates).toBe(0);
+    await settle(5);
+    if (creates !== 1) throw new Error(`Cron did not post after preflight: ${host.textContent}`);
+    expect(creates).toBe(1);
+
+    await act(async () => {
+      createPending.resolve(
+        json({ ok: true, cron: { name: 'daily', queue: 'orders', schedule: '0 9 * * *' } })
+      );
+      await settle(5);
+    });
+    expect(host.textContent).toContain('Cron upsert acknowledged');
+
+    const remove = host.querySelector<HTMLButtonElement>('[aria-label="Delete cron existing"]')!;
+    dispatchTwice(remove, 'click');
+    expect(deletes).toBe(1);
+    await act(async () => {
+      deletePending.resolve(json({ ok: true }));
+      await settle(3);
+    });
+  });
+});

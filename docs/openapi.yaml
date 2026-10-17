@@ -1,0 +1,3734 @@
+openapi: 3.0.3
+info:
+  title: Qelay-Cloud Control API
+  version: 0.1.0
+  description: |
+    The HTTP API behind the Qelay control panel. This file documents only what exists: the core routes of task 30
+    (health, capabilities), the jobs and queues routes of task 31 (dashboard, stats, queues, jobs, and the 501
+    surfaces) and the operator routes of task 32 (DLQ, stall and DLQ settings, crons, workers, the event stream,
+    metrics, the audit log and the server-status calls), the flow routes of task 51, the webhook routes of task 52 and the
+    workflow routes of task 62. A test (`packages/control-api/test/openapi.test.ts`) fails when a route is served
+    and not documented here, or documented and not served.
+
+    Routes that change something need the `operator` role; a `viewer` token gets 403. A job's `version` is what an
+    action sends back as `expectedVersion`: a stale one is 409 `version_conflict` and nothing changes. Payloads
+    (`data`, `returnvalue`) are JSON with tagged values for what JSON has no type for: `{"$type":"bigint","value":"1"}`,
+    `date`, `bytes`, `map`, `set`, `number` (`-0`, `NaN`, `Infinity`) and `undefined`. A payload over the response's
+    budget is `{"$type":"truncated","kind":"string","length":...,"preview":"...","maxBytes":...}` and the job says
+    `truncated: true`.
+
+    Every operation that changes something is written to the operator audit log (`GET /audit`) before it runs, and
+    closed with its outcome after: a refusal (role, rate limit, validation, a 4xx from the handler) is a row too, and a
+    row never holds a body or a payload. When the log cannot be written the operation does not run (503
+    `audit_unavailable`).
+
+    Authentication is a bearer token in the `Authorization` header and nothing else: no cookies are read or set, so
+    CSRF does not apply. `GET /health` is the only route without a token. Timestamps are epoch milliseconds.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default listen address (`QCLOUD_API_HOST`, `QCLOUD_API_PORT`).
+security:
+  - bearer: []
+tags:
+  - name: health
+  - name: capabilities
+  - name: dashboard
+  - name: queues
+  - name: jobs
+  - name: dlq
+  - name: flows
+  - name: workflows
+  - name: cron
+  - name: webhooks
+  - name: workers
+  - name: events
+  - name: metrics
+  - name: audit
+  - name: transport
+  - name: deployment
+  - name: unsupported
+    description: Qelay features with no meaning on a managed queue. Always 501 `not_supported`.
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness
+      description: Answers from memory and touches nothing. Says nothing about the database or the jobs.
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: The process is up.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+  /health/ready:
+    get:
+      tags: [health]
+      summary: Readiness
+      description: |
+        Ready when the database answers a trivial query within 3 s and has every migration this build needs
+        (`checks.schema.state` is not `behind`). The transport and the tick are reported and do not make the service
+        unready. Carries no job data.
+      operationId: getReady
+      responses:
+        '200':
+          description: Ready.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '503':
+          description: The database is unavailable, or lacks a migration this build needs. The body has `storage.error`, which the panel reads.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /ready:
+    get:
+      tags: [health]
+      summary: Readiness (alias)
+      description: Same as `GET /health/ready`. It is the path the panel's diagnostics page probes today.
+      operationId: getReadyAlias
+      responses:
+        '200':
+          description: Ready.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '503':
+          description: The database is unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /capabilities:
+    get:
+      tags: [capabilities]
+      summary: What this deployment runs and what the panel should show
+      description: |
+        The transport and the feature flags are declared by the process that built the service, so the answer is the
+        configuration. `hidden` lists panel pages that only make sense for a Qelay TCP server or a local control agent.
+      operationId: getCapabilities
+      responses:
+        '200':
+          description: The declared transport and features.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Capabilities' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /dashboard:
+    get:
+      tags: [dashboard]
+      summary: Overview for the panel's home page
+      description: |
+        Totals of the namespace, read as one aggregate over the jobs' state indexes and kept for
+        `jobs.options.summaryCacheMs` (default 2 s) per instance; `X-Qelay-Cache: bypass` reads fresh. Throughput rates
+        are deltas of the journal between two reads (0 on the first). Answers 501 `not_implemented` when the process was
+        built without a store.
+      operationId: getDashboard
+      responses:
+        '200':
+          description: The overview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Overview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+  /stats:
+    get:
+      tags: [dashboard]
+      summary: Counts and rates
+      description: The same reads as `GET /dashboard`, with the extra counts and memory fields the statistics page shows.
+      operationId: getStats
+      responses:
+        '200':
+          description: The statistics.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+  /queues/summary:
+    get:
+      tags: [queues]
+      summary: Every queue with its counts
+      description: 'A bare array, as the panel reads it. At most 1,000 queues come back; when more follow, the `X-Next-Cursor` response header holds the value to pass as `after`. The plain call is kept for `jobs.options.summaryCacheMs` (default 2 s) per instance; `X-Qelay-Cache: bypass` reads fresh.'
+      operationId: getQueuesSummary
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000 } }
+        - { name: after, in: query, description: The `X-Next-Cursor` of the previous page., schema: { type: string, maxLength: 256 } }
+      responses:
+        '200':
+          description: 'The queues, by name.'
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/QueueSummaryRow' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/counts:
+    get:
+      tags: [queues]
+      summary: Jobs of a queue by state
+      description: '`paused` is the number of jobs a pause holds back (`waiting` plus `prioritized` while the queue is paused, else 0).'
+      operationId: getQueueCounts
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: The counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueCountsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/paused:
+    get:
+      tags: [queues]
+      summary: Whether a queue is paused
+      operationId: getQueuePaused
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: The flag.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueuePausedResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /dashboard/queues:
+    get:
+      tags: [dashboard]
+      summary: Queues as the dashboard lists them
+      description: '`waiting` excludes prioritized jobs and `dlq` is the number of failed jobs. `offset` beyond 10,000 is 400 `offset_too_large`.'
+      operationId: getDashboardQueues
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, maximum: 10000 } }
+      responses:
+        '200':
+          description: A page of queues.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardQueues' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /dashboard/queues/{queue}:
+    get:
+      tags: [dashboard]
+      summary: One queue as the queue page reads it
+      description: 'Counts, priority counts, a preview of the failed jobs and, unless `includeJobs=false`, up to 20 jobs of each list.'
+      operationId: getDashboardQueue
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+        - { name: includeJobs, in: query, schema: { type: string, enum: ['true', 'false'], default: 'true' } }
+      responses:
+        '200':
+          description: The queue page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/jobs/list:
+    get:
+      tags: [jobs]
+      summary: Jobs of a queue, one page
+      description: 'Offset paging up to 100,000 and a keyset `cursor` beyond it. A page is 50 jobs by default and 500 at most. A payload over the list budget is replaced by a `truncated` marker and the job says `truncated: true`; the job page has it whole up to its own, larger, budget.'
+      operationId: listQueueJobs
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+        - { name: states, in: query, description: Comma separated job states; default every state., schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: cursor, in: query, description: The `next` of the previous page; replaces `offset`., schema: { type: string } }
+      responses:
+        '200':
+          description: A page of jobs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobsList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/jobs:
+    post:
+      tags: [jobs]
+      summary: Add one job
+      description: 'The job goes through the same producer path as the SDK, so its bell is rung after the commit. Options this service has no equivalent for (`ttl`, `repeat`, `dependsOn`, `tags`, `durable: false`, numeric retention) are 400 `unsupported_option` naming the option. A `jobId` that is already live answers that job with `duplicated: true`.'
+      operationId: addJob
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddJobBody' }
+      responses:
+        '200':
+          description: 'The job, new or the live duplicate.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AddedJob' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/jobs/bulk:
+    post:
+      tags: [jobs]
+      summary: Add up to 10,000 jobs
+      description: 'All or none: one invalid job refuses the call and `details.index` says which. The ids come back in the order of the request.'
+      operationId: addJobsBulk
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BulkAddBody' }
+      responses:
+        '200':
+          description: 'The ids, and the indexes that were duplicates.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AddedJobs' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/pause:
+    post:
+      tags: [queues]
+      summary: Pause a queue
+      operationId: pauseQueue
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: Paused.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/resume:
+    post:
+      tags: [queues]
+      summary: Resume a queue
+      operationId: resumeQueue
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: Resumed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/drain:
+    post:
+      tags: [queues]
+      summary: Delete the jobs that have not run
+      description: 'Needs `confirm` equal to the queue name and the operator role. Active and finished jobs stay. A call is bounded by a time budget: `done: false` means more is left and the call can be repeated.'
+      operationId: drainQueue
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfirmBody' }
+      responses:
+        '200':
+          description: How many were removed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionCount' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/clean:
+    post:
+      tags: [queues]
+      summary: Delete finished jobs older than a grace period
+      description: 'Needs `confirm` equal to the queue name and the operator role. `done: false` means more is left.'
+      operationId: cleanQueue
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CleanBody' }
+      responses:
+        '200':
+          description: How many were removed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionCount' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/obliterate:
+    post:
+      tags: [queues]
+      summary: Delete a queue and all its jobs
+      description: 'Needs `confirm` equal to the queue name and the operator role. A queue with an active job is 409 `job_state` unless `force` is true.'
+      operationId: obliterateQueue
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObliterateBody' }
+      responses:
+        '200':
+          description: How many were removed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionCount' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/promote-jobs:
+    post:
+      tags: [queues]
+      summary: Make delayed jobs due now
+      operationId: promoteQueueJobs
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoteJobsBody' }
+      responses:
+        '200':
+          description: How many were promoted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionCount' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/rate-limit:
+    put:
+      tags: [queues]
+      summary: Limit how many jobs start per window
+      operationId: setQueueRateLimit
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RateLimitBody' }
+      responses:
+        '200':
+          description: Set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [queues]
+      summary: Lift the rate limit
+      operationId: clearQueueRateLimit
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: Lifted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/concurrency:
+    put:
+      tags: [queues]
+      summary: Limit active jobs of a queue
+      operationId: setQueueConcurrency
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConcurrencyBody' }
+      responses:
+        '200':
+          description: Set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [queues]
+      summary: Lift the concurrency limit
+      operationId: clearQueueConcurrency
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: Lifted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}:
+    get:
+      tags: [jobs]
+      summary: One job in full
+      description: 'A job''s id is its custom id when it has one. `version` is what an action sends back as `expectedVersion`.'
+      operationId: getJob
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [jobs]
+      summary: Remove a job
+      description: 'Not an active job (409 `job_state`) and not a flow parent (409 `flow_protected`). `expectedVersion` fences the removal to the job as it was read.'
+      operationId: removeJob
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+        - { $ref: '#/components/parameters/ExpectedVersionQuery' }
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/custom/{customId}:
+    get:
+      tags: [jobs]
+      summary: One job by its custom id
+      description: 'The same lookup as `GET /jobs/{id}`: a custom id is the job''s id.'
+      operationId: getJobByCustomId
+      parameters:
+        - { $ref: '#/components/parameters/CustomId' }
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/result:
+    get:
+      tags: [jobs]
+      summary: The return value of a job
+      operationId: getJobResult
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '200':
+          description: 'The result, or null.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/logs:
+    get:
+      tags: [jobs]
+      summary: Log lines of a job
+      operationId: getJobLogs
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '200':
+          description: The lines.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobLogs' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [jobs]
+      summary: Add a log line
+      operationId: addJobLog
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LogBody' }
+      responses:
+        '200':
+          description: Added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [jobs]
+      summary: Delete the log lines of a job
+      operationId: clearJobLogs
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '200':
+          description: How many were removed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogsCleared' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/children:
+    get:
+      tags: [jobs]
+      summary: Children of a flow job
+      description: 'What the completed children of a flow parent returned, by `"<queue>:<id>"`; an empty map for a job that is not a parent. Each value is cut to the list payload budget (`truncated: true` says one was).'
+      operationId: getJobChildren
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '200':
+          description: The children.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobChildren' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/data:
+    put:
+      tags: [jobs]
+      summary: Replace the data of a job
+      description: 'A finished job is 409 `job_state`. `expectedVersion` fences the change; a stale one is 409 `version_conflict` and nothing changes.'
+      operationId: updateJobData
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DataBody' }
+      responses:
+        '200':
+          description: Changed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/priority:
+    put:
+      tags: [jobs]
+      summary: Change the priority of a waiting job
+      description: 'An active or finished job is 409 `job_state`. `lifo` is accepted only when it equals the job''s own; otherwise 501 `not_supported` (`lifo`).'
+      operationId: updateJobPriority
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PriorityBody' }
+      responses:
+        '200':
+          description: Changed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/delay:
+    put:
+      tags: [jobs]
+      summary: Change when a delayed job is due
+      description: 'Only a delayed job: any other is 409 `job_state`. A delay of 0 makes it due and rings it.'
+      operationId: updateJobDelay
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DelayBody' }
+      responses:
+        '200':
+          description: Changed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/promote:
+    post:
+      tags: [jobs]
+      summary: Make a delayed job due now
+      operationId: promoteJob
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FenceBody' }
+      responses:
+        '200':
+          description: Promoted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/progress:
+    post:
+      tags: [jobs]
+      summary: Report the progress of an active job
+      description: 'A number is kept clamped to 0..100; any other value is stored as its text. Does not change `version`.'
+      operationId: updateJobProgress
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProgressBody' }
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/fail:
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: fail'
+      description: 'Always 501 `not_supported` with `details.capability` `job-fail`. A failure is a worker''s report: it has no endpoint here.'
+      operationId: jobFail
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/discard:
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: discard'
+      description: 'Always 501 `not_supported` with `details.capability` `job-discard`. Remove the job with `DELETE /jobs/{id}`.'
+      operationId: jobDiscard
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/move-to-wait:
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: move-to-wait'
+      description: 'Always 501 `not_supported` with `details.capability` `job-retry`. A failed job is retried through the DLQ routes (task 32).'
+      operationId: jobMoveToWait
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /jobs/{id}/move-to-delayed:
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: move-to-delayed'
+      description: 'Always 501 `not_supported` with `details.capability` `job-move-to-delayed`. Change a delayed job with `PUT /jobs/{id}/delay`.'
+      operationId: jobMoveToDelayed
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/dlq:
+    get:
+      tags: [dlq]
+      summary: The failed jobs of a queue, with how each one failed
+      description: |
+        The dead-letter queue is the queue's failed jobs, oldest failure first. Each entry carries the job (its payload cut
+        to the list budget, as in the job lists), when it entered, why, and its attempts. `expiresAt` is set when the queue
+        has a `maxAge`. Paged by `limit` and `offset`; an `offset` past the walk limit is 400 `offset_too_large`, and
+        `GET /queues/{queue}/jobs/list?states=failed&cursor=` walks further.
+      operationId: listDlq
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+        - { name: limit, in: query, description: 'Default and maximum are the job lists'' page sizes.', schema: { type: integer, minimum: 1 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: One page of entries.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DlqList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/dlq/stats:
+    get:
+      tags: [dlq]
+      summary: Counts of the dead-letter queue
+      description: '`pendingRetry` and `expired` are always 0: nothing is retried by the service, and an entry past its `maxAge` is deleted by the tick.'
+      operationId: getDlqStats
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: The counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DlqStatsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/dlq/purge:
+    post:
+      tags: [dlq]
+      summary: Delete every entry of the dead-letter queue
+      description: 'Needs `confirm` equal to the queue name and the operator role. Works in bounded transactions under a time budget: `done: false` means more is left and the call can be repeated. Jobs that other jobs wait on are not deleted by the store''s own rules.'
+      operationId: purgeDlq
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfirmBody' }
+      responses:
+        '200':
+          description: How many were removed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionCount' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/dlq/retry:
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: retry every DLQ entry'
+      description: 'Always 501 `not_supported` with `details.capability` `dlq-retry`. Listed under `unsupported` by `GET /capabilities`, so a client leaves the control out.'
+      operationId: retryDlq
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/dlq/{jobId}/retry:
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: retry one DLQ entry'
+      description: 'Always 501 `not_supported` with `details.capability` `dlq-retry`.'
+      operationId: retryDlqJob
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+        - { name: jobId, in: path, required: true, schema: { type: string, minLength: 1 } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/stall-config:
+    get:
+      tags: [queues]
+      summary: Stall settings of a queue
+      description: 'Only `maxStalls` is a setting. `enabled` is always true, `stallInterval` is the store''s lease length and `gracePeriod` is 0.'
+      operationId: getStallConfig
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StallConfigResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [queues]
+      summary: Set how often a job may stall before it fails
+      description: 'The body is the settings bare or wrapped as `{ "config": { ... } }`. A field that is sent back as read is accepted; one that differs from the fixed value is 400 `unsupported_option` naming it.'
+      operationId: setStallConfig
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StallConfigBody' }
+      responses:
+        '200':
+          description: The settings as stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StallConfigResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/dlq-config:
+    get:
+      tags: [dlq]
+      summary: Retention and auto-retry settings of the dead-letter queue
+      description: '`autoRetry` is always false. `autoRetryInterval` and `maxAutoRetries` are fixed values, shown so the panel''s form renders.'
+      operationId: getDlqConfig
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DlqConfigResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [dlq]
+      summary: Save the dead-letter queue's settings
+      description: 'Retention and auto-retry are closed. A value equal to the current one is accepted (the form sends the whole object); a different `maxAge` or `maxEntries` is 501 `dlq-retention`, `autoRetry: true` is 501 `dlq-auto-retry`, and a different `autoRetryInterval` or `maxAutoRetries` is 400 `unsupported_option`.'
+      operationId: setDlqConfig
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DlqConfigBody' }
+      responses:
+        '200':
+          description: The settings as stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DlqConfigResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /flows:
+    get:
+      tags: [flows]
+      summary: The flows of the namespace, newest first
+      description: |
+        A flow is a job with children, and its root is the job that has no parent. Each row counts the jobs of the flow that
+        are stored now by state (a child removed when it completed is not counted) and says how many failed children hold a
+        waiting parent back (`blocked`): a flow with `blocked > 0` is stuck until an operator acts. Paged by `limit` and
+        `offset`; an `offset` past the walk limit is 400 `offset_too_large`.
+      operationId: listFlows
+      parameters:
+        - { name: limit, in: query, description: 'Default and maximum are the job lists'' page sizes.', schema: { type: integer, minimum: 1 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: One page of flows.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /flows/{id}:
+    get:
+      tags: [flows]
+      summary: One flow as a list of jobs
+      description: |
+        The jobs of the flow whose root is `id`, top level first (every job comes after its parent), at most `limit` of them
+        (default 1,000, at most 5,000). `truncated: true` says the flow has more jobs than are listed and `total` says how
+        many; the failures listed are those of the jobs listed. Every job carries its `version`, which `POST
+        /flows/{id}/actions` sends back. A child that completed and was removed is listed with `removed: true` and a null
+        `version`. The read is not one snapshot: the versions are what fence an action to what was read.
+      operationId: getFlow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The id of the root job of the flow.
+          schema: { type: string, minLength: 1 }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 5000 } }
+      responses:
+        '200':
+          description: The flow.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /flows/{id}/actions:
+    post:
+      tags: [flows]
+      summary: Retry the failed children of a flow, promote a stuck parent, or remove the flow
+      description: |
+        Needs the operator role, and is audited with the action named. The body names every job the action touches and the
+        `version` it read it at, so the action is applied to the picture the caller saw or not at all, in one transaction:
+        there is never a half-applied action.
+
+        - `retry-failed`: each job named is a failed child that holds a waiting parent back; it is queued again with its
+          attempts reset. A parent that never ran (it failed because a child failed under the `fail` policy) is not retried
+          this way, because its children are not done.
+        - `promote`: `parent` is a waiting parent; the failed children that hold it back are let go (their failures are
+          kept for its processor as ignored) and it is queued. Refused while any other child has not finished.
+        - `remove`: deletes every job of the flow, its edges, kept failures and logs. Needs `confirm` equal to the root id.
+          Refused while a job of the flow is running.
+
+        409 codes: `version_conflict` (a job moved since it was read), `flow_changed` (the flow has jobs the request did
+        not name, or the request names jobs that do not apply or left the flow), `flow_active`, `flow_not_retryable`,
+        `flow_not_stuck` (`details.reason`: `not_waiting`, `nothing_blocks`, `children_unfinished`) and `flow_too_large`.
+        Nothing was changed in any of them.
+      operationId: actOnFlow
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The id of the root job of the flow.
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlowActionBody' }
+      responses:
+        '200':
+          description: The action was applied; `changes` lists each job it changed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowActionResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /workflows:
+    get:
+      tags: [workflows]
+      summary: The workflows of the namespace, and one page of their runs
+      description: |
+        Needs `features.workflows` in `GET /capabilities`. Per workflow: its runs counted by state, the definitions workers
+        announced (`served` says a worker announced it within `QCLOUD_API_WORKFLOW_SERVED_MS`, default 120 s; `liveRuns` how
+        many live runs are bound to its hash), and a warning for every definition hash that live runs are bound to while no
+        worker serves it (`unserved_definition`): those runs cannot move until a worker with that definition runs or an
+        operator cancels them. The runs are newest first, optionally of one workflow (`name`) or state, paged by `limit`
+        and `offset`; `total` is how many match. The Control API holds no workflow definition: this is what the workers
+        recorded.
+      operationId: listWorkflows
+      parameters:
+        - { name: name, in: query, description: A workflow name., schema: { type: string, minLength: 1, maxLength: 512 } }
+        - { name: state, in: query, schema: { $ref: '#/components/schemas/WorkflowState' } }
+        - { name: limit, in: query, description: 'Default and maximum are the job lists'' page sizes.', schema: { type: integer, minimum: 1 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: The workflows and one page of runs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /workflows/executions/{id}:
+    get:
+      tags: [workflows]
+      summary: One workflow run
+      description: |
+        The run's state, its input, the signals it received, the result of the step that finished last (`output`), the
+        definition it is bound to (null when no worker announced that hash, or it aged out), its child runs, how far its
+        rollback got, `actions` (what `POST .../actions` would accept now) and a page of its steps. Every payload is cut to
+        the job inspector's byte budgets (`input` and `output` to the detail budget, a step's result to the list budget,
+        `GET .../steps?name=` to the detail budget) and what is cut is a `truncated` marker, with a `...Truncated` flag next
+        to it. A step that fans out (a `forEach`, a `map`, a loop body) is one entry with `fanOut` counts; its iterations are
+        read with `GET .../steps?iterationOf=`. **The panel shows these payloads to every `viewer`.** The run's `version` is
+        what an action sends back as `expectedVersion`.
+      operationId: getWorkflowExecution
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: limit, in: query, description: Steps per page., schema: { type: integer, minimum: 1 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: The run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /workflows/executions/{id}/steps:
+    get:
+      tags: [workflows]
+      summary: The steps of a run, a page at a time
+      description: |
+        Without a selector: the steps in the order they started, a fan-out once. `iterationOf` lists the iterations of one
+        fan-out step in order (a 10,000-item `forEach` is read 100 at a time); `name` reads that one record with the detail
+        payload budget; `status` filters either. A selector that matches nothing is an empty page.
+      operationId: listWorkflowSteps
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: iterationOf, in: query, schema: { type: string, minLength: 1, maxLength: 512 } }
+        - { name: name, in: query, schema: { type: string, minLength: 1, maxLength: 512 } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, running, completed, failed] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: One page of steps.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowStepsEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /workflows/executions/{id}/actions:
+    post:
+      tags: [workflows]
+      summary: Signal, cancel, recover or unblock the rollback of a run
+      description: |
+        Needs the operator role, and is audited with the action and the run named, never an event, a payload or a reason.
+        The Control API runs no engine, so an action is a claim and a publish: a version-checked write of the run, then a
+        `wf:step` job on the engine queue for a worker that holds the definition to execute. `expectedVersion` is the
+        run's `version` as read: a run that moved since is 409 `version_conflict` and nothing changes, and a finished run is
+        409 `execution_terminal`.
+
+        - `signal`: records `event` (with `payload`, in the tagged form of the job routes) for the run's `waitFor`. A parked
+          run is resumed; a running one keeps it for its gate. An event is kept once: a second one is 409 `signal_rejected`.
+          For `signal`, `retry-compensation` and `abandon-compensation` the store or the worker claims inside the call,
+          so `expectedVersion` is a read check and not a lock held through the publish.
+        - `cancel`: stops a `running` or `waiting` run and rolls it back; `reason` is kept as its failure reason. Needs
+          `confirm` equal to the run id. A node that is executing finishes its handler, then its next write loses against
+          the claim and it stands down.
+        - `recover`: publishes the run's node (or its owed rollback) again, for a run whose job or worker was lost; also a
+          parked run whose awaited signal is recorded but whose resume was never published. Only once the run has shown no
+          progress for `QCLOUD_WORKFLOW_IDLE_MS` (the tick's own setting): earlier it is 409 `workflow_progressing`.
+        - `retry-compensation`: for a run in `compensation-stuck`, retries the failed reversal.
+        - `abandon-compensation`: for a run in `compensation-stuck`, records the remaining reversals as skipped and settles
+          the run. Needs `confirm` equal to the run id.
+
+        409 codes: `version_conflict`, `execution_terminal`, `execution_state` (the action does not apply to the run's
+        state; `details.allowed` lists what does), `workflow_progressing`, `signal_rejected`. 503 `publish_failed`
+        says whether the run had already been changed (`details.claimed`).
+      operationId: actOnWorkflowExecution
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, minLength: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowActionBody' }
+      responses:
+        '200':
+          description: The action was applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowActionResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/PublishFailed' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /crons:
+    get:
+      tags: [cron]
+      summary: Every cron
+      description: At most 1000 are returned; `total` is how many exist and `truncated` says when there were more. A cron's `data` is not returned.
+      operationId: listCrons
+      responses:
+        '200':
+          description: The crons.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CronList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [cron]
+      summary: Create or replace a cron
+      description: |
+        One upsert by `name`: 201 for a new cron, 200 for a replaced one. Exactly one of `schedule` (a cron expression)
+        and `repeatEvery` (milliseconds) is required. An unchanged timing keeps `nextRun` and `executions`; changed timing
+        is computed from now. A missed occurrence is never made up, so `skipMissedOnRestart: false` is 400
+        `unsupported_option`. A bad expression, an unknown time zone or an unknown template key is 400
+        `unsupported_option` with `details.option`. Nothing is written on a 400.
+      operationId: createCron
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CronBody' }
+      responses:
+        '200':
+          description: An existing cron was replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CronEnvelope' }
+        '201':
+          description: A new cron.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CronEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /crons/{name}:
+    get:
+      tags: [cron]
+      summary: One cron
+      operationId: getCron
+      parameters:
+        - { $ref: '#/components/parameters/CronName' }
+      responses:
+        '200':
+          description: The cron.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CronEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [cron]
+      summary: Create or replace the cron of this name
+      description: 'Same as `POST /crons`, with the name from the path; a `name` in the body that differs is 400. Always 200.'
+      operationId: replaceCron
+      parameters:
+        - { $ref: '#/components/parameters/CronName' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CronBody' }
+      responses:
+        '200':
+          description: The cron as stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CronEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [cron]
+      summary: Delete a cron
+      description: Stops the next occurrences. Jobs it already created stay.
+      operationId: deleteCron
+      parameters:
+        - { $ref: '#/components/parameters/CronName' }
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /workers:
+    get:
+      tags: [workers]
+      summary: The worker registry
+      description: Every registered worker, `stale` ones included until the tick deletes them.
+      operationId: listWorkers
+      responses:
+        '200':
+          description: The workers and their counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkersList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /workers/{id}:
+    delete:
+      tags: [workers]
+      summary: Remove a worker from the registry
+      description: 'Removes the row. A worker that is still running registers again on its next heartbeat, and a job it holds is recovered by its lease. A worker that is already gone is not an error: `removed` is false.'
+      operationId: removeWorker
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, minLength: 1 } }
+      responses:
+        '200':
+          description: Whether a row was removed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkerRemoved' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks:
+    get:
+      tags: [webhooks]
+      summary: The registered webhooks
+      description: |
+        Every webhook with its counters. A `viewer` sees each address as its origin only (`urlRedacted: true`), because a
+        receiver's token is often in the path or query; an `operator` sees the whole URL. The signing secret is in no
+        response: `signed` says whether there is one.
+      operationId: listWebhooks
+      responses:
+        '200':
+          description: The webhooks and their counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhooksList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [webhooks]
+      summary: Register a webhook
+      description: |
+        Registers an address for the events listed, optionally for one queue. The address is checked against the
+        deployment's policy (https only, and no loopback, private, link-local or metadata destination, unless the
+        deployment runs in development mode): a refusal is 400 with the rule as `error.code` (`invalid_url`,
+        `scheme_not_allowed`, `credentials_not_allowed`, `host_not_allowed`). The name is not resolved here; the sender
+        checks what it resolves to at every attempt. A `secret` (16 to 256 characters) signs each delivery
+        (`docs/webhooks.md`) and needs the deployment's `QCLOUD_WEBHOOK_KEY` (409 `webhook_key_missing` without it);
+        it is never returned. At most 100 webhooks (409 `webhook_limit`).
+      operationId: createWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookCreate' }
+      responses:
+        '201':
+          description: Registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/{id}:
+    get:
+      tags: [webhooks]
+      summary: One webhook
+      operationId: getWebhook
+      parameters:
+        - { $ref: '#/components/parameters/WebhookId' }
+      responses:
+        '200':
+          description: The webhook.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [webhooks]
+      summary: Delete a webhook
+      description: Its deliveries and their history go with it, and nothing more is sent for it.
+      operationId: deleteWebhook
+      parameters:
+        - { $ref: '#/components/parameters/WebhookId' }
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/{id}/enabled:
+    put:
+      tags: [webhooks]
+      summary: Enable or disable a webhook
+      description: A disabled webhook gets no new deliveries. Those already queued are still sent.
+      operationId: setWebhookEnabled
+      parameters:
+        - { $ref: '#/components/parameters/WebhookId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: The webhook after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/{id}/test:
+    post:
+      tags: [webhooks]
+      summary: Queue a test event
+      description: |
+        Queues one `webhook.test` delivery, whatever events the webhook listens for. It is sent by the next maintenance
+        tick with the webhook's usual retry policy, so the answer is 202 with a `pending` delivery; read
+        `GET /webhooks/{id}/deliveries` for what became of it. A disabled webhook is 409 `webhook_disabled`.
+      operationId: testWebhook
+      parameters:
+        - { $ref: '#/components/parameters/WebhookId' }
+      responses:
+        '202':
+          description: The queued delivery.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/{id}/deliveries:
+    get:
+      tags: [webhooks]
+      summary: The delivery history of a webhook
+      description: |
+        Newest first, `limit` (default 50, at most 200) at a time. `next` is the `before` of the following page and null on
+        the last one. A delivery carries its status, the attempts made and, per attempt, the receiver's status and a short
+        reason in words. It never carries the address, the secret, a response body or a resolved IP. Finished
+        deliveries are kept 7 days.
+      operationId: listWebhookDeliveries
+      parameters:
+        - { $ref: '#/components/parameters/WebhookId' }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: before, in: query, description: 'The `next` of the previous page.', schema: { type: string, pattern: '^[1-9][0-9]{0,15}$' } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, sending, delivered, failed] } }
+      responses:
+        '200':
+          description: One page of the history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveriesPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/{id}/deliveries/{deliveryId}/retry:
+    post:
+      tags: [webhooks]
+      summary: Retry a failed delivery
+      description: |
+        Puts a `failed` delivery back in the queue with a fresh attempt budget; the attempt numbers keep rising and its
+        history is kept. Any other status is 409 `delivery_not_failed` with `details.status`.
+      operationId: retryWebhookDelivery
+      parameters:
+        - { $ref: '#/components/parameters/WebhookId' }
+        - { name: deliveryId, in: path, required: true, schema: { type: string, pattern: '^[1-9][0-9]{0,15}$' } }
+      responses:
+        '200':
+          description: The delivery, pending again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /events:
+    get:
+      tags: [events]
+      summary: Live job events of every queue (server-sent events)
+      description: |
+        A `text/event-stream`. The first frame is `retry: 2000`, an `id` and `{"connected":true}`. Each later frame has the
+        journal position after it as `id` (`<commitSeq>.<eventId>`) and an `event` of `job:<type>` or `queue:obliterated`;
+        its `data` is `{queue, jobId, type, state, timestamp, error?, progress?, removed?}`, a hint that something changed
+        and not the job. A client that reconnects sends the last `id` as `Last-Event-ID` (the header wins over `?cursor=`)
+        and continues without a gap or a repeat. `event: resync` says the journal lost events the client had not read:
+        reload the lists. `: keep-alive` comments are sent every `heartbeatMs` (default 15 s). The stream ends cleanly
+        after `maxLifetimeMs` (default 10 min) with a closing comment, and a client that stops reading is disconnected
+        after `slowClientMs` (default 30 s); both reconnect from the last `id`. A position that is not one this service
+        issued is 400 `invalid_cursor`, and one past the end of the journal is 409 `cursor_ahead` (drop it and start
+        live). Without a position the stream starts at the journal's end. At most `maxPerPrincipal` (10) streams per
+        principal (429) and `maxStreams` (200) per instance (503) are open.
+      operationId: streamEvents
+      parameters:
+        - { name: queue, in: query, schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { $ref: '#/components/parameters/EventTypes' }
+        - { $ref: '#/components/parameters/EventCursor' }
+        - { name: Last-Event-ID, in: header, description: 'The `id` of the last frame received.', schema: { type: string } }
+      responses:
+        '200':
+          description: The stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyStreams' }
+        '503': { $ref: '#/components/responses/TooManyStreams' }
+  /events/queues/{queue}:
+    get:
+      tags: [events]
+      summary: Live job events of one queue (server-sent events)
+      description: 'The same stream as `GET /events`, for the queue in the path; a `queue` in the query that differs is 400.'
+      operationId: streamQueueEvents
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+        - { $ref: '#/components/parameters/EventTypes' }
+        - { $ref: '#/components/parameters/EventCursor' }
+        - { name: Last-Event-ID, in: header, description: 'The `id` of the last frame received.', schema: { type: string } }
+      responses:
+        '200':
+          description: The stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyStreams' }
+        '503': { $ref: '#/components/responses/TooManyStreams' }
+  /metrics:
+    get:
+      tags: [metrics]
+      summary: The four counters of the namespace
+      description: Read as the dashboard is, from the same per-instance cache (`X-Qelay-Cache` applies).
+      operationId: getMetrics
+      responses:
+        '200':
+          description: The counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricsTotals' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /metrics/queues/{queue}:
+    get:
+      tags: [metrics]
+      summary: Jobs completed and failed over time
+      description: |
+        One point per `resolution` minutes (1, 5, 15 or 60), oldest first, dense (zero where nothing finished); each
+        `timestamp` is the start of its window. `minutes` back from `until` (default now), at most the configured range
+        (400 `range_too_large`). Latency and wait-time percentiles are not recorded and are not in the response.
+      operationId: getQueueMetrics
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+        - { name: minutes, in: query, description: Default 60., schema: { type: integer, minimum: 1 } }
+        - { name: resolution, in: query, description: Default 1., schema: { type: integer, enum: [1, 5, 15, 60] } }
+        - { name: until, in: query, description: Epoch milliseconds; default now., schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: The series.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricsSeries' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /audit:
+    get:
+      tags: [audit]
+      summary: The operator audit log
+      description: |
+        Newest first; `next` goes back as `before` for the next page. An entry says who did what to which identifiers and
+        how it ended (`pending`, `success`, `rejected` with a `reason`, `failed`), and never a body or a payload. Needs the
+        `operator` role even though it only reads. Answers 501 `not_implemented` when no audit log is configured.
+      operationId: listAudit
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: before, in: query, description: 'The previous page''s `next`.', schema: { type: integer, minimum: 1 } }
+        - { name: subject, in: query, schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: action, in: query, description: 'For example `POST /queues/:queue/pause`.', schema: { type: string, minLength: 1, maxLength: 160 } }
+        - { name: outcome, in: query, schema: { type: string, enum: [pending, success, rejected, failed] } }
+      responses:
+        '200':
+          description: One page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditLog' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /transport:
+    get:
+      tags: [transport]
+      summary: The doorbell path, queue by queue
+      description: |
+        Per queue: the broker's numbers (bells waiting, the age of the oldest undelivered bell, the dead-letter queue's depth
+        and the age of its oldest bell, each with a `freshness`) next to the store's (`claimable` jobs, jobs with no bell
+        `notRung`, jobs due a re-ring). `null` is "unknown": the number could not be read, which is not zero. A cloud
+        broker's metrics lag by minutes, so read a number with its `freshness.ageMs`, never as real time. Queues with pending
+        jobs come first, and at most `deployment.maxQueues` (default 50) are covered (`truncated`). The plain call is kept
+        for `deployment.cacheMs` (default 2 s) per instance; `X-Qelay-Cache: bypass` reads fresh. Answers 501
+        `not_implemented` when this build has no store.
+      operationId: getTransport
+      responses:
+        '200':
+          description: The transport and its queues.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /transport/dead-letters:
+    get:
+      tags: [transport]
+      summary: A sample of the poison doorbells of one queue
+      description: |
+        Bells the broker gave up delivering, read without being consumed and given back at once: a sample of at most `limit`,
+        not a count and not an order. Needs the `operator` role, because it pulls from the broker and names job ids. It never
+        redrives anything: redrive is a manual runbook step. `available: false` says why in `reason` (`not_supported` when
+        the transport has no dead-letter queue, `unreachable` when the broker could not be read), and then `items` is empty
+        and means nothing.
+      operationId: getTransportDeadLetters
+      parameters:
+        - { name: queue, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: The sample.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeadLettersResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /deployment:
+    get:
+      tags: [deployment]
+      summary: What is deployed, and whether it is keeping up
+      description: |
+        The build, the schema the database records against the one this build expects, the database's round trip, the
+        connections in use against the cap (and the declared fleet's need, from `budget()`), the last successful tick and its
+        age against the `late` and `stale` thresholds, the workers, the doorbells nobody has rung, and the `warnings` an
+        operator should read first. A reading that could not be taken is `null`, shown as unknown, never as zero. It holds no
+        secret: no connection string, token or credential, only whether the development token is enabled. It is read-only and
+        works when the database is down (then `database.state` is `failed`). Kept for `deployment.cacheMs` per instance;
+        `X-Qelay-Cache: bypass` reads fresh.
+      operationId: getDeployment
+      responses:
+        '200':
+          description: The deployment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /ping:
+    get:
+      tags: [health]
+      summary: The panel's server page ping
+      description: A constant answer from memory. It says nothing about the database; `GET /health/ready` does.
+      operationId: getPing
+      responses:
+        '200':
+          description: Pong.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ping' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /storage:
+    get:
+      tags: [health]
+      summary: The panel's storage status
+      description: 'Constant: a full disk is the database provider''s to report, and `GET /health/ready` fails first.'
+      operationId: getStorage
+      responses:
+        '200':
+          description: The status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /gc:
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: run the garbage collector'
+      description: 'Always 501 `not_supported` with `details.capability` `serverControl`.'
+      operationId: runGc
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /heapstats:
+    get:
+      tags: [unsupported]
+      summary: 'Not supported: heap statistics'
+      description: 'Always 501 `not_supported` with `details.capability` `serverControl`.'
+      operationId: getHeapStats
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /prometheus:
+    get:
+      tags: [unsupported]
+      summary: 'Not supported: Prometheus scrape of a Qelay server'
+      description: 'Always 501 `not_supported` with `details.capability` `serverControl`.'
+      operationId: getPrometheus
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /server/{path}:
+    get:
+      tags: [unsupported]
+      summary: 'Not supported: GET server'
+      description: 'Every path under `/server/` answers 501 `not_supported` with `details.capability` `serverControl`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: getServer
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: POST server'
+      description: 'Every path under `/server/` answers 501 `not_supported` with `details.capability` `serverControl`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: postServer
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [unsupported]
+      summary: 'Not supported: PUT server'
+      description: 'Every path under `/server/` answers 501 `not_supported` with `details.capability` `serverControl`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: putServer
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [unsupported]
+      summary: 'Not supported: DELETE server'
+      description: 'Every path under `/server/` answers 501 `not_supported` with `details.capability` `serverControl`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: deleteServer
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /database/{path}:
+    get:
+      tags: [unsupported]
+      summary: 'Not supported: GET database'
+      description: 'Every path under `/database/` answers 501 `not_supported` with `details.capability` `sqliteDatabase`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: getDatabase
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: POST database'
+      description: 'Every path under `/database/` answers 501 `not_supported` with `details.capability` `sqliteDatabase`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: postDatabase
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [unsupported]
+      summary: 'Not supported: PUT database'
+      description: 'Every path under `/database/` answers 501 `not_supported` with `details.capability` `sqliteDatabase`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: putDatabase
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [unsupported]
+      summary: 'Not supported: DELETE database'
+      description: 'Every path under `/database/` answers 501 `not_supported` with `details.capability` `sqliteDatabase`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: deleteDatabase
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /backup/{path}:
+    get:
+      tags: [unsupported]
+      summary: 'Not supported: GET backup'
+      description: 'Every path under `/backup/` answers 501 `not_supported` with `details.capability` `s3Backup`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: getBackup
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: POST backup'
+      description: 'Every path under `/backup/` answers 501 `not_supported` with `details.capability` `s3Backup`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: postBackup
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [unsupported]
+      summary: 'Not supported: PUT backup'
+      description: 'Every path under `/backup/` answers 501 `not_supported` with `details.capability` `s3Backup`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: putBackup
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [unsupported]
+      summary: 'Not supported: DELETE backup'
+      description: 'Every path under `/backup/` answers 501 `not_supported` with `details.capability` `s3Backup`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: deleteBackup
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /fleet/{path}:
+    get:
+      tags: [unsupported]
+      summary: 'Not supported: GET fleet'
+      description: 'Every path under `/fleet/` answers 501 `not_supported` with `details.capability` `fleet`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: getFleet
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: POST fleet'
+      description: 'Every path under `/fleet/` answers 501 `not_supported` with `details.capability` `fleet`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: postFleet
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [unsupported]
+      summary: 'Not supported: PUT fleet'
+      description: 'Every path under `/fleet/` answers 501 `not_supported` with `details.capability` `fleet`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: putFleet
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [unsupported]
+      summary: 'Not supported: DELETE fleet'
+      description: 'Every path under `/fleet/` answers 501 `not_supported` with `details.capability` `fleet`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: deleteFleet
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queue-operations/{path}:
+    get:
+      tags: [unsupported]
+      summary: 'Not supported: GET queue-operations'
+      description: 'Every path under `/queue-operations/` answers 501 `not_supported` with `details.capability` `queueOperations`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: getQueueOperations
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [unsupported]
+      summary: 'Not supported: POST queue-operations'
+      description: 'Every path under `/queue-operations/` answers 501 `not_supported` with `details.capability` `queueOperations`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: postQueueOperations
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [unsupported]
+      summary: 'Not supported: PUT queue-operations'
+      description: 'Every path under `/queue-operations/` answers 501 `not_supported` with `details.capability` `queueOperations`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: putQueueOperations
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [unsupported]
+      summary: 'Not supported: DELETE queue-operations'
+      description: 'Every path under `/queue-operations/` answers 501 `not_supported` with `details.capability` `queueOperations`: the feature belongs to a Qelay TCP server or a local control agent and is listed under `hidden` by `GET /capabilities`.'
+      operationId: deleteQueueOperations
+      parameters:
+        - { name: path, in: path, required: true, description: The rest of the path., schema: { type: string } }
+      responses:
+        '501': { $ref: '#/components/responses/NotSupported' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        An OIDC access token (RS256 or ES256) whose issuer, audience and signature the service checks against the issuer's
+        JWKS, or, outside production only, the static development token. A role claim (default `roles`) grants `viewer`
+        (reads) or `operator` (reads and every route that changes something).
+  headers:
+    RequestId:
+      description: Echo of a valid `X-Request-Id`, or one the service made.
+      schema: { type: string }
+  parameters:
+    Queue:
+      name: queue
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 256 }
+    JobId:
+      name: id
+      in: path
+      required: true
+      description: The job's id, which is its custom id when it has one.
+      schema: { type: string, minLength: 1 }
+    CustomId:
+      name: customId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+    ExpectedVersionQuery:
+      name: expectedVersion
+      in: query
+      description: The `version` the caller read. A job that has moved on is 409 `version_conflict`.
+      schema: { type: integer, minimum: 0 }
+    WebhookId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+    CronName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 256 }
+    EventTypes:
+      name: types
+      in: query
+      description: 'Comma-separated event types to keep, with or without the `job:` prefix: pushed, duplicated, updated, promoted, priority, removed, pulled, released, completed, retried, stalled, failed, progress, obliterated. Default every type.'
+      schema: { type: string, maxLength: 512 }
+    EventCursor:
+      name: cursor
+      in: query
+      description: 'A frame''s `id` to continue after. `Last-Event-ID` wins when both are sent.'
+      schema: { type: string, maxLength: 64, pattern: '^[0-9]{1,16}\.[0-9]{1,16}$' }
+  responses:
+    Unauthorized:
+      description: No token, or one that is not valid (expired, wrong issuer or audience, unknown key, bad signature). The reason is in the service log and never in the response.
+      headers:
+        WWW-Authenticate: { schema: { type: string, example: Bearer } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: The token is valid and grants no role, or grants `viewer` on a route that changes something, or the Origin is not allowed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: The principal's rate limit on mutating routes is spent (per instance).
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 1 } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyStreams:
+      description: 'The principal has `maxPerPrincipal` event streams open (429), or the instance has `maxStreams` open (503). Close one or retry later.'
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 1 } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Timeout:
+      description: The request ran out of time. For a route that changes something, the outcome is unknown.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BadRequest:
+      description: The body or a query parameter is not valid (`invalid_request`, `unsupported_option`, `confirmation_required`, `offset_too_large`, or for a webhook address `invalid_url`, `scheme_not_allowed`, `credentials_not_allowed`, `host_not_allowed`). `details` says which.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No such job (`job_not_found`), cron (`cron_not_found`), flow (`flow_not_found`), webhook (`webhook_not_found`), webhook delivery (`delivery_not_found`) or workflow run (`execution_not_found`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: |
+        The job or queue is not in a state the action applies to (`job_state`, `flow_protected`), or the job has moved on
+        since the `expectedVersion` the caller read (`version_conflict`), or an event position is past the end of the
+        journal (`cursor_ahead`), or a flow action does not apply (`flow_changed`, `flow_active`, `flow_not_retryable`,
+        `flow_not_stuck`, `flow_too_large`), or a webhook action does not apply (`webhook_limit`, `webhook_key_missing`, `webhook_disabled`, `delivery_not_failed`), or a workflow action does not apply (`version_conflict`, `execution_terminal`,
+        `execution_state`, `workflow_progressing`, `signal_rejected`). Nothing was changed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PublishFailed:
+      description: '`publish_failed`: the job that makes a worker act on a workflow run could not be published. `details.claimed` says whether the run had already been changed; the tick publishes again once the run has been quiet for the idle window.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PayloadTooLarge:
+      description: The body is over the size limit of the route (`payload_too_large`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotSupported:
+      description: '`not_supported`: Qelay did it and this service does not. `details.capability` says which.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotImplemented:
+      description: '`not_implemented`: this deployment does not serve it yet. `not_supported`: Qelay did it and this service does not (`details.capability` says which).'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      description: Every error response has exactly this body, and never a stack trace, SQL or a payload.
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              pattern: '^[a-z][a-z0-9_]*$'
+              description: Stable. Callers branch on it, never on `message`.
+              example: unauthorized
+            message: { type: string }
+            details: { type: object, additionalProperties: true }
+    Health:
+      type: object
+      required: [ok, status, version, uptime]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        status: { type: string, enum: [healthy] }
+        version: { type: string, example: 1.0.0 }
+        uptime: { type: integer, minimum: 0, description: Whole seconds since the process built its routes. }
+    CheckState:
+      type: string
+      enum: [ok, failed, unknown]
+    Readiness:
+      type: object
+      required: [ok, ready, checks, timestamp]
+      properties:
+        ok: { type: boolean }
+        ready: { type: boolean }
+        checks:
+          type: object
+          required: [database, transport, tick]
+          properties:
+            database:
+              type: object
+              required: [state]
+              properties: { state: { $ref: '#/components/schemas/CheckState' } }
+            transport:
+              type: object
+              required: [state]
+              properties: { state: { $ref: '#/components/schemas/CheckState' } }
+            schema:
+              type: object
+              description: >-
+                Present when the process can read the schema version. `behind` (the database lacks a
+                migration this build needs) makes the service not ready; `ahead` and `unknown` do not.
+              required: [state, current, expected]
+              properties:
+                state: { type: string, enum: [current, behind, ahead, unknown] }
+                current: { type: integer, nullable: true, description: The highest migration the database records. }
+                expected: { type: integer, description: The highest migration this build knows. }
+            tick:
+              type: object
+              required: [lastSuccessAt, lastFailureAt, ageMs]
+              properties:
+                lastSuccessAt: { type: integer, nullable: true }
+                lastFailureAt: { type: integer, nullable: true }
+                ageMs: { type: integer, nullable: true, description: On the database's clock. }
+        timestamp: { type: integer }
+        storage:
+          type: object
+          description: Only when not ready. The panel's probe reads `storage.error`.
+          required: [diskFull, error, since]
+          properties:
+            diskFull: { type: boolean, enum: [false] }
+            error: { type: string, nullable: true }
+            since: { type: integer, nullable: true }
+    Capabilities:
+      type: object
+      required: [transport, features, hidden, unsupported, principal, version]
+      properties:
+        transport:
+          type: object
+          required: [name, maxDeliverDelayMs, ordering]
+          properties:
+            name: { type: string, example: gcp-pubsub }
+            maxDeliverDelayMs: { type: integer, minimum: 0, nullable: true, description: Null means unbounded. }
+            ordering: { type: string, enum: [none, best-effort] }
+        features:
+          type: object
+          required: [dlq, cron, flows, workflows, webhooks]
+          properties:
+            dlq: { type: boolean }
+            cron: { type: boolean }
+            flows: { type: boolean }
+            workflows: { type: boolean }
+            webhooks: { type: boolean }
+        hidden:
+          type: array
+          items: { type: string }
+          example: [serverControl, sqliteDatabase, s3Backup, fleet, queueOperations]
+        unsupported:
+          type: array
+          description: Actions that exist in the panel and are closed here (they answer 501 `not_supported`), so a client leaves the control out.
+          items: { type: string }
+          example: [job-fail, job-discard, job-retry, job-move-to-delayed, dlq-retry, dlq-auto-retry, dlq-retention]
+        principal:
+          type: object
+          description: The caller's own role. A client leaves out the controls the role may not use; the server still decides.
+          required: [role]
+          properties:
+            role: { type: string, enum: [viewer, operator] }
+        version: { type: string }
+    OverviewStats:
+      type: object
+      required: [waiting, active, delayed, completed, dlq, totalPushed, totalPulled, totalCompleted, totalFailed, uptime]
+      properties:
+        waiting: { type: number }
+        active: { type: number }
+        delayed: { type: number }
+        completed: { type: number }
+        dlq: { type: number }
+        totalPushed: { type: number }
+        totalPulled: { type: number }
+        totalCompleted: { type: number }
+        totalFailed: { type: number }
+        uptime: { type: number }
+    Throughput:
+      type: object
+      required: [pushPerSec, pullPerSec, completePerSec, failPerSec]
+      properties:
+        pushPerSec: { type: number }
+        pullPerSec: { type: number }
+        completePerSec: { type: number }
+        failPerSec: { type: number }
+    Memory:
+      type: object
+      required: [heapUsed, heapTotal, rss]
+      properties:
+        heapUsed: { type: number }
+        heapTotal: { type: number }
+        rss: { type: number }
+    Overview:
+      type: object
+      required: [ok, stats, throughput, latency, memory, collections, workers, crons, storage, timestamp]
+      properties:
+        ok: { type: boolean }
+        stats: { $ref: '#/components/schemas/OverviewStats' }
+        throughput: { $ref: '#/components/schemas/Throughput' }
+        latency:
+          type: object
+          required: [averages, percentiles]
+          properties:
+            averages: { type: object, additionalProperties: { type: number } }
+            percentiles:
+              type: object
+              additionalProperties:
+                type: object
+                required: [p50, p95, p99]
+                properties:
+                  p50: { type: number }
+                  p95: { type: number }
+                  p99: { type: number }
+        memory: { $ref: '#/components/schemas/Memory' }
+        collections: { type: object, additionalProperties: { type: number } }
+        workers:
+          type: object
+          required: [total, active, list, truncated]
+          properties:
+            total: { type: number }
+            active: { type: number }
+            truncated: { type: boolean }
+            list:
+              type: array
+              items:
+                type: object
+                required: [id, name, queues, lastSeen, activeJobs, processedJobs, failedJobs]
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  queues: { type: array, items: { type: string } }
+                  lastSeen: { type: number }
+                  activeJobs: { type: number }
+                  processedJobs: { type: number }
+                  failedJobs: { type: number }
+        crons:
+          type: object
+          required: [total, list, truncated]
+          properties:
+            total: { type: number }
+            truncated: { type: boolean }
+            list:
+              type: array
+              items:
+                type: object
+                required: [name, queue, schedule, repeatEvery, nextRun, executions]
+                properties:
+                  name: { type: string }
+                  queue: { type: string }
+                  schedule: { type: string, nullable: true }
+                  repeatEvery: { type: number, nullable: true }
+                  nextRun: { type: number }
+                  executions: { type: number }
+        storage: { type: object, additionalProperties: true }
+        timestamp: { type: integer }
+    Stats:
+      type: object
+      required: [ok, stats, memory, collections]
+      properties:
+        ok: { type: boolean }
+        stats:
+          allOf:
+            - $ref: '#/components/schemas/OverviewStats'
+            - $ref: '#/components/schemas/Throughput'
+            - type: object
+              required: [prioritized, waiting-children]
+              properties:
+                prioritized: { type: number }
+                waiting-children: { type: number }
+              additionalProperties: { type: number }
+        memory:
+          allOf:
+            - $ref: '#/components/schemas/Memory'
+            - type: object
+              required: [external, arrayBuffers]
+              properties:
+                external: { type: number }
+                arrayBuffers: { type: number }
+        collections: { type: object, additionalProperties: { type: number } }
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean, enum: [true] }
+    ActionCount:
+      type: object
+      required: [ok, count, done]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        count: { type: integer, minimum: 0 }
+        done: { type: boolean, description: False when the call stopped at its time budget and more is left. }
+    LogsCleared:
+      type: object
+      required: [ok, count]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        count: { type: integer, minimum: 0 }
+    QueueCounts:
+      type: object
+      required: [waiting, prioritized, delayed, active, completed, failed, waiting-children, paused]
+      additionalProperties: { type: integer }
+      properties:
+        waiting: { type: integer }
+        prioritized: { type: integer }
+        delayed: { type: integer }
+        active: { type: integer }
+        completed: { type: integer }
+        failed: { type: integer }
+        waiting-children: { type: integer }
+        paused: { type: integer }
+    QueueCountsResponse:
+      type: object
+      required: [ok, counts]
+      properties:
+        ok: { type: boolean }
+        counts: { $ref: '#/components/schemas/QueueCounts' }
+    QueuePausedResponse:
+      type: object
+      required: [ok, paused]
+      properties:
+        ok: { type: boolean }
+        paused: { type: boolean }
+    QueueSummaryRow:
+      type: object
+      required: [name, paused, counts]
+      properties:
+        name: { type: string }
+        paused: { type: boolean }
+        counts:
+          type: object
+          required: [waiting, prioritized, active, completed, failed, delayed]
+          properties:
+            waiting: { type: integer }
+            prioritized: { type: integer }
+            active: { type: integer }
+            completed: { type: integer }
+            failed: { type: integer }
+            delayed: { type: integer }
+    DashboardQueues:
+      type: object
+      required: [ok, queues, total, limit, offset, timestamp]
+      properties:
+        ok: { type: boolean }
+        queues:
+          type: array
+          items:
+            type: object
+            required: [name, waiting, delayed, active, dlq, paused]
+            properties:
+              name: { type: string }
+              waiting: { type: integer }
+              delayed: { type: integer }
+              active: { type: integer }
+              dlq: { type: integer, description: Failed jobs. }
+              paused: { type: boolean }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        timestamp: { type: integer }
+    JobSummary:
+      type: object
+      required: [id, priority, createdAt, runAt, attempts, progress]
+      properties:
+        id: { type: string }
+        priority: { type: integer }
+        createdAt: { type: integer }
+        runAt: { type: integer }
+        attempts: { type: integer }
+        progress: { type: number }
+    QueueDetail:
+      type: object
+      required: [ok, name, counts, paused, priorityCounts, dlqPreview, timestamp]
+      properties:
+        ok: { type: boolean }
+        name: { type: string }
+        counts: { $ref: '#/components/schemas/QueueCounts' }
+        paused: { type: boolean }
+        priorityCounts: { type: object, additionalProperties: { type: integer } }
+        dlqPreview:
+          type: array
+          items:
+            type: object
+            required: [id, data, attempts, createdAt]
+            properties:
+              id: { type: string }
+              data: {}
+              attempts: { type: integer }
+              createdAt: { type: integer }
+        jobs:
+          type: object
+          description: Absent when `includeJobs=false`.
+          required: [waiting, active, delayed, paused]
+          properties:
+            waiting: { type: array, items: { $ref: '#/components/schemas/JobSummary' } }
+            active: { type: array, items: { $ref: '#/components/schemas/JobSummary' } }
+            delayed: { type: array, items: { $ref: '#/components/schemas/JobSummary' } }
+            paused: { type: array, items: { $ref: '#/components/schemas/JobSummary' } }
+        timestamp: { type: integer }
+    Job:
+      type: object
+      required: [id, queue, name, data, priority, createdAt, runAt, startedAt, completedAt, attempts, maxAttempts, backoff, backoffConfig, timeout, ttl, progress, progressMessage, customId, parentId, childrenIds, dependsOn, flowRoot, tags, groupId, removeOnComplete, removeOnFail, state, version, lease, lifo, deduplicationId, truncated]
+      properties:
+        id: { type: string }
+        queue: { type: string }
+        name: { type: string }
+        data: { description: 'The payload, with tagged values (see the description of this document).' }
+        returnvalue: { description: Present for a completed job that returned a value. }
+        result: { description: The same as `returnvalue` (the panel's legacy alias). }
+        failedReason: { type: string }
+        priority: { type: integer }
+        createdAt: { type: integer }
+        runAt: { type: integer }
+        startedAt: { type: integer, nullable: true }
+        completedAt: { type: integer, nullable: true }
+        attempts: { type: integer }
+        maxAttempts: { type: integer }
+        backoff: { type: integer }
+        backoffConfig:
+          type: object
+          nullable: true
+          required: [type, delay]
+          properties:
+            type: { type: string, enum: [fixed, exponential] }
+            delay: { type: integer }
+            maxDelay: { type: integer }
+        timeout: { type: integer, nullable: true }
+        ttl: { type: integer, nullable: true }
+        progress: { type: number, minimum: 0, maximum: 100 }
+        progressMessage: { type: string, nullable: true }
+        stacktrace: { type: array, nullable: true, items: { type: string }, description: Only on a job's own page. }
+        customId: { type: string, nullable: true }
+        parentId: { type: string, nullable: true }
+        childrenIds: { type: array, items: { type: string }, description: 'The jobs that name this one as their parent. Only on a job''s own page; a list leaves it empty.' }
+        dependsOn: { type: array, items: { type: string }, description: Always empty; a parent's children are `childrenIds`. }
+        flowRoot: { type: string, nullable: true, description: The root of the flow the job belongs to. }
+        tags: { type: array, items: { type: string } }
+        groupId: { type: string, nullable: true }
+        removeOnComplete: { type: boolean }
+        removeOnFail: { type: boolean }
+        stallCount: { type: integer, description: Only on a job's own page. }
+        state: { type: string, enum: [waiting, prioritized, delayed, waiting-children, active, completed, failed] }
+        timeline:
+          type: array
+          maxItems: 20
+          description: Only on a job's own page. Creation first, then at most 19 of the newest entries.
+          items:
+            type: object
+            required: [state, timestamp]
+            properties:
+              state: { type: string }
+              timestamp: { type: integer }
+              error: { type: string }
+              attempt: { type: integer }
+        version: { type: integer, minimum: 0, description: What an action sends back as `expectedVersion`. }
+        lease:
+          type: object
+          nullable: true
+          required: [owner, until]
+          properties:
+            owner: { type: string }
+            until: { type: integer }
+        lifo: { type: boolean }
+        stallTimeout: { type: integer }
+        deduplicationId: { type: string, nullable: true }
+        truncated: { type: boolean, description: True when `data` or `returnvalue` is a `truncated` marker. }
+    JobEnvelope:
+      type: object
+      required: [ok, job]
+      properties:
+        ok: { type: boolean }
+        job: { $ref: '#/components/schemas/Job' }
+    JobsList:
+      type: object
+      required: [ok, jobs, limit]
+      properties:
+        ok: { type: boolean }
+        jobs: { type: array, items: { $ref: '#/components/schemas/Job' } }
+        limit: { type: integer }
+        offset: { type: integer, description: Present for an offset page. }
+        total: { type: integer, description: Present for an offset page. }
+        next: { type: string, description: The `cursor` of the next page; absent on the last. }
+    JobResult:
+      type: object
+      required: [ok, id, result, truncated]
+      properties:
+        ok: { type: boolean }
+        id: { type: string }
+        result: { nullable: true }
+        truncated: { type: boolean }
+    JobLogs:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean }
+        data:
+          type: object
+          required: [logs, count]
+          properties:
+            logs:
+              type: array
+              items:
+                type: object
+                required: [timestamp, level, message]
+                properties:
+                  timestamp: { type: integer }
+                  level: { type: string, enum: [info, warn, error] }
+                  message: { type: string }
+            count: { type: integer }
+    JobChildren:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean }
+        data:
+          type: object
+          required: [values]
+          properties:
+            values: { type: object, additionalProperties: true }
+    AddedJob:
+      type: object
+      required: [ok, id, duplicated]
+      properties:
+        ok: { type: boolean }
+        id: { type: string }
+        duplicated: { type: boolean }
+    AddedJobs:
+      type: object
+      required: [ok, ids, duplicated]
+      properties:
+        ok: { type: boolean }
+        ids: { type: array, items: { type: string } }
+        duplicated: { type: array, items: { type: integer }, description: Indexes in `ids` of the jobs that were live duplicates. }
+    BackoffOption:
+      oneOf:
+        - { type: integer, minimum: 0 }
+        - type: object
+          additionalProperties: false
+          required: [type, delay]
+          properties:
+            type: { type: string, enum: [fixed, exponential] }
+            delay: { type: integer, minimum: 0 }
+            maxDelay: { type: integer, minimum: 0 }
+    AddJobBody:
+      type: object
+      additionalProperties: false
+      required: [data]
+      description: 'A field outside this list is 400. `ttl`, `repeat`, `dependsOn`, `tags`, `durable: false` and numeric `removeOnComplete` or `removeOnFail` are 400 `unsupported_option`.'
+      properties:
+        name: { type: string, minLength: 1, description: Default `default`. }
+        data: { description: 'Any JSON, with tagged values. `null` is a value.' }
+        priority: { type: integer, minimum: 0 }
+        delay: { type: number, minimum: 0 }
+        maxAttempts: { type: integer, minimum: 1 }
+        backoff: { $ref: '#/components/schemas/BackoffOption' }
+        timeout: { type: integer, minimum: 1 }
+        jobId: { type: string, minLength: 1 }
+        removeOnComplete: { type: boolean }
+        removeOnFail: { type: boolean }
+        uniqueKey: { type: string, minLength: 1 }
+        lifo: { type: boolean }
+        groupId: { type: string, minLength: 1 }
+        groupMaxSize: { type: integer, minimum: 1 }
+        durable: { type: boolean }
+        ttl: { type: number }
+        tags: { type: array, items: { type: string } }
+        dependsOn: { type: array, items: { type: string } }
+        repeat: {}
+    BulkAddBody:
+      type: object
+      additionalProperties: false
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items:
+            allOf:
+              - $ref: '#/components/schemas/AddJobBody'
+              - type: object
+                properties:
+                  customId: { type: string, minLength: 1, description: Bulk's name for `jobId`; give one. }
+                  stallTimeout: { type: integer, minimum: 1 }
+                  dedup: { type: object, additionalProperties: false, properties: { ttl: { type: integer, minimum: 1 }, extend: { type: boolean }, replace: { type: boolean } } }
+                  stackTraceLimit: { type: integer }
+                  timestamp: { type: number }
+    FenceBody:
+      type: object
+      additionalProperties: false
+      properties:
+        expectedVersion: { type: integer, minimum: 0 }
+    DataBody:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { description: The new payload. `null` is a value. }
+        expectedVersion: { type: integer, minimum: 0 }
+    PriorityBody:
+      type: object
+      additionalProperties: false
+      required: [priority]
+      properties:
+        priority: { type: integer, minimum: 0 }
+        lifo: { type: boolean }
+        expectedVersion: { type: integer, minimum: 0 }
+    DelayBody:
+      type: object
+      additionalProperties: false
+      required: [delay]
+      properties:
+        delay: { type: number, minimum: 0, description: Milliseconds from now. }
+        expectedVersion: { type: integer, minimum: 0 }
+    ProgressBody:
+      type: object
+      additionalProperties: false
+      required: [progress]
+      properties:
+        progress: { oneOf: [{ type: number }, { type: string }, { type: object }] }
+        message: { type: string, maxLength: 4096 }
+    LogBody:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message: { type: string, minLength: 1, maxLength: 16384 }
+        level: { type: string, enum: [info, warn, error] }
+    ConfirmBody:
+      type: object
+      additionalProperties: false
+      properties:
+        confirm: { type: string, description: Must equal the queue's name. }
+    CleanBody:
+      type: object
+      additionalProperties: false
+      properties:
+        confirm: { type: string, description: Must equal the queue's name. }
+        grace: { type: integer, minimum: 0, description: Only jobs at least this many ms old. }
+        state: { type: string, enum: [completed, failed, wait, waiting, prioritized, delayed], description: Default `completed`. }
+        limit: { type: integer, minimum: 0, description: At most this many; 0 or absent is every eligible job. }
+    ObliterateBody:
+      type: object
+      additionalProperties: false
+      properties:
+        confirm: { type: string, description: Must equal the queue's name. }
+        force: { type: boolean, description: Delete active jobs too. }
+    PromoteJobsBody:
+      type: object
+      additionalProperties: false
+      properties:
+        count: { type: integer, minimum: 1, maximum: 1000, description: Default 1000. }
+    RateLimitBody:
+      type: object
+      additionalProperties: false
+      required: [limit]
+      properties:
+        limit: { type: integer, minimum: 1, description: Jobs per window. }
+        duration: { type: integer, minimum: 1, description: Window length in ms; default 1000. }
+        ttl: { type: integer, minimum: 1, description: The limit lifts itself after this many ms. }
+    ConcurrencyBody:
+      type: object
+      additionalProperties: false
+      required: [concurrency]
+      properties:
+        concurrency: { type: integer, minimum: 1 }
+    DlqAttempt:
+      type: object
+      required: [attempt, startedAt, failedAt, reason, error, duration]
+      properties:
+        attempt: { type: integer, minimum: 1 }
+        startedAt: { type: integer }
+        failedAt: { type: integer }
+        reason: { type: string }
+        error: { type: string, nullable: true }
+        duration: { type: integer, minimum: 0, description: Milliseconds the attempt ran. }
+    DlqEntry:
+      type: object
+      required: [job, enteredAt, reason, error, attempts, expiresAt]
+      properties:
+        job: { $ref: '#/components/schemas/Job' }
+        enteredAt: { type: integer, description: When the last attempt failed. }
+        reason: { type: string, description: 'For example `max_attempts_exceeded`, `explicit_fail`, `timeout`, `stalled`.' }
+        error: { type: string, nullable: true }
+        attempts: { type: array, items: { $ref: '#/components/schemas/DlqAttempt' } }
+        expiresAt: { type: integer, nullable: true, description: When the queue's `maxAge` removes it; null keeps it for ever. }
+    FlowRoot:
+      type: object
+      required: [id, queue, name, state, createdAt, version, total, states, blocked]
+      properties:
+        id: { type: string }
+        queue: { type: string }
+        name: { type: string, nullable: true }
+        state: { type: string, enum: [waiting, prioritized, delayed, waiting-children, active, completed, failed] }
+        createdAt: { type: integer }
+        version: { type: integer }
+        total: { type: integer, minimum: 0, description: Jobs of the flow that are stored now. }
+        states: { type: object, additionalProperties: { type: integer }, description: Stored jobs by state. }
+        blocked: { type: integer, minimum: 0, description: Failed children that hold a waiting parent back. }
+    FlowList:
+      type: object
+      required: [ok, flows, total, limit, offset]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        flows: { type: array, items: { $ref: '#/components/schemas/FlowRoot' } }
+        total: { type: integer, minimum: 0, description: Flows in the namespace. }
+        limit: { type: integer }
+        offset: { type: integer }
+    FlowNode:
+      type: object
+      required: [id, queue, state, version, parentId, depth, attempts, createdAt, completedAt, error, mode, blocking, removed]
+      properties:
+        id: { type: string }
+        queue: { type: string }
+        state: { type: string, enum: [waiting, prioritized, delayed, waiting-children, active, completed, failed] }
+        version: { type: integer, nullable: true, description: Null for a child that only a completion record is left of. }
+        parentId: { type: string, nullable: true }
+        depth: { type: integer, minimum: 0, description: Levels below the root, which is 0. }
+        attempts: { type: integer }
+        createdAt: { type: integer, nullable: true }
+        completedAt: { type: integer, nullable: true }
+        error: { type: string, nullable: true, description: The failure message, cut to 500 characters. }
+        mode: { type: string, nullable: true, enum: [fail, continue, ignore, remove], description: What this job's failure does to its parent. }
+        blocking: { type: boolean, description: The job failed and its parent still waits for it. }
+        removed: { type: boolean, description: The job was removed when it completed. }
+    FlowFailure:
+      type: object
+      required: [parentId, childId, queue, mode, error]
+      properties:
+        parentId: { type: string }
+        childId: { type: string }
+        queue: { type: string }
+        mode: { type: string, enum: [continue, ignore] }
+        error: { type: string }
+    Flow:
+      type: object
+      required: [root, nodes, total, truncated, limit, failures]
+      properties:
+        root: { type: string }
+        nodes: { type: array, items: { $ref: '#/components/schemas/FlowNode' } }
+        total: { type: integer, minimum: 0, description: Jobs of the flow that are stored now, listed or not. }
+        truncated: { type: boolean, description: The flow has more jobs than `nodes` lists. }
+        limit: { type: integer }
+        failures: { type: array, items: { $ref: '#/components/schemas/FlowFailure' } }
+    FlowEnvelope:
+      type: object
+      required: [ok, flow]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        flow: { $ref: '#/components/schemas/Flow' }
+    FlowActionBody:
+      type: object
+      additionalProperties: false
+      required: [action, jobs]
+      properties:
+        action: { type: string, enum: [retry-failed, promote, remove] }
+        jobs:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, expectedVersion]
+            properties:
+              id: { type: string, minLength: 1 }
+              expectedVersion: { type: integer, minimum: 0 }
+        parent: { type: string, description: 'Required for `promote`, and not allowed for the others.' }
+        confirm: { type: string, description: 'Required for `remove`: the root id of the flow.' }
+    FlowActionResult:
+      type: object
+      required: [ok, action, changes]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        action: { type: string, enum: [retry-failed, promote, remove] }
+        changes:
+          type: array
+          items:
+            type: object
+            required: [id, queue, from, to]
+            properties:
+              id: { type: string }
+              queue: { type: string }
+              from: { type: string }
+              to: { type: string, description: 'A job state, or `removed`.' }
+    WorkflowState:
+      type: string
+      enum: [running, waiting, completed, failed, compensating, compensation-stuck]
+    WorkflowSummary:
+      type: object
+      required: [id, workflowName, state, definitionHash, parentExecutionId, currentNodeIndex, rollbackStatus, failureReason, committedAt, version, createdAt, updatedAt, wait]
+      properties:
+        id: { type: string }
+        workflowName: { type: string }
+        state: { $ref: '#/components/schemas/WorkflowState' }
+        definitionHash: { type: string, nullable: true, description: The definition the run is bound to. }
+        parentExecutionId: { type: string, nullable: true, description: Set for a sub-workflow run. }
+        currentNodeIndex: { type: integer, minimum: 0 }
+        rollbackStatus: { type: string, nullable: true, enum: [completed, not-applicable, stuck, null], description: 'Null until the unwind of a failed run has an outcome.' }
+        failureReason: { type: string, nullable: true, description: Cut to 1,000 characters. }
+        committedAt: { type: integer, nullable: true, description: When the run passed its pivot. }
+        version: { type: integer, minimum: 0, description: What an action sends back as `expectedVersion`. }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+        wait:
+          type: object
+          nullable: true
+          description: While parked at a `waitFor`.
+          required: [event, deadlineAt]
+          properties:
+            event: { type: string }
+            deadlineAt: { type: integer, nullable: true, description: When the wait times out; null waits for ever. }
+    WorkflowDefinition:
+      type: object
+      required: [hash, revision, nodes, firstSeenAt, lastSeenAt, served, liveRuns]
+      properties:
+        hash: { type: string }
+        revision: { type: string }
+        nodes: { type: integer, minimum: 0 }
+        firstSeenAt: { type: integer }
+        lastSeenAt: { type: integer }
+        served: { type: boolean, description: A worker announced it within the served window. }
+        liveRuns: { type: integer, minimum: 0, description: Live runs bound to this hash. }
+    WorkflowWarning:
+      type: object
+      required: [code, workflow, hash, runs, known, lastSeenAt, message]
+      properties:
+        code: { type: string, enum: [unserved_definition] }
+        workflow: { type: string }
+        hash: { type: string }
+        runs: { type: integer, minimum: 1 }
+        known: { type: boolean, description: Some worker announced this hash (it may have aged out of the registry). }
+        lastSeenAt: { type: integer, nullable: true }
+        message: { type: string }
+    WorkflowOverview:
+      type: object
+      required: [name, total, counts, definitions, warnings]
+      properties:
+        name: { type: string }
+        total: { type: integer, minimum: 0 }
+        counts: { type: object, additionalProperties: { type: integer }, description: Runs by state; a state with none is absent. }
+        definitions: { type: array, items: { $ref: '#/components/schemas/WorkflowDefinition' } }
+        warnings: { type: array, items: { $ref: '#/components/schemas/WorkflowWarning' } }
+    WorkflowList:
+      type: object
+      required: [ok, workflows, executions, total, limit, offset, hasMore]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        workflows: { type: array, items: { $ref: '#/components/schemas/WorkflowOverview' } }
+        executions: { type: array, items: { $ref: '#/components/schemas/WorkflowSummary' } }
+        total: { type: integer, minimum: 0, description: Runs that match the filters. }
+        limit: { type: integer }
+        offset: { type: integer }
+        hasMore: { type: boolean }
+    WorkflowFanOut:
+      type: object
+      required: [iterations, byStatus, compensation]
+      properties:
+        iterations: { type: integer, minimum: 0 }
+        byStatus:
+          type: object
+          required: [pending, running, completed, failed]
+          properties:
+            pending: { type: integer }
+            running: { type: integer }
+            completed: { type: integer }
+            failed: { type: integer }
+        compensation:
+          type: object
+          required: [compensated, failed, skipped]
+          properties:
+            compensated: { type: integer }
+            failed: { type: integer }
+            skipped: { type: integer }
+    WorkflowStep:
+      type: object
+      required: [name, status, attempts, startedAt, completedAt, durationMs, compensatable, error, childExecutionId, compensation, loopIndex]
+      properties:
+        name: { type: string, description: 'An iteration of a fan-out is `<step>:<n>`.' }
+        status: { type: string, enum: [pending, running, completed, failed] }
+        attempts: { type: integer, nullable: true }
+        startedAt: { type: integer, nullable: true }
+        completedAt: { type: integer, nullable: true }
+        durationMs: { type: integer, nullable: true }
+        compensatable: { type: boolean }
+        error: { type: string, nullable: true, description: Cut to 2,000 characters. }
+        errorTruncated: { type: boolean, enum: [true] }
+        result: { description: 'Present when the step holds a result: tagged JSON, or a `truncated` marker.' }
+        resultTruncated: { type: boolean, enum: [true] }
+        childExecutionId: { type: string, nullable: true }
+        compensation:
+          type: object
+          nullable: true
+          required: [status, at, error]
+          properties:
+            status: { type: string, enum: [compensated, compensation-failed, compensation-skipped] }
+            at: { type: integer }
+            error: { type: string, nullable: true }
+        loopIndex: { type: integer, nullable: true }
+        loopItem: { description: The item of a fan-out iteration, as `result` is. }
+        loopItemTruncated: { type: boolean, enum: [true] }
+        fanOut: { $ref: '#/components/schemas/WorkflowFanOut' }
+    WorkflowStepsPage:
+      type: object
+      required: [items, total, limit, offset, hasMore]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/WorkflowStep' } }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer }
+        offset: { type: integer }
+        hasMore: { type: boolean }
+    WorkflowStepsEnvelope:
+      type: object
+      required: [ok, steps]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        steps: { $ref: '#/components/schemas/WorkflowStepsPage' }
+    WorkflowCompensation:
+      type: object
+      required: [status, eligible, compensated, failed, skipped, failures]
+      properties:
+        status: { type: string, enum: [none, pending, running, stuck, completed, not-applicable] }
+        eligible: { type: integer, description: Completed steps that declared a reversal and have no outcome yet. }
+        compensated: { type: integer }
+        failed: { type: integer }
+        skipped: { type: integer }
+        failures:
+          type: array
+          description: At most 10.
+          items:
+            type: object
+            required: [step, error]
+            properties:
+              step: { type: string }
+              error: { type: string, nullable: true }
+    WorkflowExecution:
+      allOf:
+        - $ref: '#/components/schemas/WorkflowSummary'
+        - type: object
+          required: [input, signals, output, actions]
+          properties:
+            input: { description: Tagged JSON, or a `truncated` marker. }
+            inputTruncated: { type: boolean, enum: [true] }
+            signals:
+              type: object
+              required: [total, items]
+              properties:
+                total: { type: integer }
+                items:
+                  type: array
+                  description: At most 50.
+                  items:
+                    type: object
+                    required: [event, payload]
+                    properties:
+                      event: { type: string }
+                      payload: {}
+                      truncated: { type: boolean, enum: [true] }
+            output:
+              type: object
+              nullable: true
+              required: [step, result]
+              properties:
+                step: { type: string }
+                result: {}
+                truncated: { type: boolean, enum: [true] }
+            actions:
+              type: array
+              items: { type: string, enum: [signal, cancel, retry-compensation, abandon-compensation, recover] }
+    WorkflowDetail:
+      type: object
+      required: [ok, execution, definition, steps, children, compensation]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        execution: { $ref: '#/components/schemas/WorkflowExecution' }
+        definition:
+          type: object
+          nullable: true
+          required: [hash, revision, graph, firstSeenAt, lastSeenAt, served]
+          properties:
+            hash: { type: string }
+            revision: { type: string }
+            graph: { type: array, items: { type: object }, description: 'The step graph the worker announced: `{ type, ... }` per node.' }
+            firstSeenAt: { type: integer }
+            lastSeenAt: { type: integer }
+            served: { type: boolean }
+        steps: { $ref: '#/components/schemas/WorkflowStepsPage' }
+        children:
+          type: object
+          required: [total, items]
+          properties:
+            total: { type: integer }
+            items:
+              type: array
+              description: At most 100.
+              items:
+                type: object
+                required: [step, executionId]
+                properties:
+                  step: { type: string }
+                  executionId: { type: string }
+        compensation: { $ref: '#/components/schemas/WorkflowCompensation' }
+    WorkflowActionBody:
+      type: object
+      additionalProperties: false
+      required: [action, expectedVersion]
+      properties:
+        action: { type: string, enum: [signal, cancel, retry-compensation, abandon-compensation, recover] }
+        expectedVersion: { type: integer, minimum: 0, description: The run's `version` as read. }
+        event: { type: string, minLength: 1, maxLength: 256, description: 'Required for `signal`, and not allowed for the others.' }
+        payload: { description: '`signal` only: the event''s payload, in the tagged form of the job routes.' }
+        reason: { type: string, minLength: 1, maxLength: 500, description: '`cancel` only: kept as the failure reason.' }
+        confirm: { type: string, description: 'Required for `cancel` and `abandon-compensation`: the run id.' }
+    WorkflowActionResult:
+      type: object
+      required: [ok, action, executionId, published, version]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        action: { type: string, enum: [signal, cancel, retry-compensation, abandon-compensation, recover] }
+        executionId: { type: string }
+        published: { type: boolean, description: A step job went to the engine queue for a worker to execute. }
+        resumed: { type: boolean, description: '`signal` only: this call resumed a parked run.' }
+        version: { type: integer, nullable: true, description: The run's version after this call's claim; null when the store or the worker claims. }
+    DlqList:
+      type: object
+      required: [ok, entries, total, limit, offset]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        entries: { type: array, items: { $ref: '#/components/schemas/DlqEntry' } }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer }
+        offset: { type: integer }
+    DlqStats:
+      type: object
+      required: [total, byReason, byQueue, pendingRetry, expired, oldestEntry, newestEntry]
+      properties:
+        total: { type: integer }
+        byReason: { type: object, additionalProperties: { type: integer } }
+        byQueue: { type: object, additionalProperties: { type: integer } }
+        pendingRetry: { type: integer, enum: [0] }
+        expired: { type: integer, enum: [0] }
+        oldestEntry: { type: integer, nullable: true }
+        newestEntry: { type: integer, nullable: true }
+    DlqStatsResponse:
+      type: object
+      required: [ok, stats]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        stats: { $ref: '#/components/schemas/DlqStats' }
+    StallConfig:
+      type: object
+      required: [enabled, stallInterval, maxStalls, gracePeriod]
+      properties:
+        enabled: { type: boolean, enum: [true] }
+        stallInterval: { type: integer, description: The lease length in ms. }
+        maxStalls: { type: integer, minimum: 0, description: A job that stalls more often than this fails. }
+        gracePeriod: { type: integer, enum: [0] }
+    StallConfigResponse:
+      type: object
+      required: [ok, config]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        config: { $ref: '#/components/schemas/StallConfig' }
+    StallConfigBody:
+      type: object
+      additionalProperties: false
+      description: 'The settings bare, or wrapped as `{ "config": { ... } }`.'
+      properties:
+        enabled: { type: boolean }
+        stallInterval: { type: number }
+        maxStalls: { type: integer, minimum: 0 }
+        gracePeriod: { type: number }
+        config:
+          type: object
+          additionalProperties: false
+          properties:
+            enabled: { type: boolean }
+            stallInterval: { type: number }
+            maxStalls: { type: integer, minimum: 0 }
+            gracePeriod: { type: number }
+    DlqConfig:
+      type: object
+      required: [autoRetry, autoRetryInterval, maxAutoRetries, maxAge, maxEntries]
+      properties:
+        autoRetry: { type: boolean, enum: [false] }
+        autoRetryInterval: { type: integer }
+        maxAutoRetries: { type: integer }
+        maxAge: { type: integer, nullable: true, description: Milliseconds an entry is kept; null keeps it for ever. }
+        maxEntries: { type: integer }
+    DlqConfigResponse:
+      type: object
+      required: [ok, config]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        config: { $ref: '#/components/schemas/DlqConfig' }
+    DlqConfigBody:
+      type: object
+      additionalProperties: false
+      description: 'The settings bare, or wrapped as `{ "config": { ... } }`.'
+      properties:
+        autoRetry: { type: boolean }
+        autoRetryInterval: { type: number }
+        maxAutoRetries: { type: number }
+        maxAge: { type: number, nullable: true }
+        maxEntries: { type: integer }
+        config:
+          type: object
+          additionalProperties: false
+          properties:
+            autoRetry: { type: boolean }
+            autoRetryInterval: { type: number }
+            maxAutoRetries: { type: number }
+            maxAge: { type: number, nullable: true }
+            maxEntries: { type: integer }
+    CronJobOptions:
+      type: object
+      additionalProperties: false
+      description: The template of the jobs a cron creates.
+      properties:
+        maxAttempts: { type: integer, minimum: 1 }
+        backoff: { $ref: '#/components/schemas/BackoffOption' }
+        timeout: { type: integer, minimum: 1 }
+        delay: { type: number }
+        stallTimeout: { type: integer, minimum: 1 }
+        removeOnComplete: { type: boolean }
+        removeOnFail: { type: boolean }
+    CronBody:
+      type: object
+      additionalProperties: false
+      required: [queue]
+      description: Exactly one of `schedule` and `repeatEvery`. `name` is required on `POST /crons` and optional on `PUT /crons/{name}`.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 256 }
+        queue: { type: string, minLength: 1, maxLength: 256 }
+        jobName: { type: string, minLength: 1, maxLength: 256, description: Default `default`. }
+        data: { description: The payload of every job it creates, in the tagged form of the job payloads. }
+        schedule: { type: string, maxLength: 256, description: A cron expression (5 or 6 fields). }
+        repeatEvery: { type: number, description: Milliseconds between occurrences. }
+        timezone: { type: string, minLength: 1, maxLength: 256, description: An IANA zone; only with `schedule`. }
+        priority: { type: integer, minimum: 0 }
+        maxLimit: { type: number, description: Stops after this many executions. }
+        immediately: { type: boolean, description: Fire once now as well. }
+        skipIfNoWorker: { type: boolean }
+        preventOverlap: { type: boolean }
+        skipMissedOnRestart: { type: boolean, enum: [true], description: Always true; false is 400 `unsupported_option`. }
+        uniqueKey: { type: string, minLength: 1, maxLength: 256 }
+        dedup:
+          type: object
+          additionalProperties: false
+          properties:
+            ttl: { type: integer, minimum: 1 }
+            extend: { type: boolean }
+            replace: { type: boolean }
+        jobOptions: { $ref: '#/components/schemas/CronJobOptions' }
+    Cron:
+      type: object
+      required: [name, jobName, queue, schedule, repeatEvery, nextRun, executions, maxLimit, exhausted, timezone, priority, uniqueKey, dedup, skipMissedOnRestart, skipIfNoWorker, preventOverlap, jobOptions, updatedAt]
+      properties:
+        name: { type: string }
+        jobName: { type: string }
+        queue: { type: string }
+        schedule: { type: string, nullable: true }
+        repeatEvery: { type: number, nullable: true }
+        nextRun: { type: integer, description: When it is next due. Stale once `exhausted`. }
+        executions: { type: integer, minimum: 0 }
+        maxLimit: { type: number, nullable: true }
+        exhausted: { type: boolean, description: '`executions` reached `maxLimit`: nothing fires any more.' }
+        timezone: { type: string, nullable: true }
+        priority: { type: integer }
+        uniqueKey: { type: string, nullable: true }
+        dedup:
+          type: object
+          nullable: true
+          properties:
+            ttl: { type: integer }
+            extend: { type: boolean }
+            replace: { type: boolean }
+        skipMissedOnRestart: { type: boolean, enum: [true] }
+        skipIfNoWorker: { type: boolean }
+        preventOverlap: { type: boolean }
+        jobOptions:
+          allOf:
+            - { $ref: '#/components/schemas/CronJobOptions' }
+          nullable: true
+        updatedAt: { type: integer }
+    CronEnvelope:
+      type: object
+      required: [ok, cron]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        cron: { $ref: '#/components/schemas/Cron' }
+    CronList:
+      type: object
+      required: [ok, crons, total, truncated]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        crons: { type: array, items: { $ref: '#/components/schemas/Cron' } }
+        total: { type: integer, minimum: 0 }
+        truncated: { type: boolean }
+    Worker:
+      type: object
+      required: [id, name, queues, concurrency, hostname, pid, status, registeredAt, lastSeen, activeJobs, processedJobs, failedJobs, currentJob, uptime]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        queues: { type: array, items: { type: string } }
+        concurrency: { type: integer }
+        hostname: { type: string }
+        pid: { type: integer }
+        status: { type: string, enum: [active, stale] }
+        registeredAt: { type: integer }
+        lastSeen: { type: integer }
+        activeJobs: { type: integer }
+        processedJobs: { type: integer }
+        failedJobs: { type: integer }
+        currentJob: { type: object, nullable: true, description: 'Always null: the registry counts active jobs and does not name them.' }
+        uptime: { type: integer, minimum: 0, description: Milliseconds since it registered. }
+    WorkersList:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [workers, stats]
+          properties:
+            workers: { type: array, items: { $ref: '#/components/schemas/Worker' } }
+            stats:
+              type: object
+              required: [total, active, stale]
+              properties:
+                total: { type: integer }
+                active: { type: integer }
+                stale: { type: integer }
+    WorkerRemoved:
+      type: object
+      required: [ok, removed]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        removed: { type: boolean }
+    Webhook:
+      type: object
+      required: [id, url, urlRedacted, events, queue, signed, enabled, createdAt, lastTriggered, successCount, failureCount]
+      properties:
+        id: { type: string }
+        url: { type: string, description: 'The address; for a `viewer` only its origin (`https://host/`), with `urlRedacted` true.' }
+        urlRedacted: { type: boolean }
+        events: { type: array, items: { $ref: '#/components/schemas/WebhookEvent' } }
+        queue: { type: string, nullable: true, description: 'Only events of this queue are sent; null for every queue.' }
+        signed: { type: boolean, description: 'Whether deliveries carry a signature. The secret itself is never returned.' }
+        enabled: { type: boolean }
+        createdAt: { type: integer }
+        lastTriggered: { type: integer, nullable: true, description: 'When a delivery last succeeded.' }
+        successCount: { type: integer }
+        failureCount: { type: integer, description: 'Deliveries that used every attempt without success.' }
+    WebhookEvent:
+      type: string
+      enum: [job.pushed, job.started, job.completed, job.failed, job.progress]
+    WebhookCreate:
+      type: object
+      required: [url, events]
+      additionalProperties: false
+      properties:
+        url: { type: string, maxLength: 2048 }
+        events: { type: array, minItems: 1, maxItems: 5, items: { $ref: '#/components/schemas/WebhookEvent' } }
+        queue: { type: string, nullable: true, maxLength: 256 }
+        secret: { type: string, nullable: true, minLength: 16, maxLength: 256, description: 'Signs each delivery. Write-only.' }
+        enabled: { type: boolean, default: true }
+    WebhookEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [webhook]
+          properties:
+            webhook: { $ref: '#/components/schemas/Webhook' }
+    WebhooksList:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [webhooks, stats]
+          properties:
+            webhooks: { type: array, items: { $ref: '#/components/schemas/Webhook' } }
+            stats:
+              type: object
+              required: [total, enabled]
+              properties:
+                total: { type: integer }
+                enabled: { type: integer }
+    WebhookAttempt:
+      type: object
+      required: [attempt, at, durationMs, statusCode, error]
+      properties:
+        attempt: { type: integer }
+        at: { type: integer, description: 'When the attempt started.' }
+        durationMs: { type: integer }
+        statusCode: { type: integer, nullable: true, description: 'The receiver''s status; null when none came back.' }
+        error: { type: string, nullable: true, description: 'A short reason in words; never a response body or an address.' }
+    WebhookDelivery:
+      type: object
+      required: [id, webhookId, event, queue, jobId, occurredAt, status, attempts, nextAttemptAt, lastStatusCode, lastError, history, createdAt, finishedAt]
+      properties:
+        id: { type: string, description: 'Also the `X-Webhook-Id` header: a receiver dedupes on it.' }
+        webhookId: { type: string }
+        event: { type: string, description: 'A `WebhookEvent`, or `webhook.test`.' }
+        queue: { type: string }
+        jobId: { type: string }
+        occurredAt: { type: integer }
+        status: { type: string, enum: [pending, sending, delivered, failed] }
+        attempts: { type: integer }
+        nextAttemptAt: { type: integer }
+        lastStatusCode: { type: integer, nullable: true }
+        lastError: { type: string, nullable: true }
+        history: { type: array, items: { $ref: '#/components/schemas/WebhookAttempt' } }
+        createdAt: { type: integer }
+        finishedAt: { type: integer, nullable: true }
+    DeliveryEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [delivery]
+          properties:
+            delivery: { $ref: '#/components/schemas/WebhookDelivery' }
+    DeliveriesPage:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [deliveries, next]
+          properties:
+            deliveries: { type: array, items: { $ref: '#/components/schemas/WebhookDelivery' } }
+            next: { type: string, nullable: true }
+    MetricsTotals:
+      type: object
+      required: [ok, metrics]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        metrics:
+          type: object
+          required: [totalPushed, totalPulled, totalCompleted, totalFailed]
+          properties:
+            totalPushed: { type: number }
+            totalPulled: { type: number }
+            totalCompleted: { type: number }
+            totalFailed: { type: number }
+    MetricsPoint:
+      type: object
+      required: [timestamp, completed, failed]
+      properties:
+        timestamp: { type: integer, description: The start of the window, in epoch milliseconds. }
+        completed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+    MetricsSeries:
+      type: object
+      required: [ok, queue, minutes, resolution, points, totals]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        queue: { type: string }
+        minutes: { type: integer }
+        resolution: { type: integer, enum: [1, 5, 15, 60] }
+        points: { type: array, items: { $ref: '#/components/schemas/MetricsPoint' } }
+        totals:
+          type: object
+          required: [completed, failed]
+          description: Since the queue began, whether or not the buckets still hold the minutes.
+          properties:
+            completed: { type: integer }
+            failed: { type: integer }
+    AuditEntry:
+      type: object
+      required: [id, occurredAt, finishedAt, subject, role, source, requestId, action, target, outcome, status, reason]
+      properties:
+        id: { type: integer }
+        occurredAt: { type: integer }
+        finishedAt: { type: integer, nullable: true, description: Null while `pending`. }
+        subject: { type: string, description: The token's subject. }
+        role: { type: string }
+        source: { type: string, description: 'Where the token came from: `oidc` or `dev-token`.' }
+        requestId: { type: string }
+        action: { type: string, description: 'The route, for example `POST /queues/:queue/pause`.' }
+        target: { type: string, description: 'The identifiers it acted on, for example `queue=emails`. Never a payload.' }
+        outcome: { type: string, enum: [pending, success, rejected, failed] }
+        status: { type: integer, nullable: true, description: HTTP status of the answer. }
+        reason: { type: string, nullable: true, description: A short code for a refusal or a failure. }
+    AuditLog:
+      type: object
+      required: [ok, entries, next]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        entries: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+        next: { type: integer, nullable: true, description: 'Pass it as `before` for older entries; null when there are none.' }
+    Ping:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [pong, time]
+          properties:
+            pong: { type: boolean, enum: [true] }
+            time: { type: integer }
+    StorageStatus:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [diskFull, error, since]
+          properties:
+            diskFull: { type: boolean, enum: [false] }
+            error: { type: string, nullable: true }
+            since: { type: integer, nullable: true }
+    Freshness:
+      type: object
+      required: [observedAt, ageMs, maxStalenessMs, source]
+      properties:
+        observedAt: { type: integer, nullable: true, description: 'Epoch ms the numbers describe; null when they could not be read.' }
+        ageMs: { type: integer, nullable: true, description: 'Milliseconds between `observedAt` and this response; null with it.' }
+        maxStalenessMs: { type: integer, description: 'The most the numbers can lag by design (a metrics pipeline); 0 when exact.' }
+        source: { type: string, description: 'For example `cloud-monitoring`, `postgres-counts`, `memory`, `unavailable`.' }
+    DoorbellHealthRow:
+      type: object
+      required: [queue, claimable, notRung, reRingDue, oldestNotRungAgeMs, paused, capped]
+      properties:
+        queue: { type: string }
+        claimable: { type: integer, description: 'Jobs a worker could claim now, counted up to a cap.' }
+        notRung: { type: integer, description: 'Claimable jobs with no bell on record, past the enqueue grace: waiting for the tick.' }
+        reRingDue: { type: integer, description: 'Claimable jobs whose last bell is old enough that the tick rings them again. Large and normal while a queue has more jobs than workers.' }
+        oldestNotRungAgeMs: { type: integer, nullable: true }
+        paused: { type: boolean }
+        capped: { type: boolean, description: 'A count stopped at its cap: read it as "this many or more".' }
+    TransportQueueStats:
+      type: object
+      required: [queue, doorbellDepth, inFlight, delayed, oldestUndeliveredAgeMs, deadLetterDepth, deadLetterOldestAgeMs, freshness, store]
+      properties:
+        queue: { type: string }
+        doorbellDepth: { type: integer, nullable: true }
+        inFlight: { type: integer, nullable: true, description: 'Bells taken and not yet acknowledged. Null where the broker does not count them: unknown, never zero.' }
+        delayed: { type: integer, nullable: true, description: 'Bells held back for a later time. Null where the broker does not count them: unknown, never zero.' }
+        oldestUndeliveredAgeMs: { type: integer, nullable: true }
+        deadLetterDepth: { type: integer, nullable: true, description: 'Null on a transport with no dead-letter queue, and when it could not be read.' }
+        deadLetterOldestAgeMs: { type: integer, nullable: true }
+        freshness: { $ref: '#/components/schemas/Freshness' }
+        store: { $ref: '#/components/schemas/DoorbellHealthRow' }
+    TransportResponse:
+      type: object
+      required: [ok, transport, deadLetter, queues, truncated, timestamp]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        transport:
+          type: object
+          required: [name, maxDeliverDelayMs, ordering, approximateCounts]
+          properties:
+            name: { type: string }
+            maxDeliverDelayMs: { type: integer, nullable: true }
+            ordering: { type: string, enum: [none, best-effort] }
+            approximateCounts: { type: boolean, description: 'The broker documents its counts as approximate (SQS: eventually consistent, about a minute behind). Show them as estimates.' }
+        deadLetter:
+          type: object
+          required: [supported]
+          properties:
+            supported: { type: boolean, description: 'Whether the broker has a dead-letter queue of bells. The local transports do not.' }
+        queues: { type: array, items: { $ref: '#/components/schemas/TransportQueueStats' } }
+        truncated: { type: boolean, description: More queues exist than this response covers. }
+        timestamp: { type: integer }
+    DeadLetterItem:
+      type: object
+      required: [jobId, queue, deliveryCount, deadLetteredAt, ageMs, jobExists]
+      properties:
+        jobId: { type: string, nullable: true, description: 'Null when the bell could not be decoded.' }
+        queue: { type: string }
+        deliveryCount: { type: integer, nullable: true }
+        deadLetteredAt: { type: integer, nullable: true }
+        ageMs: { type: integer, nullable: true }
+        jobExists: { type: boolean, description: 'The job still exists, so the job inspector can open it.' }
+    DeadLettersResponse:
+      type: object
+      required: [ok, queue, available, reason, items, timestamp]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        queue: { type: string }
+        available: { type: boolean }
+        reason: { type: string, nullable: true, enum: [not_supported, unreachable, null] }
+        items: { type: array, items: { $ref: '#/components/schemas/DeadLetterItem' } }
+        timestamp: { type: integer }
+    DeploymentWarning:
+      type: object
+      required: [code, severity, message]
+      properties:
+        code: { type: string, description: 'Stable: for example `tick_stale`, `tick_late`, `schema_ahead`, `doorbells_overdue`, `dev_token_enabled`.' }
+        severity: { type: string, enum: [warning, critical] }
+        message: { type: string }
+    DeploymentResponse:
+      type: object
+      required: [ok, version, commit, production, devToken, schema, database, transport, connections, tick, workers, doorbells, warnings, timestamp]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        version: { type: string }
+        commit: { type: string, nullable: true }
+        production: { type: boolean }
+        devToken: { type: boolean, description: 'Whether the development token is enabled; never its value.' }
+        schema:
+          type: object
+          required: [current, expected, state]
+          properties:
+            current: { type: integer, nullable: true, description: 'The highest migration the database records.' }
+            expected: { type: integer, description: 'The highest migration this build knows.' }
+            state: { type: string, enum: [current, behind, ahead, unknown] }
+        database:
+          type: object
+          required: [state, latencyMs]
+          properties:
+            state: { type: string, enum: [ok, failed, unknown] }
+            latencyMs: { type: integer, nullable: true }
+        transport:
+          type: object
+          required: [name, state]
+          properties:
+            name: { type: string }
+            state: { type: string, enum: [ok, failed, unknown] }
+        connections:
+          type: object
+          required: [inUse, maxConnections, needed, mode]
+          properties:
+            inUse: { type: integer, nullable: true }
+            maxConnections: { type: integer, nullable: true }
+            needed: { type: integer, nullable: true, description: 'What the declared fleet needs of the database; null when no fleet is declared.' }
+            mode: { type: string, nullable: true, enum: [direct, pooled, null] }
+        tick:
+          type: object
+          required: [state, lastSuccessAt, lastFailureAt, ageMs, lateAfterMs, staleAfterMs]
+          properties:
+            state: { type: string, enum: [ok, late, stale, never, unknown] }
+            lastSuccessAt: { type: integer, nullable: true }
+            lastFailureAt: { type: integer, nullable: true }
+            ageMs: { type: integer, nullable: true }
+            lateAfterMs: { type: integer, description: The age at which the tick is late (amber). }
+            staleAfterMs: { type: integer, description: The age at which the tick is stale (red). }
+        workers:
+          type: object
+          required: [total, active]
+          properties:
+            total: { type: integer, nullable: true }
+            active: { type: integer, nullable: true }
+        doorbells:
+          type: object
+          required: [notRung, oldestNotRungAgeMs, queuesScanned, partial]
+          properties:
+            notRung: { type: integer, nullable: true, description: 'Claimable jobs with no bell, over the queues scanned; null when not read.' }
+            oldestNotRungAgeMs: { type: integer, nullable: true }
+            queuesScanned: { type: integer, nullable: true }
+            partial: { type: boolean, description: 'More queues have pending jobs than were scanned, or a count stopped at its cap.' }
+        warnings: { type: array, items: { $ref: '#/components/schemas/DeploymentWarning' } }
+        timestamp: { type: integer }

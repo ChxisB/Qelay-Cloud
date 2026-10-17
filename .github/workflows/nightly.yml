@@ -1,0 +1,129 @@
+name: Nightly
+
+# What is too slow for a pull request: a deep run of the StateStore model, and the transport suites
+# repeated, so a flaky timing assumption shows up here and not on somebody's review. It never touches a
+# cloud account: the emulators only. Real-cloud runs are the owner's, behind QCLOUD_REAL_CLOUD=1 (D9).
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model:
+    name: Model, deep run
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: qcloud
+          POSTGRES_PASSWORD: qcloud
+          POSTGRES_DB: qcloud_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U qcloud -d qcloud_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      QCLOUD_TEST_DATABASE_URL: postgres://qcloud:qcloud@127.0.0.1:55432/qcloud_test
+      QCLOUD_REQUIRE_DB: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # Measured locally (PG 18, one machine): the fake does about 4,000 runs of up to 200 commands a second
+      # of wall time, Postgres about 7 runs a second, with workers about 5. The planted-bug tests add a
+      # fixed 15 s to each step. Not yet measured on a runner; the 60 minute limit leaves room. A failure
+      # prints the command that replays it.
+      - name: Model on the in-memory fake
+        env:
+          QCLOUD_MODEL_TARGET: fake
+          QCLOUD_MODEL_RUNS: '100000'
+          QCLOUD_MODEL_COMMANDS: '200'
+        run: bun run test:model
+
+      - name: Model on Postgres
+        env:
+          QCLOUD_MODEL_TARGET: postgres
+          QCLOUD_MODEL_RUNS: '2000'
+          QCLOUD_MODEL_COMMANDS: '150'
+        run: bun run test:model
+
+      - name: Model on Postgres, with workers
+        env:
+          QCLOUD_MODEL_TARGET: postgres-workers
+          QCLOUD_MODEL_RUNS: '2000'
+          QCLOUD_MODEL_COMMANDS: '150'
+        run: bun run test:model
+
+  transports:
+    name: Transport ${{ matrix.transport }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - transport: local
+            profile: ''
+          - transport: gcp-emulator
+            profile: pubsub
+          - transport: aws-emulator
+            profile: sqs
+    env:
+      QCLOUD_TEST_DATABASE_URL: postgres://qcloud:qcloud@127.0.0.1:55432/qcloud_test
+      QCLOUD_REQUIRE_DB: '1'
+      COMPOSE: docker compose -f docker-compose.test.yml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Start Postgres and the emulator
+        run: |
+          if [ -n "${{ matrix.profile }}" ]; then
+            $COMPOSE --profile "${{ matrix.profile }}" up -d --wait
+          else
+            $COMPOSE up -d --wait
+          fi
+
+      - name: Contract suite, three times
+        run: |
+          for run in 1 2 3; do
+            bun run test:contract --transport=${{ matrix.transport }}
+          done
+
+      - name: End-to-end scenarios, three times
+        run: |
+          for run in 1 2 3; do
+            bun run test:scenarios --transport=${{ matrix.transport }}
+          done
+
+      - name: Service logs
+        if: failure()
+        run: $COMPOSE --profile pubsub --profile sqs logs --no-color --tail 200
+
+      - name: Stop services
+        if: always()
+        run: $COMPOSE --profile pubsub --profile sqs down

@@ -1,0 +1,45 @@
+# A plan that needs no credentials: the values of a fictional account, so CI can plan the whole environment
+# with offline_plan (scripts/check-terraform-plan-aws.ts). Nothing here is a real account, and a real
+# environment starts from its own file, not this one.
+offline_plan       = true
+account_id         = "123456789012"
+region             = "eu-west-2"
+availability_zones = ["eu-west-2a", "eu-west-2b"]
+name               = "qcloud-ci"
+namespace          = "ci"
+
+worker_image = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/qcloud-worker:ci"
+tick_image   = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/qcloud-api:ci"
+# The tick runs from the Control API's image: its entrypoint is overridden to start the tick.
+tick_command = ["bun", "/app/packages/maintenance/src/bin.ts"]
+image_repository_arns = [
+  "arn:aws:ecr:eu-west-2:123456789012:repository/qcloud-worker",
+  "arn:aws:ecr:eu-west-2:123456789012:repository/qcloud-api",
+]
+
+queues = {
+  default = {}
+  emails  = { visibility_timeout_seconds = 60, max_receive_count = 10 }
+}
+
+worker_services = {
+  worker = { max_instances = 10 }
+  batch = {
+    max_instances = 4
+    min_instances = 0
+    cpu           = 1024
+    memory        = 2048
+    autoscaling   = { queue = "emails" }
+  }
+}
+
+max_connections = 100
+
+# A stand-in for the region's CA bundle: the plan only checks that it is handed to every process.
+database_ca_pem = <<-EOT
+  -----BEGIN CERTIFICATE-----
+  Y2ktcGxhbi1ub3QtYS1yZWFsLWNlcnRpZmljYXRl
+  -----END CERTIFICATE-----
+EOT
+
+additional_principal_arns = ["arn:aws:iam::123456789012:role/qcloud-ci-api-task"]

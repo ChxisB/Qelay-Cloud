@@ -1,0 +1,13 @@
+# Secret scan of the working tree: `gitleaks dir . --redact` (docs/security/review-v1.0.0.md). Nothing is allowlisted
+# but dependencies and build output, and the three fixed fake values the tests sign and log with.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "dependencies and build output are not the repository's own files; the three regexes are test fixtures"
+paths = ['''(^|/)node_modules/''', '''(^|/)dist/''', '''(^|/)\.terraform/''', '''(^|/)\.git/''']
+regexes = [
+  '''whsec_0123456789abcdef0123456789abcdef''',
+  '''00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff''',
+  '''CANARY-secret-8b2f4a''',
+]

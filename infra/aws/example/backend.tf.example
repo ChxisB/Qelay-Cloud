@@ -1,0 +1,17 @@
+# The state holds the database password and the Secrets Manager values, so keep it in a bucket that only
+# operators can read, with versioning and default encryption on. Copy this file to backend.tf, then:
+#
+#   terraform init \
+#     -backend-config="bucket=<your-state-bucket>" \
+#     -backend-config="key=qcloud/<environment>/terraform.tfstate" \
+#     -backend-config="region=<the bucket's region>" \
+#     -backend-config="use_lockfile=true"
+#
+# use_lockfile (Terraform 1.10 or later) locks the state with an object in the bucket. On an older Terraform use
+# -backend-config="dynamodb_table=<a table with a LockID key>" instead. Without a backend the state is a local
+# file next to this configuration (gitignored), which is fine for a first plan and not for a shared environment.
+terraform {
+  backend "s3" {
+    encrypt = true
+  }
+}

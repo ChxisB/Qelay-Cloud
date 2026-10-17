@@ -1,0 +1,77 @@
+import type { Clock } from './clock';
+import { clampTimerDelay } from './timers';
+import type { Execution } from './types';
+
+export interface SubWorkflowRunOptions {
+  pollIntervalMs?: number;
+  maxWaitMs?: number;
+  existingChildId?: string;
+  assertActive: () => void;
+  clock: Clock;
+}
+
+/** Start or resume a child execution and poll its durable terminal state. */
+export async function executeSubWorkflow(
+  workflowName: string,
+  input: unknown,
+  startFn: (name: string, input: unknown) => Promise<{ id: string }>,
+  getFn: (id: string) => Promise<Execution | null>,
+  options: SubWorkflowRunOptions
+): Promise<{ results: Record<string, unknown>; executionId: string }> {
+  const pollIntervalMs = options.pollIntervalMs ?? 100;
+  const maxWaitMs = options.maxWaitMs ?? 300_000;
+  const { assertActive, clock } = options;
+  assertActive();
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+    throw new Error('Sub-workflow pollIntervalMs must be finite and greater than 0');
+  }
+  if (!Number.isFinite(maxWaitMs) || maxWaitMs <= 0) {
+    throw new Error('Sub-workflow maxWaitMs must be finite and greater than 0');
+  }
+
+  // Resume a durable child claimed by an earlier entry into this parent node.
+  assertActive();
+  const existing = options.existingChildId ? await getFn(options.existingChildId) : null;
+  const handle = existing ? { id: existing.id } : await startFn(workflowName, input);
+  assertActive();
+  const startedAt = existing?.createdAt ?? (await getFn(handle.id))?.createdAt ?? clock.now();
+
+  for (;;) {
+    assertActive();
+    const subExec = await getFn(handle.id);
+    if (subExec?.state === 'completed') {
+      const results: Record<string, unknown> = {};
+      for (const [name, record] of Object.entries(subExec.steps)) {
+        if (record.status === 'completed') results[name] = record.result;
+      }
+      return { results, executionId: handle.id };
+    }
+    if (subExec?.state === 'failed') {
+      throw new Error(`Sub-workflow "${workflowName}" (${handle.id}) failed`);
+    }
+    if (subExec?.state === 'compensation-stuck') {
+      throw new Error(
+        `Sub-workflow "${workflowName}" (${handle.id}) is parked mid-rollback ` +
+          '(compensation-stuck); resolve it with resumeCompensation or abandonCompensation'
+      );
+    }
+    const remaining = maxWaitMs - (clock.now() - startedAt);
+    if (Number.isNaN(remaining)) {
+      // A corrupted start time: the budget cannot be measured, so fail the node.
+      throw new Error(
+        `Sub-workflow "${workflowName}" (${handle.id}) has an invalid start time ` +
+          `(${String(startedAt)})`
+      );
+    }
+    if (remaining <= 0) {
+      throw new Error(
+        `Sub-workflow "${workflowName}" (${handle.id}) timed out after ${maxWaitMs}ms`
+      );
+    }
+    // A poll longer than one native timer wakes early; the loop re-checks `remaining`.
+    await new Promise<void>((resolve) =>
+      clock.setTimeout(() => resolve(), clampTimerDelay(Math.min(pollIntervalMs, remaining)))
+    );
+    assertActive();
+  }
+}

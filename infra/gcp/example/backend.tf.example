@@ -1,0 +1,10 @@
+# The state holds the database password and the Secret Manager values, so keep it in a bucket that only
+# operators can read, with versioning on. Copy this file to backend.tf, then:
+#
+#   terraform init -backend-config="bucket=<your-state-bucket>" -backend-config="prefix=qcloud/<environment>"
+#
+# Without it the state is a local file next to this configuration (gitignored), which is fine for a first
+# plan and not for a shared environment.
+terraform {
+  backend "gcs" {}
+}

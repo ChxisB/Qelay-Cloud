@@ -1,0 +1,28 @@
+# The build context is the repository root (both Dockerfiles say what they copy), so keep out
+# everything an image must not contain: history, dependencies built on another platform, build
+# output, the planning notes, tests and anything that may hold a credential.
+.git
+.claude
+.github
+**/node_modules
+**/dist
+**/.vite
+**/test-results
+**/playwright-report
+**/*.tsbuildinfo
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+**/*.tfplan
+.env
+.env.*
+!.env.example
+infra
+docs
+examples
+scripts
+test
+packages/*/test
+packages/*/e2e
+docker-compose.test.yml

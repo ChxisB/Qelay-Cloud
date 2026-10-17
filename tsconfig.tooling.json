@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "files": [],
+  "references": [],
+  "include": [
+    "examples",
+    "scripts",
+    "test",
+    "packages/control-api/test",
+    "packages/maintenance/test",
+    "packages/sdk/test",
+    "packages/store-postgres/test",
+    "packages/telemetry/test",
+    "packages/transport-aws/test",
+    "packages/transport-gcp/test",
+    "packages/transport-local/test"
+  ]
+}

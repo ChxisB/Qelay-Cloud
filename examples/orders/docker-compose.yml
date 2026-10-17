@@ -1,0 +1,21 @@
+# Postgres for the example, on a port of its own (55452, loopback only). The credentials guard nothing.
+#
+#   docker compose -f examples/orders/docker-compose.yml up -d --wait
+#   bun run examples/orders/src/migrate.ts
+#   bun run examples/orders/src/worker.ts      # in one terminal
+#   bun run examples/orders/src/producer.ts 5  # in another
+#   docker compose -f examples/orders/docker-compose.yml down -v
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - '127.0.0.1:55452:5432'
+    environment:
+      POSTGRES_USER: qcloud
+      POSTGRES_PASSWORD: qcloud
+      POSTGRES_DB: orders
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U qcloud -d orders']
+      interval: 2s
+      timeout: 3s
+      retries: 20

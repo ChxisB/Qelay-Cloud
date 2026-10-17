@@ -1,0 +1,32 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Build/test noise
+*.tsbuildinfo
+coverage/
+
+# bun.lock IS committed on purpose: CI uses `bun install --frozen-lockfile`.
+
+# Terraform: never commit state or provider caches
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+
+# Claude Code local state
+.claude/worktrees/
+.claude/settings.local.json
+
+# Throwaway TLS certificate exported by the postgres-tls compose service
+test/support/pgbouncer/.tls/
+*.tfplan
+
+# Playwright output
+test-results/
+playwright-report/

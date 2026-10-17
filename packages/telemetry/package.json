@@ -1,0 +1,34 @@
+{
+  "name": "@qelay-cloud/telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.9.1"
+  },
+  "peerDependencies": {
+    "@qelay-cloud/maintenance": "workspace:*",
+    "qelay-cloud": "workspace:*"
+  },
+  "devDependencies": {
+    "@opentelemetry/sdk-metrics": "2.12.0",
+    "@opentelemetry/sdk-trace-base": "2.12.0",
+    "@qelay-cloud/maintenance": "workspace:*",
+    "@qelay-cloud/transport-local": "workspace:*",
+    "qelay-cloud": "workspace:*"
+  }
+}

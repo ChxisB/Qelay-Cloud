@@ -1,0 +1,212 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/Button';
+import { Card, CardHeader } from '@/components/ui/Card';
+import { Field, Input } from '@/components/ui/form';
+import { currentControlConnectionEpoch } from '@/lib/controlConnectionEpoch';
+import { useControlActionGuard } from '@/lib/useControlActionGuard';
+import type {
+  QueueLimitSnapshot,
+  QueueOperationsRepository,
+} from '../application/QueueOperationsRepository';
+import { bqQueueOperationsRepository } from '../infrastructure/bqQueueOperationsRepository';
+import { QueueDeduplicationConsole } from './QueueDeduplicationConsole';
+import { QueueGroupConsole } from './QueueGroupConsole';
+import { QueueLimitReadback } from './QueueLimitReadback';
+import { QueueTelemetryConsole } from './QueueTelemetryConsole';
+
+export type QueueOperationRunner = <T>(
+  label: string,
+  task: (isCurrent: () => boolean) => Promise<T>,
+  onSuccess: (value: T) => void,
+  mutation?: boolean
+) => void;
+
+export function QueueOperationsPanel({
+  queue,
+  refreshKey = 0,
+  repository = bqQueueOperationsRepository,
+  onApplied,
+}: {
+  queue: string;
+  refreshKey?: number;
+  repository?: QueueOperationsRepository;
+  onApplied?: () => void;
+}) {
+  const actionGuard = useControlActionGuard(`queue-operations:${queue}`);
+  const [maxJobs, setMaxJobs] = useState('');
+  const [limitsState, setLimitsState] = useState<{
+    queue: string;
+    snapshot: QueueLimitSnapshot | null;
+    loading: boolean;
+    error: string;
+  } | null>(null);
+  const [busy, setBusy] = useState('');
+  const [actionError, setActionError] = useState('');
+  const lock = useRef(false);
+  const limitRequest = useRef(0);
+  const active = useRef(true);
+  const limits =
+    limitsState?.queue === queue
+      ? limitsState
+      : { queue, snapshot: null, loading: true, error: '' };
+
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      limitRequest.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    limitRequest.current += 1;
+    lock.current = false;
+    setLimitsState(null);
+    setBusy('');
+    setActionError('');
+  }, [actionGuard.scopeKey]);
+
+  const loadLimits = useCallback(async () => {
+    const parsed = optionalMaxJobs(maxJobs);
+    if (parsed === null) {
+      setLimitsState((current) => ({
+        queue,
+        snapshot: current?.queue === queue ? current.snapshot : null,
+        loading: false,
+        error: 'maxJobs must be a whole number from 0 to 1000000.',
+      }));
+      return;
+    }
+    const mine = ++limitRequest.current;
+    const connectionEpoch = currentControlConnectionEpoch();
+    setLimitsState((current) => ({
+      queue,
+      snapshot: current?.queue === queue ? current.snapshot : null,
+      loading: true,
+      error: '',
+    }));
+    try {
+      const next = await repository.limits(queue, parsed);
+      if (
+        active.current &&
+        mine === limitRequest.current &&
+        connectionEpoch === currentControlConnectionEpoch()
+      ) {
+        setLimitsState({ queue, snapshot: next, loading: false, error: '' });
+      }
+    } catch (error) {
+      if (
+        active.current &&
+        mine === limitRequest.current &&
+        connectionEpoch === currentControlConnectionEpoch()
+      ) {
+        setLimitsState({ queue, snapshot: null, loading: false, error: messageOf(error) });
+      }
+    }
+  }, [maxJobs, queue, repository]);
+
+  // oxlint-disable-next-line react/exhaustive-deps -- refreshKey explicitly invalidates the snapshot
+  useEffect(() => void loadLimits(), [queue, refreshKey]);
+
+  const run: QueueOperationRunner = (label, task, onSuccess, mutation = false) => {
+    if (lock.current) return;
+    const lease = actionGuard.begin('queue-sdk-command');
+    if (!lease) return;
+    lock.current = true;
+    setBusy(label);
+    setActionError('');
+    void task(lease.isCurrent)
+      .then((value) => {
+        if (!active.current || !lease.isCurrent()) return;
+        onSuccess(value);
+        if (mutation) {
+          onApplied?.();
+          if (!onApplied) void loadLimits();
+        }
+      })
+      .catch((error) => {
+        if (active.current && lease.isCurrent()) setActionError(messageOf(error));
+      })
+      .finally(() => {
+        const current = lease.finish();
+        if (active.current && current) {
+          lock.current = false;
+          setBusy('');
+        }
+      });
+  };
+
+  return (
+    <Card className="mb-6">
+      <CardHeader
+        title="Queue SDK operations"
+        action={busy ? <span className="font-mono text-xs text-link">{busy}...</span> : undefined}
+      />
+      <p className="mb-5 max-w-3xl text-xs leading-5 text-faint">
+        Live Qelay limit, group, deduplication, metric, and event-journal contracts, including group
+        pause, pending jobs, and priority counts. Requests are pinned to the server managed by this
+        control agent.
+      </p>
+      <div className="mb-5 flex flex-wrap items-end gap-3 border-b border-line pb-5">
+        <div className="w-48">
+          <Field label="TTL threshold (maxJobs)" hint="Optional token-consumption threshold">
+            <Input
+              name="queue-sdk-max-jobs"
+              type="number"
+              min={0}
+              max={1_000_000}
+              step={1}
+              value={maxJobs}
+              onChange={(event) => setMaxJobs(event.target.value)}
+              placeholder="Not set"
+            />
+          </Field>
+        </div>
+        <Button size="sm" disabled={limits.loading || Boolean(busy)} onClick={loadLimits}>
+          Refresh limits
+        </Button>
+      </div>
+      <QueueLimitReadback
+        snapshot={limits.snapshot}
+        loading={limits.loading}
+        error={limits.error}
+      />
+      {actionError && (
+        <p role="alert" className="mt-4 text-sm text-danger">
+          {actionError}
+        </p>
+      )}
+      <div className="mt-6 grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+        <QueueGroupConsole
+          key={`${queue}:groups`}
+          queue={queue}
+          repository={repository}
+          busy={busy}
+          run={run}
+        />
+        <QueueDeduplicationConsole
+          key={`${queue}:deduplication`}
+          queue={queue}
+          repository={repository}
+          busy={busy}
+          run={run}
+        />
+        <QueueTelemetryConsole
+          key={`${queue}:telemetry`}
+          queue={queue}
+          repository={repository}
+          busy={busy}
+          run={run}
+        />
+      </div>
+    </Card>
+  );
+}
+
+function optionalMaxJobs(value: string): number | undefined | null {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 1_000_000 ? parsed : null;
+}
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));

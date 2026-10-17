@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <!-- Keeps relative build assets rooted correctly on static SPA deep links. A host that serves
+         the panel under a sub-path rewrites this root (see VITE_BASE in vite.config.ts). -->
+    <base href="/" data-qelay-base />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      // Pre-paint theme: apply the persisted choice before the bundle loads so
+      // light-theme users don't get a dark first-paint flash on every visit.
+      // Key + shape must match themeStore (zustand persist: {state:{theme}}).
+      // The second key is the pre-rebrand one; themeStore migrates it on hydration.
+      try {
+        const t = JSON.parse(
+          localStorage.getItem('qelay-theme') ?? localStorage.getItem('bq-dash-theme')
+        ).state.theme;
+        if (t === 'light' || t === 'dark') {
+          document.documentElement.dataset.theme = t;
+          document.documentElement.style.colorScheme = t;
+        }
+      } catch {}
+    </script>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#0B0F1A" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />
+    <title>Qelay Cloud</title>
+    <meta
+      name="description"
+      content="Control panel for Qelay Cloud: queues, jobs, DLQ, cron and workers on a Postgres-backed job queue, live. Add ?demo to the URL to browse sample data."
+    />
+    <!-- No canonical, og:url or social-card tags: this is an operator console served from the
+         Control API's own origin, and its host is not known here. -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

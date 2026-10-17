@@ -1,0 +1,48 @@
+{
+  "name": "qelay-cloud-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b && tsc -p tsconfig.tooling.json && bun run --cwd packages/panel typecheck",
+    "lint": "oxlint .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "architecture": "bun run scripts/check-file-size.ts && bun run scripts/check-transport-boundary.ts && bun run scripts/check-workflow-boundary.ts",
+    "check:terraform": "bun run scripts/check-terraform-plan.ts && bun run scripts/check-terraform-plan-aws.ts && bun run scripts/check-terraform-control-plane.ts && bun run scripts/check-terraform-control-plane-aws.ts",
+    "test": "bun test",
+    "test:model": "bun test test/model",
+    "test:gameday": "bun run scripts/gameday.ts",
+    "security:routes": "bun run scripts/security-routes.ts",
+    "notices": "bun run scripts/third-party-notices.ts",
+    "test:scenarios": "bun run scripts/test-transport.ts scenarios",
+    "test:e2e": "bun run --cwd packages/panel test:e2e",
+    "test:contract": "bun run scripts/test-transport.ts contract",
+    "docs:transports": "bun run scripts/gen-transports-doc.ts",
+    "docs:check": "bun run scripts/check-docs.ts"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-sqs": "3.1140.0",
+    "@qelay-cloud/core": "workspace:*",
+    "@qelay-cloud/transport-local": "workspace:*",
+    "@types/node": "^26.0.1",
+    "bun-types": "1.4.2",
+    "fast-check": "^4.9.0",
+    "oxfmt": "^0.63.0",
+    "oxlint": "^1.78.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "typescript": "^6.0.3"
+  },
+  "packageManager": "bun@1.4.2",
+  "engines": {
+    "bun": "1.4.2"
+  },
+  "patchedDependencies": {
+    "ai@7.0.14": "packages/panel/patches/ai@7.0.14.patch"
+  },
+  "overrides": {
+    "tinypool": "2.1.2"
+  }
+}

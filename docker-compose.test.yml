@@ -1,0 +1,143 @@
+# Throwaway Postgres for the test suite. Local only: the credentials below guard nothing and
+# the port is bound to loopback. 55432 is deliberately not 5432, so it never collides with a
+# developer's own Postgres. Data lives on tmpfs and is gone when the container stops.
+#
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   docker compose -f docker-compose.test.yml down
+#
+# The Pub/Sub emulator (transport-gcp) and ElasticMQ (transport-aws) are opt-in, so the default
+# `up` stays small:
+#
+#   docker compose -f docker-compose.test.yml --profile pubsub up -d --wait
+#   docker compose -f docker-compose.test.yml --profile pubsub down
+#   docker compose -f docker-compose.test.yml --profile sqs up -d --wait sqs
+#   docker compose -f docker-compose.test.yml --profile sqs down
+#
+# PgBouncer (task 05 spike) stands in for a managed transaction-mode pooler, in front of the
+# Postgres above. Two instances: 56432 tracks protocol-level prepared statements (200), 56433 does
+# not (0, Cloud SQL's default).
+#
+#   docker compose -f docker-compose.test.yml --profile pgbouncer up -d --wait pgbouncer pgbouncer-noprep
+#   docker compose -f docker-compose.test.yml --profile pgbouncer down
+#
+# A TLS-capable Postgres (task 05 spike) on 55433. It also accepts plaintext, because one suite checks
+# that the client's default is plaintext. It generates a throwaway self-signed certificate
+# on start and exports only the public part to test/support/pgbouncer/.tls/
+# (gitignored). The private key stays in the container.
+#
+#   docker compose -f docker-compose.test.yml --profile tls up -d --wait postgres-tls
+#   docker compose -f docker-compose.test.yml --profile tls down
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - '127.0.0.1:55432:5432'
+    environment:
+      POSTGRES_USER: qcloud
+      POSTGRES_PASSWORD: qcloud
+      POSTGRES_DB: qcloud_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    # Durability is irrelevant for throwaway test data; fsync off makes schema churn faster.
+    command: ['postgres', '-c', 'fsync=off', '-c', 'max_connections=200']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U qcloud -d qcloud_test']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  pubsub:
+    profiles: ['pubsub']
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:555.0.0-emulators
+    ports:
+      - '127.0.0.1:58085:8085'
+    # The project id is arbitrary: the emulator accepts any project and stores nothing on disk.
+    command:
+      ['gcloud', 'beta', 'emulators', 'pubsub', 'start', '--host-port=0.0.0.0:8085', '--project=qcloud-test']
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -sf http://127.0.0.1:8085 >/dev/null']
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  sqs:
+    profiles: ['sqs']
+    # Pinned: ElasticMQ's redrive and visibility edge cases move between releases.
+    image: softwaremill/elasticmq-native:1.7.1
+    ports:
+      - '127.0.0.1:59324:9324'
+    volumes:
+      - ./test/support/elasticmq.conf:/opt/elasticmq.conf:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null "http://127.0.0.1:9324/?Action=ListQueues"']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Pinned by digest (PgBouncer 1.26.0): prepared-statement tracking changed between releases.
+  pgbouncer:
+    profiles: ['pgbouncer']
+    image: edoburu/pgbouncer@sha256:9c78945868a6a142c7fc40ccd843bbe5a606df163c7ffce4de70e0d628d696a2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:56432:6432'
+    volumes:
+      - ./test/support/pgbouncer/pgbouncer.prepared-200.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./test/support/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'nc -z 127.0.0.1 6432']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  pgbouncer-noprep:
+    profiles: ['pgbouncer']
+    image: edoburu/pgbouncer@sha256:9c78945868a6a142c7fc40ccd843bbe5a606df163c7ffce4de70e0d628d696a2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:56433:6432'
+    volumes:
+      - ./test/support/pgbouncer/pgbouncer.prepared-0.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./test/support/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'nc -z 127.0.0.1 6432']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  postgres-tls:
+    profiles: ['tls']
+    image: postgres:16
+    ports:
+      - '127.0.0.1:55433:5432'
+    environment:
+      POSTGRES_USER: qcloud
+      POSTGRES_PASSWORD: qcloud
+      POSTGRES_DB: qcloud_test
+    volumes:
+      - ./test/support/pgbouncer/.tls:/export
+    tmpfs:
+      - /var/lib/postgresql/data
+    # The certificate names localhost and 127.0.0.1, so verify-full works against the published port.
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        openssl req -x509 -nodes -newkey rsa:2048 -days 2 -subj /CN=localhost \
+          -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+          -keyout /var/lib/postgresql/server.key -out /export/server.crt
+        chown postgres:postgres /var/lib/postgresql/server.key
+        chmod 600 /var/lib/postgresql/server.key
+        chmod 644 /export/server.crt
+        exec docker-entrypoint.sh postgres -c fsync=off -c ssl=on \
+          -c ssl_cert_file=/export/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U qcloud -d qcloud_test -h 127.0.0.1']
+      interval: 2s
+      timeout: 3s
+      retries: 40

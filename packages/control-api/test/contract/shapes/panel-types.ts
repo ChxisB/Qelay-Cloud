@@ -1,0 +1,257 @@
+// Verbatim copy of `src/lib/types.ts` from ../qelay-control-panel (MIT, see docs/PORTING.md), taken so
+// the contract tests can check what the Control API sends against what the panel reads. Do not edit
+// it: when task 33 exists the panel's types come from a shared package and this file is deleted.
+//
+//   panel commit:  8ebf9328950a23a2f2687115a0ec15e66b7659bd (2026-10-09)
+//   sha256 of the copied file: 98c61b150026c77344bb71473f94bd082b663836fe553970eacddd197d05ec6d
+//   The panel's working tree differed from that commit in comments only (the product name, renamed to "Qelay").
+//
+/**
+ * Types mirroring the Qelay HTTP API response shapes.
+ * Source of truth: src/infrastructure/server/httpEndpoints.ts and the
+ * httpRoute*.ts routers. Fields that the server may omit are optional here and
+ * the UI renders defensively (unknown name → "unknown", missing duration → "—").
+ */
+
+export interface OverviewStats {
+  waiting: number;
+  active: number;
+  delayed: number;
+  completed: number;
+  dlq: number;
+  totalPushed: number;
+  totalPulled: number;
+  totalCompleted: number;
+  totalFailed: number;
+  uptime: number;
+}
+
+export interface Throughput {
+  pushPerSec: number;
+  pullPerSec: number;
+  completePerSec: number;
+  failPerSec: number;
+}
+
+export interface WorkerInfo {
+  id: string;
+  name: string;
+  queues: string[];
+  lastSeen: number;
+  activeJobs: number;
+  processedJobs: number;
+  failedJobs: number;
+}
+
+export interface CronInfo {
+  name: string;
+  queue: string;
+  schedule: string | null;
+  repeatEvery: number | null;
+  nextRun: number;
+  executions: number;
+}
+
+export interface StorageStatus {
+  diskFull?: boolean;
+  error?: string | null;
+  since?: number | null;
+  [key: string]: unknown;
+}
+
+/** Exact GET /ready response union in Qelay. */
+export type ReadinessResponse =
+  | { ok: true; ready: true }
+  | {
+      ok: false;
+      ready: false;
+      storage: { diskFull: true; error: string | null; since: number | null };
+    };
+
+/** Exact JSON counter payload returned by GET /metrics in Qelay. */
+export interface MetricsResponse {
+  ok: true;
+  metrics: {
+    totalPushed: number;
+    totalPulled: number;
+    totalCompleted: number;
+    totalFailed: number;
+  };
+}
+
+export interface OverviewResponse {
+  ok: boolean;
+  stats: OverviewStats;
+  throughput: Throughput;
+  latency: {
+    // Keyed by operation: averages as { pushMs, pullMs, ackMs }; percentiles as
+    // { push: { p50, p95, p99 }, pull: {...}, ack: {...} } — these are TCP
+    // operation-latency distributions, not job wait/processing time.
+    averages: Record<string, number>;
+    percentiles: Record<string, { p50: number; p95: number; p99: number }>;
+  };
+  memory: { heapUsed: number; heapTotal: number; rss: number };
+  collections: Record<string, number>;
+  workers: { total: number; active: number; list: WorkerInfo[]; truncated: boolean };
+  crons: { total: number; list: CronInfo[]; truncated: boolean };
+  storage: StorageStatus;
+  timestamp: number;
+}
+
+export interface QueueSummary {
+  name: string;
+  waiting: number;
+  delayed: number;
+  active: number;
+  dlq: number;
+  paused: boolean;
+}
+
+export interface QueuesResponse {
+  ok: boolean;
+  queues: QueueSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  timestamp: number;
+}
+
+export interface QueueCounts {
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  prioritized: number;
+  'waiting-children': number;
+  paused: number;
+  [key: string]: number;
+}
+
+export interface JobSummary {
+  id: string;
+  priority: number;
+  createdAt: number;
+  runAt: number;
+  attempts: number;
+  progress: number;
+}
+
+export interface QueueDetailResponse {
+  ok: boolean;
+  name: string;
+  counts: QueueCounts;
+  paused: boolean;
+  priorityCounts: Record<string, number>;
+  dlqPreview: Array<{ id: string; data: unknown; attempts: number; createdAt: number }>;
+  jobs?: {
+    waiting: JobSummary[];
+    active: JobSummary[];
+    delayed: JobSummary[];
+    paused: JobSummary[];
+  };
+  timestamp: number;
+}
+
+export type JobState =
+  | 'waiting'
+  | 'active'
+  | 'completed'
+  | 'failed'
+  | 'delayed'
+  | 'paused'
+  | 'prioritized'
+  | 'waiting-children'
+  | string;
+
+/** A job as returned by GET /queues/:q/jobs/list and GET /jobs/:id. */
+export interface Job {
+  id: string;
+  name?: string;
+  queue?: string;
+  state?: JobState;
+  status?: JobState;
+  priority?: number;
+  data?: unknown;
+  /** Current Qelay job reads expose terminal results inline. */
+  returnvalue?: unknown;
+  /** @deprecated Legacy dashboard alias. */
+  result?: unknown;
+  attempts?: number;
+  maxAttempts?: number;
+  progress?: number;
+  createdAt?: number;
+  runAt?: number;
+  startedAt?: number | null;
+  completedAt?: number | null;
+  /** @deprecated Legacy BullMQ-style aliases; Qelay returns startedAt/completedAt. */
+  processedOn?: number;
+  /** @deprecated Legacy BullMQ-style aliases; Qelay returns startedAt/completedAt. */
+  finishedOn?: number;
+  failedReason?: string;
+  stacktrace?: string[];
+  [key: string]: unknown;
+}
+
+export interface DlqAttempt {
+  attempt: number;
+  startedAt: number;
+  failedAt: number;
+  reason: string;
+  error: string | null;
+  duration: number;
+}
+
+export interface DlqEntry {
+  job: Job;
+  enteredAt: number;
+  reason: string;
+  error: string | null;
+  attempts?: DlqAttempt[];
+  retryCount?: number;
+  lastRetryAt?: number | null;
+  nextRetryAt?: number | null;
+  expiresAt?: number | null;
+  [key: string]: unknown;
+}
+
+export interface DlqStats {
+  ok?: boolean;
+  total?: number;
+  byReason?: Record<string, number>;
+  [key: string]: unknown;
+}
+
+export interface StatsResponse {
+  ok: boolean;
+  stats: OverviewStats & {
+    prioritized: number;
+    'waiting-children': number;
+    pushPerSec: number;
+    pullPerSec: number;
+    completePerSec: number;
+    failPerSec: number;
+    [key: string]: number;
+  };
+  memory: {
+    heapUsed: number;
+    heapTotal: number;
+    rss: number;
+    external: number;
+    arrayBuffers: number;
+  };
+  collections: Record<string, number>;
+}
+
+/** A normalized live activity event (from SSE /events). */
+export interface ActivityEvent {
+  seq: number;
+  event: string;
+  queue?: string;
+  jobId?: string;
+  name?: string;
+  status: JobState;
+  timestamp: number;
+  error?: string;
+  progress?: number;
+}

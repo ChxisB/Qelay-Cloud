@@ -1,0 +1,78 @@
+import type { AddJobBody } from '@/lib/bq';
+import { FLOW_METADATA_KEYS } from '@/lib/bq/jobPayload';
+import type { JobFull } from '@/lib/bqTypes';
+
+/**
+ * Payload handed to Add Job (via router state) when cloning an existing job, so
+ * the operator can tweak the data/options and enqueue a FRESH job while the
+ * original record stays intact for audit. Distinct from retry/requeue, which
+ * re-run the same job with its original payload.
+ */
+export interface CloneJobState {
+  clone: {
+    queue: string;
+    /** First-class Qelay job name, distinct from user data. */
+    name?: string;
+    /** Pretty-printed JSON of the source job's data, ready for the textarea. */
+    dataText: string;
+    options: Partial<
+      Pick<
+        AddJobBody,
+        | 'priority'
+        | 'maxAttempts'
+        | 'backoff'
+        | 'timeout'
+        | 'removeOnComplete'
+        | 'removeOnFail'
+        | 'ttl'
+        | 'tags'
+        | 'groupId'
+      >
+    > & {
+      /**
+       * The source job's retry STRATEGY, kept alongside the numeric `backoff`
+       * (which stays a plain delay for the form field) so a clone of an
+       * exponential job isn't silently downgraded to a flat retry.
+       */
+      backoffConfig?: { type: 'fixed' | 'exponential'; delay: number };
+    };
+  };
+}
+
+/**
+ * A clone is a fresh standalone job: broker-owned flow links (`__parentId`, …)
+ * would make clients and the server treat it as a child of the source's parent.
+ */
+function cloneableData(data: unknown): unknown {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return data;
+  const copy = { ...(data as Record<string, unknown>) };
+  for (const key of FLOW_METADATA_KEYS) delete copy[key];
+  return copy;
+}
+
+/** Build the router-state clone payload from a loaded job (options carried when present). */
+export function buildCloneState(job: JobFull): CloneJobState {
+  const options: CloneJobState['clone']['options'] = {};
+  if (typeof job.priority === 'number') options.priority = job.priority;
+  if (typeof job.maxAttempts === 'number') options.maxAttempts = job.maxAttempts;
+  if (typeof job.backoff === 'number') options.backoff = job.backoff;
+  if (job.backoffConfig && typeof job.backoffConfig.delay === 'number') {
+    options.backoffConfig = { type: job.backoffConfig.type, delay: job.backoffConfig.delay };
+    // The strategy's own delay is the authoritative one for the form.
+    if (typeof options.backoff !== 'number') options.backoff = job.backoffConfig.delay;
+  }
+  if (typeof job.timeout === 'number') options.timeout = job.timeout;
+  if (typeof job.removeOnComplete === 'boolean') options.removeOnComplete = job.removeOnComplete;
+  if (typeof job.removeOnFail === 'boolean') options.removeOnFail = job.removeOnFail;
+  if (typeof job.ttl === 'number') options.ttl = job.ttl;
+  if (Array.isArray(job.tags) && job.tags.length) options.tags = [...job.tags];
+  if (typeof job.groupId === 'string' && job.groupId) options.groupId = job.groupId;
+  return {
+    clone: {
+      queue: job.queue ?? '',
+      name: job.name,
+      dataText: JSON.stringify(cloneableData(job.data ?? {}), null, 2),
+      options,
+    },
+  };
+}

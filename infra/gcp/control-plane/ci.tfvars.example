@@ -1,0 +1,31 @@
+# A plan that needs no credentials: the values of a fictional project, matching `../example/ci.tfvars.example`,
+# so CI can plan the control plane with a placeholder access token (scripts/check-terraform-control-plane.ts).
+# Nothing here is a real project, and a real environment starts from its own file, not this one.
+project_id     = "qcloud-ci"
+project_number = "123456789012"
+region         = "europe-west2"
+name           = "qcloud-ci"
+namespace      = "ci"
+
+# What `terraform output -json control_plane_inputs` prints in ../example, with the values it would have.
+network              = "qcloud-ci-vpc"
+subnetwork           = "qcloud-ci-workers"
+subnet_cidr          = "10.10.0.0/24"
+data_plane_instances = 15
+topic_name           = "qcloud.ci.bells"
+dead_letter_subscription_names = {
+  default = "qcloud.ci.dlq.default"
+  emails  = "qcloud.ci.dlq.emails"
+}
+database_url_secret = { secret_id = "qcloud-ci-database-url", version = "1" }
+database_ca_secret  = { secret_id = "qcloud-ci-database-ca", version = "1" }
+
+api_image   = "europe-west2-docker.pkg.dev/qcloud-ci/qcloud/api:ci"
+panel_image = "europe-west2-docker.pkg.dev/qcloud-ci/qcloud/panel:ci"
+
+oidc_issuer    = "https://idp.example.com/"
+oidc_audience  = ["qcloud-ci-panel"]
+oidc_jwks_url  = "https://idp.example.com/.well-known/jwks.json"
+oidc_client_id = "qcloud-ci-panel"
+
+deployer_members = ["user:operator@example.com"]

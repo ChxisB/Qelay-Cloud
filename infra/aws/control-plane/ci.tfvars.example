@@ -1,0 +1,51 @@
+# A plan that needs no credentials: the values of a fictional account, matching `../example/ci.tfvars.example`, so CI
+# can plan the control plane with offline_plan (scripts/check-terraform-control-plane-aws.ts). Nothing here is a real
+# account, and a real environment starts from its own file, not this one.
+offline_plan = true
+account_id   = "123456789012"
+region       = "eu-west-2"
+name         = "qcloud-ci"
+
+# What `terraform output -json control_plane_inputs` prints in ../example, with the values it would have.
+namespace               = "ci"
+vpc_id                  = "vpc-0123456789abcdef0"
+vpc_cidr                = "10.20.0.0/16"
+availability_zones      = ["eu-west-2a", "eu-west-2b"]
+private_subnet_ids      = ["subnet-0aaaaaaaaaaaaaaa1", "subnet-0bbbbbbbbbbbbbbb2"]
+tasks_security_group_id = "sg-0123456789abcdef0"
+cluster_arn             = "arn:aws:ecs:eu-west-2:123456789012:cluster/qcloud-ci"
+data_plane_tasks        = 16
+queue_arns = {
+  default = "arn:aws:sqs:eu-west-2:123456789012:qcloud-ci__default"
+  emails  = "arn:aws:sqs:eu-west-2:123456789012:qcloud-ci__emails"
+}
+dead_letter_arns = {
+  default = "arn:aws:sqs:eu-west-2:123456789012:qcloud-ci__default__dlq"
+  emails  = "arn:aws:sqs:eu-west-2:123456789012:qcloud-ci__emails__dlq"
+}
+queue_kms_key_arn   = "arn:aws:kms:eu-west-2:123456789012:key/00000000-0000-0000-0000-000000000000"
+database_url_secret = "arn:aws:secretsmanager:eu-west-2:123456789012:secret:qcloud-ci/database-url-AbCdEf"
+database_tls_env = {
+  QCLOUD_DATABASE_TLS_CA = <<-EOT
+    -----BEGIN CERTIFICATE-----
+    Y2ktcGxhbi1ub3QtYS1yZWFsLWNlcnRpZmljYXRl
+    -----END CERTIFICATE-----
+  EOT
+}
+internet_gateway_id = "igw-0123456789abcdef0"
+
+api_image   = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/qcloud-api:ci"
+panel_image = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/qcloud-panel:ci"
+image_repository_arns = [
+  "arn:aws:ecr:eu-west-2:123456789012:repository/qcloud-api",
+  "arn:aws:ecr:eu-west-2:123456789012:repository/qcloud-panel",
+]
+
+oidc_issuer    = "https://idp.example.com/"
+oidc_audience  = ["qcloud-ci-panel"]
+oidc_jwks_url  = "https://idp.example.com/.well-known/jwks.json"
+oidc_client_id = "qcloud-ci-panel"
+
+certificate_arn = "arn:aws:acm:eu-west-2:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+api_hostname    = "api.qcloud-ci.example.com"
+panel_hostname  = "qelay.qcloud-ci.example.com"

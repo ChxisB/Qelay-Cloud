@@ -1,0 +1,235 @@
+@import "tailwindcss";
+
+/* Dark is the default look; `light:` overrides apply under [data-theme=light]. */
+@custom-variant light (&:where([data-theme='light'], [data-theme='light'] *));
+
+/* Qelay palette. Roles keep their names; only values changed. Values marked (derived)
+   come from the design's product-UI board, not the brand guidelines. */
+:root,
+[data-theme="dark"] {
+  --bg: #0b0f1a;
+  --surface: #101522; /* derived */
+  --surface-2: #151c2d; /* derived */
+  --line: #1e293b;
+  --line-strong: #334155;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  /* The design's #64748b is 4.02:1 on --bg; this clears 4.5:1 on --bg and --surface-2. */
+  --text-faint: #7a8ba3;
+  --sidebar: #0b0f1a;
+  /* Brand action: the one primary button per view. Dark text on orange, never white. */
+  --primary: #ff7a00;
+  --primary-fg: #0b0f1a;
+  /* Violet is for links and focus. #7a3dff is only 3.59:1 on --bg, so text uses the lighter tint. */
+  --link: #a98bff; /* derived */
+  --ring: #7a3dff;
+  --selected: rgba(122, 61, 255, 0.1);
+  --hover: #151c2d;
+  --segment-active: #1e293b;
+  /* Semantic status colors — 400 shades read well on the dark surfaces. */
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #ff3d61;
+  --danger-fill: #ff3d61;
+  /* Job-state pills (task 05 wires components to these). bg is translucent over --surface. */
+  --state-waiting-bg: rgba(148, 163, 184, 0.14);
+  --state-waiting-fg: #94a3b8;
+  --state-prioritized-bg: rgba(255, 122, 0, 0.14);
+  --state-prioritized-fg: #ff7a00;
+  --state-active-bg: rgba(122, 61, 255, 0.2);
+  --state-active-fg: #a98bff;
+  --state-completed-bg: rgba(52, 211, 153, 0.12);
+  --state-completed-fg: #34d399;
+  --state-failed-bg: rgba(255, 61, 97, 0.14);
+  --state-failed-fg: #ff3d61;
+  --state-delayed-bg: rgba(251, 191, 36, 0.12);
+  --state-delayed-fg: #fbbf24;
+  /* Brand gradient stops. Theme-independent: the one gradient allowed per screen
+     (task 05: the Overview throughput line). Only AreaChart reads these. */
+  --brand-1: #ff7a00;
+  --brand-2: #ff3d61;
+  --brand-3: #7a3dff;
+}
+
+[data-theme="light"] {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --line: #e2e8f0;
+  --line-strong: #cbd5e1;
+  --text: #0b0f1a;
+  --text-muted: #475569; /* derived */
+  /* 4.76:1 on white. Below 4.5:1 on --surface-2 and --sidebar, so use it on white surfaces only. */
+  --text-faint: #64748b;
+  --sidebar: #f1f5f9;
+  --primary: #ff7a00;
+  --primary-fg: #0b0f1a;
+  --link: #7a3dff;
+  --ring: #7a3dff;
+  --selected: rgba(122, 61, 255, 0.06);
+  --hover: #e2e8f0;
+  /* Light segmented control: white chip, separated from the track by a 1px --line border. */
+  --segment-active: #ffffff;
+  /* Darker shades: the 400s used on dark fail WCAG AA on white surfaces. */
+  --success: #047857;
+  --warning: #b45309;
+  --danger: #d11a3f; /* derived */
+  --danger-fill: #ff3d61;
+  --state-waiting-bg: #f1f5f9;
+  --state-waiting-fg: #475569;
+  --state-prioritized-bg: rgba(255, 122, 0, 0.12);
+  --state-prioritized-fg: #c2410c;
+  --state-active-bg: rgba(122, 61, 255, 0.1);
+  --state-active-fg: #7a3dff;
+  --state-completed-bg: rgba(4, 120, 87, 0.1);
+  --state-completed-fg: #047857;
+  --state-failed-bg: rgba(209, 26, 63, 0.08);
+  --state-failed-fg: #d11a3f;
+  /* The design's #b45309 is 4.39:1 on this pill; #a94c07 clears 4.5:1. */
+  --state-delayed-bg: rgba(180, 83, 9, 0.1);
+  --state-delayed-fg: #a94c07;
+}
+
+/* Map runtime CSS variables into Tailwind tokens so utilities like `bg-surface`,
+   `text-muted`, `border-line`, `text-link` flip with the theme automatically. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-faint: var(--text-faint);
+  --color-sidebar: var(--sidebar);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+  --color-link: var(--link);
+  --color-ring: var(--ring);
+  --color-selected: var(--selected);
+  --color-hover: var(--hover);
+  --color-segment-active: var(--segment-active);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-danger-fill: var(--danger-fill);
+  --color-state-waiting-bg: var(--state-waiting-bg);
+  --color-state-waiting-fg: var(--state-waiting-fg);
+  --color-state-prioritized-bg: var(--state-prioritized-bg);
+  --color-state-prioritized-fg: var(--state-prioritized-fg);
+  --color-state-active-bg: var(--state-active-bg);
+  --color-state-active-fg: var(--state-active-fg);
+  --color-state-completed-bg: var(--state-completed-bg);
+  --color-state-completed-fg: var(--state-completed-fg);
+  --color-state-failed-bg: var(--state-failed-bg);
+  --color-state-failed-fg: var(--state-failed-fg);
+  --color-state-delayed-bg: var(--state-delayed-bg);
+  --color-state-delayed-fg: var(--state-delayed-fg);
+
+  --radius-card: 14px;
+  --radius-control: 10px;
+  --radius-segment: 7px;
+  --radius-kbd: 6px;
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  html {
+    /* Fluid root: the whole rem-based type scale (Tailwind text-*, spacing) grows
+       smoothly with the viewport instead of snapping at breakpoints. ~13.5px on a
+       narrow phone → 16px on a wide desktop, tracking width via a small vw term.
+       Because every text-* utility is rem-based, this alone makes typography fluid
+       everywhere without per-element clamps. */
+    font-size: clamp(13.5px, 12.7px + 0.28vw, 16px);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    line-height: 1.55;
+    letter-spacing: -0.005em;
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2 {
+    letter-spacing: -0.02em;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-2);
+    border-radius: 8px;
+    border: 2px solid var(--bg);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--line-strong);
+  }
+}
+
+@layer utilities {
+  /* Tabular figures for stat numbers and IDs, matching the reference dashboard. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Small uppercase label above a heading or a table column. */
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+}
+
+/* iOS Safari zooms the page whenever a focused form control resolves below 16px.
+   The fluid rem root above puts text-sm/text-xs controls under that threshold on
+   phones, so pin form controls to 16px below the sm breakpoint. This also makes
+   the small JSON/data editors legible on mobile. */
+@media (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    /* !important is required: Tailwind's text-sm/text-xs are class selectors and
+       outspecify a bare element rule, so without it the controls stay < 16px and
+       Safari still zooms. */
+    font-size: 16px !important;
+  }
+}
+
+/* Respect the OS "reduce motion" preference: neutralize animations and
+   transitions (spinners, the live "ping" dot, hover motion) for users who ask
+   for it, while keeping content fully visible. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

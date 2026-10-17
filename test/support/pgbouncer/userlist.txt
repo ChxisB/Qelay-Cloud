@@ -1,0 +1,6 @@
+"qcloud" "qcloud"
+"qcloud_pool" "qcloud_pool"
+"qcloud_claim" "qcloud_claim"
+"qcloud_fleet" "qcloud_fleet"
+"qcloud_sp" "qcloud_sp"
+"qcloud_tick" "qcloud_tick"

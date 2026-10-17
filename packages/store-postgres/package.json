@@ -1,0 +1,24 @@
+{
+  "name": "@qelay-cloud/store-postgres",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@qelay-cloud/core": "workspace:*",
+    "msgpackr": "^1.11.8"
+  }
+}

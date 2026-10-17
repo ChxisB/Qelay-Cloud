@@ -1,0 +1,4 @@
+[test]
+# The panel's tests import modules that read `localStorage` at load. Bun may expose one that throws, so the
+# preload gives them a working shim. It touches nothing else and is a no-op for the backend packages.
+preload = ["./packages/panel/test/setup.ts"]

@@ -1,0 +1,27 @@
+# A plan that needs no credentials: the values of a fictional project, so CI can plan the whole environment
+# with a placeholder access token (scripts/check-terraform-plan.ts). Nothing here is a real project, and a
+# real environment starts from its own file, not this one.
+project_id     = "qcloud-ci"
+project_number = "123456789012"
+region         = "europe-west2"
+name           = "qcloud-ci"
+namespace      = "ci"
+
+worker_image = "europe-west2-docker.pkg.dev/qcloud-ci/qcloud/worker:ci"
+tick_image   = "europe-west2-docker.pkg.dev/qcloud-ci/qcloud/api:ci"
+# The tick runs from the Control API's image: its entrypoint is overridden to start the tick.
+tick_command = ["bun", "/app/packages/maintenance/src/bin.ts"]
+
+queues = {
+  default = {}
+  emails  = { ack_deadline_seconds = 60, max_delivery_attempts = 10 }
+}
+
+worker_services = {
+  worker = { max_instances = 10 }
+  batch  = { max_instances = 4, min_instances = 0, memory = "1Gi" }
+}
+
+max_connections = 100
+
+deployer_members = ["user:operator@example.com"]
