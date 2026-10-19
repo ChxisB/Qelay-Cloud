@@ -41,6 +41,10 @@ const hmacKey = (secret: string, usage: 'sign' | 'verify'): Promise<CryptoKey> =
 const signedText = (timestamp: number | string, body: string): Uint8Array<ArrayBuffer> =>
   encoder.encode(`${timestamp}.${body}`);
 
+/** A new signing secret: `whsec_` and 32 random bytes in hex (70 characters, within the secret limits). */
+export const generateWebhookSecret = (): string =>
+  `whsec_${toHex(crypto.getRandomValues(new Uint8Array(32)))}`;
+
 /** The `X-Webhook-Signature` value for a delivery. */
 export async function signWebhook(
   secret: string,

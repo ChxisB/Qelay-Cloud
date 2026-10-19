@@ -12,8 +12,9 @@ None of these can be answered by a test.
    (row 4 and the workflow limits). To cut: make `QCLOUD_API_WORKFLOWS=false` the default (it hides the Workflows page and
    refuses its routes; the engine stays in the SDK package, so decide whether to remove its export too), list workflows in
    [CHANGELOG.md](../CHANGELOG.md) as v1.1 work, then rerun step 1.
-2. **Finding F-2** (a payload that decodes far larger than its bytes): cap decoded elements at enqueue, decode lazily in the
-   list route, or accept it and document it. It is a medium finding and the security review is not complete until you choose.
+2. **Finding F-2** (a payload that decodes far larger than its bytes): enqueue now caps values at 20,000 and nesting at 64.
+   Choose that number (the review suggested 250,000) and whether the list route also decodes lazily, or accept the page
+   cost documented in [limits](limits.md) section 13. It is a medium finding and the review is not complete until you choose.
 3. **Custom-id replacement across queues** ([known issues](known-issues.md#1-open-and-waiting-for-the-owners-decision), row 2).
 4. **Sign the Phase 1 and Phase 2 gates** (tasks 22 and 37) after reading their gate documents.
 5. **Real clouds (D9).** Say whether a GCP project and an AWS account may be used for the first real runs. Until then every
@@ -59,10 +60,9 @@ git remote add origin https://github.com/<owner>/<repo>.git
 git push -u origin main
 ```
 
-`.claude/` (the plan, the completion notes and session files) is untracked and not ignored: decide whether it belongs in the
-repository before `git add -A`. **Eight links in `docs/security/phase2-pass.md` and `docs/spikes/` point into
-`.claude/.planning/v1.0.0/`**, so a clone without `.claude/` fails `docs:check` (and so the `gate` job) with "no such file or
-folder". Either commit at least `.claude/.planning/`, or change those links first. `ci.yml` has never run, so expect to fix
+`.claude/.planning/v1.0.0/` and `.claude/completions/` are committed, and eight links in `docs/security/phase2-pass.md` and
+`docs/spikes/` point into the plan, so keep them committed: a clone without them fails `docs:check` (and so the `gate` job)
+with "no such file or folder". Check `git status` for new untracked files under `.claude/` before you push. `ci.yml` has never run, so expect to fix
 forward on the first run. Wait for `gate`, `transports` and `terraform` to pass.
 
 ## 3. Bump the version

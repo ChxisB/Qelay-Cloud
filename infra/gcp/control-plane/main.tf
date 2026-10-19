@@ -14,10 +14,16 @@ locals {
 
   # Cloud Run's URL for a service is deterministic, so each side can name the other before it exists.
   # The `check` blocks below say so on the next plan if the scheme ever differs.
-  api_url   = "https://${local.api_name}-${var.project_number}.${var.region}.run.app"
-  panel_url = "https://${local.panel_name}-${var.project_number}.${var.region}.run.app"
+  run_api_url   = "https://${local.api_name}-${var.project_number}.${var.region}.run.app"
+  run_panel_url = "https://${local.panel_name}-${var.project_number}.${var.region}.run.app"
 
   private = var.exposure == "private"
+  edge    = var.edge != null
+
+  # With an edge the Cloud Run URLs stop answering the internet, so the services are named by their host names.
+  api_url   = local.edge ? "https://${var.edge.api_hostname}" : local.run_api_url
+  panel_url = local.edge ? "https://${var.edge.panel_hostname}" : local.run_panel_url
+  ingress   = local.private ? "INGRESS_TRAFFIC_INTERNAL_ONLY" : (local.edge ? "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" : "INGRESS_TRAFFIC_ALL")
 
   use_ca = var.database_tls == "ca-file"
 
@@ -46,6 +52,7 @@ locals {
   api_secret_ids = distinct(compact([
     var.database_url_secret.secret_id,
     local.use_ca ? var.database_ca_secret.secret_id : "",
+    var.webhook_key_secret == null ? "" : var.webhook_key_secret.secret_id,
   ]))
   migrate_secret_ids = distinct(compact([
     local.migrate_url_secret.secret_id,
@@ -108,6 +115,10 @@ resource "terraform_data" "inputs" {
       error_message = "The subnet ${var.subnet_cidr} has ${local.subnet_usable} usable addresses; the whole environment (${var.data_plane_instances} instances from the data plane, plus the control plane's) needs ${local.subnet_required} during a rollover. Use a larger subnet_cidr in the data plane, or lower max instances."
     }
     precondition {
+      condition     = !local.edge || !local.private
+      error_message = "edge puts an internet-facing load balancer in front of the services; exposure = \"private\" has no such thing. Use one or the other."
+    }
+    precondition {
       condition     = alltrue([for origin in concat(var.extra_cors_origins, var.panel_csp_connect_extra) : can(regex("^https?://[^/*]+$", origin))])
       error_message = "extra_cors_origins and panel_csp_connect_extra take exact origins (scheme and host, no path, no wildcard)."
     }
@@ -121,14 +132,14 @@ resource "terraform_data" "inputs" {
 
 check "api_url_is_the_service_url" {
   assert {
-    condition     = google_cloud_run_v2_service.api.uri == local.api_url
-    error_message = "The API's URL is ${google_cloud_run_v2_service.api.uri}, not ${local.api_url}: the panel is configured with the wrong base URL."
+    condition     = google_cloud_run_v2_service.api.uri == local.run_api_url
+    error_message = "The API's URL is ${google_cloud_run_v2_service.api.uri}, not ${local.run_api_url}: the panel is configured with the wrong base URL."
   }
 }
 
 check "panel_url_is_the_service_url" {
   assert {
-    condition     = google_cloud_run_v2_service.panel.uri == local.panel_url
-    error_message = "The panel's URL is ${google_cloud_run_v2_service.panel.uri}, not ${local.panel_url}: the API's CORS list does not name it, and every call from the panel is refused."
+    condition     = google_cloud_run_v2_service.panel.uri == local.run_panel_url
+    error_message = "The panel's URL is ${google_cloud_run_v2_service.panel.uri}, not ${local.run_panel_url}: the API's CORS list does not name it, and every call from the panel is refused."
   }
 }

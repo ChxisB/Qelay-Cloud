@@ -16,7 +16,8 @@ export interface Database {
   readonly retirements: number;
   /**
    * Runs one store operation (a statement or a whole transaction) under the deadline, or throws
-   * `OperationDeadlineError`, which means the outcome is unknown.
+   * `OperationDeadlineError`, which means the outcome is unknown, or refuses it with
+   * `StoreOverloadedError` when the process already has `maxInFlight` operations going.
    */
   run<T>(operation: string, work: (sql: SQL) => Promise<T>, deadlineMs?: number): Promise<T>;
   /**
@@ -41,6 +42,7 @@ export function openDatabase(options: DatabaseOptions): Database {
   const pool = new ResilientPool({
     open: () => new SQL(driverOptions(config, config.poolSize)),
     deadlineMs: config.operationDeadlineMs,
+    maxInFlight: config.maxInFlight,
     closeTimeoutSeconds: config.closeTimeoutSeconds,
   });
   return {

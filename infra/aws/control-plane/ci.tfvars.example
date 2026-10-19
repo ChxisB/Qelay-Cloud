@@ -14,7 +14,7 @@ availability_zones      = ["eu-west-2a", "eu-west-2b"]
 private_subnet_ids      = ["subnet-0aaaaaaaaaaaaaaa1", "subnet-0bbbbbbbbbbbbbbb2"]
 tasks_security_group_id = "sg-0123456789abcdef0"
 cluster_arn             = "arn:aws:ecs:eu-west-2:123456789012:cluster/qcloud-ci"
-data_plane_tasks        = 16
+data_plane_tasks = 19
 queue_arns = {
   default = "arn:aws:sqs:eu-west-2:123456789012:qcloud-ci__default"
   emails  = "arn:aws:sqs:eu-west-2:123456789012:qcloud-ci__emails"
@@ -25,6 +25,7 @@ dead_letter_arns = {
 }
 queue_kms_key_arn   = "arn:aws:kms:eu-west-2:123456789012:key/00000000-0000-0000-0000-000000000000"
 database_url_secret = "arn:aws:secretsmanager:eu-west-2:123456789012:secret:qcloud-ci/database-url-AbCdEf"
+webhook_key_secret  = "arn:aws:secretsmanager:eu-west-2:123456789012:secret:qcloud-ci/webhook-key-AbCdEf"
 database_tls_env = {
   QCLOUD_DATABASE_TLS_CA = <<-EOT
     -----BEGIN CERTIFICATE-----

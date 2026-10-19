@@ -12,6 +12,18 @@ variable "image" {
   type        = string
 }
 
+variable "command" {
+  description = "Overrides the image's entrypoint. Null runs the image as built. The tick image runs `qcloud-tick loop` or `send` here (with the Control API's image, [\"bun\", \"/app/packages/maintenance/src/bin.ts\"])."
+  type        = list(string)
+  default     = null
+}
+
+variable "args" {
+  description = "Arguments after the entrypoint: the subcommand of qcloud-tick."
+  type        = list(string)
+  default     = []
+}
+
 variable "service_account_email" {
   description = "The workers' identity, from the iam module."
   type        = string

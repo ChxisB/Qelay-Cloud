@@ -15,7 +15,7 @@ Which process reads what:
 | Process | Command | Reads |
 | --- | --- | --- |
 | Control API | `qcloud-api serve`, `qcloud-api migrate` | [Shared](#shared), [Database](#database), [Control API](#control-api), [Webhooks](#webhooks) (the key and address policy), the workflow rows marked API |
-| Tick | `qcloud-tick run`, `qcloud-tick serve` | [Shared](#shared), [Database](#database), [Tick](#tick), [Webhooks](#webhooks), [Workflows](#workflows) |
+| Tick | `qcloud-tick run`, `qcloud-tick serve`, `qcloud-tick send` | [Shared](#shared), [Database](#database), [Tick](#tick), [Webhooks](#webhooks), [Workflows](#workflows) |
 | Panel | `packages/panel/serve/main.ts` | [Panel](#panel) only |
 | Your workers | the SDK in your code | the connection settings you pass to it; the SDK does not read `QCLOUD_*` |
 
@@ -24,8 +24,11 @@ Which process reads what:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `QCLOUD_NAMESPACE` | `default` | The namespace every read and write is scoped to. Processes that share jobs (workers, tick, Control API) must use the same one; two deployments on one database use different ones. |
+| `QCLOUD_SHARDS` | none | Several databases: `namespace=shard` pairs, comma separated (`acme=a,globex=b`). Shard names are lower-case letters and digits. With it set, `QCLOUD_DATABASE_URL` is refused and each shard needs its own URL (below); a namespace not listed is refused. See [operations.md](../operations.md#shards). |
+| `QCLOUD_SHARD_<NAME>_DATABASE_URL` | none | The connection string of shard `<NAME>` (upper case): `QCLOUD_SHARD_A_DATABASE_URL` for shard `a`. Any other `QCLOUD_DATABASE_*` variable can be given as `QCLOUD_SHARD_<NAME>_DATABASE_*` to override the shared value for that shard. A process reads only the shard it opens. |
 | `QCLOUD_TRANSPORT` | `gcp-pubsub` | The broker that carries the doorbell: `gcp-pubsub`, `aws-sqs` or `postgres` (the local transport: no broker, the store is polled; for development and tests). |
 | `QCLOUD_GCP_PROJECT` | none | The Google Cloud project of the Pub/Sub transport. |
+| `QCLOUD_GCP_HOT_QUEUES` | none | Comma-separated queue names that have their own Pub/Sub topic and an unfiltered subscription. Every process (API, tick, workers) must be given the same list as `ensureQueue` and the Terraform `hot = true`. See [limits](../limits.md#11-cost-of-the-doorbell-on-sqs-task-40). |
 | `QCLOUD_AWS_REGION` | none | The AWS region of the SQS transport. **Required** with `aws-sqs`: the region is never guessed from the machine. |
 | `QCLOUD_AWS_SQS_ENDPOINT` | none | An SQS-compatible endpoint, for ElasticMQ or LocalStack. Leave unset on AWS. |
 
@@ -135,15 +138,18 @@ derives the bounds.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `QCLOUD_SHARD` | none | `qcloud-tick loop` only: tick every namespace of this shard, one loop each, over one pool. Needs `QCLOUD_SHARDS`; excludes `QCLOUD_NAMESPACE`; `run`, `serve`, `send` and `webhook-writer` refuse it. |
 | `QCLOUD_TICK_INTERVAL_MS` | `60000` | The longest gap between two ticks you promise: the scheduler's period. (The in-process loop of the SDK's local setup defaults to 5,000.) |
 | `QCLOUD_TICK_RE_RING_AFTER_MS` | the interval | A claimable job whose last bell is this old is rung again. At most the interval. |
 | `QCLOUD_TICK_RING_GRACE_MS` | `2000` | A job created this recently with no bell yet is left alone: its publish may be in flight. |
 | `QCLOUD_TICK_WORST_LATENESS_MS` | `1000` | How late a tick may start. Part of the ring window's floor. |
 | `QCLOUD_TICK_RING_WINDOW_MS` | interval + lateness | How far ahead a delayed job is rung. `0` rings it only once due. Otherwise at least interval plus lateness, and clamped to what the transport can hold. |
 | `QCLOUD_TICK_MAX_RINGS_PER_QUEUE` | `100` | Most bells per queue in one pass. |
+| `QCLOUD_TICK_MAX_STALE_RINGS_PER_QUEUE` | the value above | Most of those that go to jobs already rung once, whose bell has aged past the re-ring threshold. Lower it (10, say) so a deep, healthy backlog is not rung again in full each interval; never-rung jobs keep the full cap. |
 | `QCLOUD_TICK_MAX_ITEMS` | `200` | Most items per step of one pass. |
 | `QCLOUD_TICK_MAX_PASS_MS` | `5000` | Wall-clock budget of one pass; the steps after it are skipped. |
 | `QCLOUD_TICK_MAX_RUN_MS` | `20000` | Wall-clock budget of one invocation; passes repeat while there is more work. |
+| `QCLOUD_TICK_UPKEEP_EVERY_MS` | `0` (`30000` for `qcloud-tick loop`) | For a process that beats often: the retention steps (DLQ, workers, webhook deliveries, events, completions, metric buckets) run once per this many ms and the beats between do recovery, crons, promotion, expiry and the rings. `0` runs them on every beat. Per process: after a change of leader the new one runs them on its first beat. |
 | `PORT` | `8080` | The port `serve` listens on. |
 | `QCLOUD_TICK_HOST` | `0.0.0.0` | The interface `serve` listens on. |
 | `QCLOUD_TICK_AUDIENCE` | none | `serve` accepts a Google-signed identity token with this audience, from the emails in the next row. Cloud Scheduler sends one. |
@@ -152,7 +158,7 @@ derives the bounds.
 
 ## Webhooks
 
-The tick sends the deliveries; the Control API and the tick both read the key and the address policy, so set those two
+The tick sends the deliveries (`qcloud-tick send` is the sender alone, for volume); a namespace's deliveries are made by the job's transaction, or by a writer once `qcloud-tick webhook-writer on` has switched it (no variable: a webhook's `filter` and `shape` need it); the Control API and the tick both read the key and the address policy, so set those two
 identically on both. [webhooks.md](../webhooks.md) is the full design.
 
 | Variable | Default | Meaning |
@@ -165,9 +171,19 @@ identically on both. [webhooks.md](../webhooks.md) is the full design.
 | `QCLOUD_WEBHOOK_TIMEOUT_MS` | `10000` | The bound on one attempt, name lookup to answer. |
 | `QCLOUD_WEBHOOK_LEASE_MS` | `30000` | How long a claimed delivery is its sender's. At least the timeout plus 5,000, or a slow receiver is sent to twice. |
 | `QCLOUD_WEBHOOK_RATE_PER_MINUTE` | `60` | Attempts one webhook gets in a minute. |
+| `QCLOUD_WEBHOOK_KEEP_MS` | `172800000` | How long a finished delivery stays readable (two days). A day of deliveries is dropped whole once its end is this old. With several ticks on one database the shortest value decides. |
 | `QCLOUD_WEBHOOK_MAX_ATTEMPTS` | `8` | Attempts per delivery, the first included. |
+| `QCLOUD_WEBHOOK_DISABLE_AFTER` | `20` | Failed deliveries (every attempt used) in a row after which a webhook is paused; alert levels come at 50, 70, 90 and 100% of it. `0`: never pause. |
 | `QCLOUD_WEBHOOK_BASE_DELAY_MS` | `30000` | The wait after the first failure; each further failure doubles it. |
 | `QCLOUD_WEBHOOK_MAX_DELAY_MS` | `3600000` | The longest wait between two attempts. |
+| `QCLOUD_WEBHOOK_KEEPALIVE_MS` | `15000` | `qcloud-tick send` only. How long a connection to a receiver is kept for the next delivery. `0`: one connection per delivery. |
+| `QCLOUD_WEBHOOK_DNS_TTL_MS` | `30000` | `qcloud-tick send` only. How long a name's addresses are kept. `0`: a lookup per delivery. |
+| `QCLOUD_WEBHOOK_PER_DESTINATION` | `4` | `qcloud-tick send` only. Requests in flight to one host and port. |
+| `QCLOUD_WEBHOOK_BREAKER_FAILURES` | `5` | `qcloud-tick send` only. Failed attempts in a row after which a host and port is paused. `0`: never. |
+| `QCLOUD_WEBHOOK_BREAKER_COOLDOWN_MS` | `30000` | `qcloud-tick send` only. How long a paused destination is left alone before one attempt tries it. |
+| `QCLOUD_WEBHOOK_IDLE_MS` | `500` | `qcloud-tick send` only. The wait before asking the store again when nothing is due. |
+| `QCLOUD_WEBHOOK_RESPONSE_BYTES` | `1024`; `0` with `QCLOUD_WEBHOOK_DEV_MODE` | Bytes of a failed answer's body kept as `response` in the attempt's history (at most 4096). `0`: none. |
+| `QCLOUD_WEBHOOK_USER_AGENT` | `qelay-cloud-webhooks/1` | The `User-Agent` of a delivery request: printable ASCII, at most 100 characters. |
 
 The defaults are eight attempts over about 63 minutes.
 

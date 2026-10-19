@@ -32,6 +32,10 @@ is.** `run_at` is a floor: no job was ever claimed early in any run.
 - **Seconds-level delay, retry backoff and rate-limit resumption need an always-on worker running the in-process tick**
   (`TickLoop` in the worker's host, with `QCLOUD_TICK_INTERVAL_MS` or the option). A scale-to-zero push handler gets
   the minute. The scheduler job stays in both cases: it is the cron source and the safety net if every worker is down.
+  The loop needs no web server or worker code: `qcloud-tick loop` is one always-on process (one instance, or two for
+  failover; the lease picks the leader; `tick_loop` in either Terraform example runs it) that beats every second and runs the retention steps every 30 s, so the beats
+  between cost only recovery, crons, promotion, expiry and the ring query. Its cost per beat on a real database is not
+  measured; the lease row is one write per beat.
 - On Pub/Sub, delay, retry backoff and rate-limit resumption **all run at tick speed**: Pub/Sub has no per-message delay
   and no backoff the application controls, so the doorbell for a delayed or retried job is rung when the tick sees it due.
 - **Worst cases, not means:** a doorbell that was lost (a publish that failed, a bell dropped) is rung again after
@@ -54,6 +58,7 @@ is.** `run_at` is a floor: no job was ever claimed early in any run.
 | --- | --- | --- |
 | Job payload | **1 MiB** (1,048,576 bytes) once encoded; larger is refused with `PayloadTooLargeError`, nothing written | `MAX_PAYLOAD_BYTES` in the store |
 | A job's result | the same 1 MiB | the store, on completion |
+| Values in a payload or result | **20,000** (values and object keys together), nesting at most **64**; more is refused with `PayloadTooComplexError` (API: 413 `payload_too_large` with `kind`, `limit`, `index`), nothing written. Options `maxPayloadNodes` and `maxPayloadDepth` | `MAX_PAYLOAD_NODES` and `MAX_PAYLOAD_DEPTH` in the store; at enqueue, data edit and completion |
 | Jobs in one `addBulk` | **1,000** | `MAX_BATCH`; one transaction |
 | Delay, `repeatEvery` | at most **365 days**; longer throws `UnsupportedOptionError` | `core` options |
 | Bells per publish | the transport's `maxRingBatch` | `DeliveryTransport` |
@@ -97,9 +102,11 @@ Qelay, and the last one was a bug that this check found and that is fixed. None 
    99th-percentile claim about 1.1 to 2.4 times slower. The figures are noisy because the effect feeds itself: a
    slower drain leaves more bells old enough to re-ring. **Mitigation today:** do not run a short `reRingAfterMs` or
    interval against a backlog of thousands; with Cloud Scheduler (60 s, the managed tick) the cost is about one re-ring per
-   job per minute of backlog. Lowering the per-queue ring cap or `maxRunMs` lowers the cost per beat. A possible
-   follow-up, not done: let only a job's first ring repeat within one run. It is recorded in
-   [the gate document](spikes/06-phase0-gate.md) as an open decision.
+   job per minute of backlog. Lowering the per-queue ring cap or `maxRunMs` lowers the cost per beat.
+   **Added since, not yet measured on a real backlog:** `QCLOUD_TICK_MAX_STALE_RINGS_PER_QUEUE` caps the re-rings of a queue
+   separately from the first rings (default: the same cap, so nothing changes until it is set), and the producer's
+   `ringCoverMs` plus the worker's `claimAgain` (on by default) let one bell serve a backlog. Both are recorded in
+   [the gate document](spikes/06-phase0-gate.md) as open decisions.
 2. **A rate limit, or a global concurrency limit, serializes the claims of its queue on one row.** The claim has to
    read and update the limiter's counter exactly, so claims of a rate-limited queue queue up on that row (about 27 waiting
    statements per poll against about 1 on an unlimited queue; `Lock:tuple`). The measured price is about **2.3 times
@@ -113,11 +120,19 @@ Qelay, and the last one was a bug that this check found and that is fixed. None 
    each other until the first commits. On one hot queue the sampler saw about 14.5 `Lock:transactionid` waiters per poll
    (against 1 across five queues) and still 3,054-3,102 jobs/s on a local database. **Expectation, not measured:** on a
    managed database a commit takes longer than it does here, so the completion rate of a single queue is bounded by one
-   commit time. Spread hot work over queues.
+   commit time. Spread hot work over queues, or turn on the worker's `groupComplete` option (off by default): jobs that
+   finish while another finish is being stored share one transaction, so a burst pays one commit and one set of counter
+   rows instead of one per job. A worker that finishes one job at a time is unchanged. The saving on a managed database
+   is **not measured**; `qcloud.worker.complete_group_size` and `qcloud.worker.complete_ms` show it. Old minute buckets
+   are no longer deleted by the completion: the tick does it (`maxMetricBuckets`), so a complete takes no delete on the
+   counter rows, and `throughput` hides a bucket past the retention until the tick has removed it.
 4. **Every commit that writes events serializes per namespace.** The event journal gives each commit its position at
    commit time, under one advisory lock per namespace (`Lock:advisory`, with the committing session waiting in `COMMIT`:
    0.9 to 1.2 waiters per poll at about 3,000 jobs/s). This is how the ported journal keeps its order, and it bounds the
-   namespace's commit rate to the rate one lock can be passed. Separate namespaces do not share it.
+   namespace's commit rate to the rate one lock can be passed. Separate namespaces do not share it. A batch is one pass, not one
+   per job (`journal.lockPasses.test.ts`), so `addBulk`, `completeMany` and the worker's `groupCommit` and `groupComplete`
+   lower the passes per job. Replacing the lock is designed and not built: it would weaken the order of one job's events and
+   let a long write transaction stall every reader ([spike 07](spikes/07-journal-order.md)).
 5. **Retention keeps up per pass, not per burst.** A tick pass trims at most `maxItems` (default 200) events or commit
    envelopes. A 100k burst writes about 300,000 events and 200,000 commit envelopes, far above the default cap of 10,000
    events per queue, so the journal sits above its cap for a while after a burst, then comes down over later beats. It is
@@ -155,6 +170,33 @@ One worker is bound by its own concurrency of 10; past four workers the fan-out 
 worker adds. This is a measurement of a development transport in one process, not of a fleet; it is the reason it is
 documented as a development and small-fleet transport (section 9).
 
+**Vacuum on the hot tables (migration 12).** The jobs, queue-state, metric and webhook-delivery tables are set to
+`fillfactor = 80` and `autovacuum_vacuum_scale_factor = 0.01`, so an update that changes no indexed column stays on its
+page and vacuum starts at 1% dead rows, not 20%. The setting applies to pages written after the migration, and nothing
+here measured the effect: a drain with `pg_stat_user_tables` (`n_tup_hot_upd`, `n_dead_tup`, `last_autovacuum`) on a
+real instance is part of the load check owed under section 8. Raising the instance's `autovacuum_max_workers` and
+alerting on dead rows are instance settings, not schema, and are not made by the migration.
+
+**Webhook delivery writer (migration 14).** A namespace that runs `qcloud-tick webhook-writer on` has its deliveries made from
+the event journal by a pass of at most 500 events, in one transaction that also moves its cursor, instead of by the trigger in
+the job's transaction. Deliveries then appear a few seconds after the job's commit, and a webhook can have a `filter` and a
+`shape`. A shaped body is made once and stored (at most 64 KiB; a larger one is recorded as a failed delivery). If the journal's
+retention removes events before the writer reads them, those events make no deliveries (gauge `webhooks.writer_gaps`).
+Not measured: the writer's throughput and lag at volume, and what the lock taken by `off` costs on a busy namespace on Cloud SQL
+or RDS. Tested on PostgreSQL 18.6 on one machine only.
+
+**Webhook deliveries by day (migration 13).** `qcloud_deliveries` is partitioned by `created_at` (the event's time), one
+partition a day (`qcloud_deliveries_YYYYMMDD`, UTC) plus a default partition. The tick makes today and the next three
+days (`ATTACH PARTITION`, which lets inserts through on the parent) and drops a day once its end is
+`QCLOUD_WEBHOOK_KEEP_MS` (2 days) old and it holds nothing waiting or being sent. A write for a day with no partition lands
+in the default partition, so a write never fails for a missing one, and that partition keeps the row-by-row retention. What
+this does not cover: the partition functions wait at most one second for a lock and try again on the next pass, so a long
+transaction on the table can delay the creation or the drop; creating a partition checks the default partition, which holds
+little, under a lock that a write landing there waits for; a day partition is dropped with `DROP TABLE`, which takes a lock
+on the table for an instant. All of this ran on PostgreSQL 18.6 on one machine; the lock behaviour on Cloud SQL and RDS is not
+measured. The **events** table is not partitioned: its retention is a cap per queue (the oldest events beyond it), a rule a
+partition cannot express, and its position reader needs one ordered key.
+
 ## 4. Connections
 
 The SDK holds a database connection only for one statement or one short transaction, never while your code runs, so a
@@ -185,6 +227,15 @@ Postgres's 53300. Without a `fleet` plan nothing is checked; `infra/gcp` checks 
   nothing holds one, and `QueueEvents` never does: it polls the journal with one pooled statement per read.
 - Session settings cannot ride a startup parameter: `search_path` for a non-default schema, `statement_timeout` and
   `lock_timeout` belong on the database role (`ALTER ROLE ... SET`). The driver refuses them as options and says so.
+- **Admission control.** One process has at most `maxInFlight` store operations at once, running or waiting for a
+  connection (default 64 per pooled connection, so 128 at the default pool of 2). The next one is refused at once with
+  `StoreOverloadedError` (`STORE_OVERLOADED`, the API's `503 store_overloaded`): nothing was sent, so it is safe to retry
+  after a pause. A stalled database then costs a bounded queue instead of unbounded memory and a wall of deadline errors.
+  A worker whose completion is refused reports it as an unconfirmed outcome and the tick recovers the lease. It is an option
+  of `openDatabase`, with no environment variable, and the number was chosen, not measured.
+- The server-wide timeouts are not session settings the process sends, so they work behind a pooler: Terraform sets
+  `statement_timeout` 30 s, `lock_timeout` 5 s and `idle_in_transaction_session_timeout` 30 s on the database. Only the
+  plan was checked; no database was created with them.
 - No session-level advisory lock is used anywhere (`pg_advisory_xact_lock` only). Named prepared statements are on only
   without a pooler (`prepare` is off behind `transaction`). Against a real RDS Proxy, whether anything still pins a
   session (including `nextval`) was not run.
@@ -243,23 +294,29 @@ A wrong value throws `UnsupportedOptionError` naming the variable and never repe
 | `QCLOUD_NAMESPACE` | Isolates one deployment's jobs inside one database | `default` |
 | `QCLOUD_TRANSPORT` | `gcp-pubsub`, `aws-sqs` or `postgres` | `gcp-pubsub` |
 | `QCLOUD_GCP_PROJECT` | The GCP project for Pub/Sub | unset: the Pub/Sub client resolves it from its credentials |
+| `QCLOUD_GCP_HOT_QUEUES` | Queues with their own Pub/Sub topic (`qcloud.<ns>.hot.<queue>`) and an unfiltered subscription; a comma separates names, so a name has none (the encoding allows only letters, digits and dashes anyway) | unset: every queue on the shared topic |
 | `QCLOUD_AWS_REGION` | The AWS region of the SQS queues. **Required** with `aws-sqs`: it is never read from `AWS_REGION` or the machine. Credentials come from the default AWS chain (task role, environment, profile) and are never logged | none |
 | `QCLOUD_AWS_SQS_ENDPOINT` | An SQS endpoint, for ElasticMQ or LocalStack. Unset: the regional AWS endpoint | unset |
-| `QCLOUD_TICK_INTERVAL_MS` | The tick's period | 60,000 here (the scheduler's minute); the in-process `TickLoop` option defaults to 5,000 |
+| `QCLOUD_TICK_INTERVAL_MS` | The tick's period | 60,000 here (the scheduler's minute); the in-process `TickLoop` option defaults to 5,000; `qcloud-tick loop` defaults to 1,000 |
 | `QCLOUD_TICK_RE_RING_AFTER_MS` | How old a bell must be before the tick rings it again; at most the interval | the interval |
 | `QCLOUD_TICK_RING_GRACE_MS` | How long a new job is left alone, in case its own publish is in flight | 2,000 |
 | `QCLOUD_TICK_WORST_LATENESS_MS` | The lateness the delivery window must cover | 1,000 |
 | `QCLOUD_TICK_RING_WINDOW_MS` | The delivery window for delayed bells, clamped to the transport's | interval plus worst lateness |
 | `QCLOUD_TICK_MAX_RINGS_PER_QUEUE` | Bells per queue per pass (see section 3) | 100 |
+| `QCLOUD_TICK_MAX_STALE_RINGS_PER_QUEUE` | Of those, bells to jobs rung once before (section 3, finding 1) | the line above |
 | `QCLOUD_TICK_MAX_ITEMS` | Items per pass (does not cap the rings) | 200 |
 | `QCLOUD_TICK_MAX_PASS_MS` | The most one pass may take | 5,000 |
 | `QCLOUD_TICK_MAX_RUN_MS` | The most one invocation may take (never past the interval for one loop beat) | 20,000 |
+| `QCLOUD_TICK_UPKEEP_EVERY_MS` | How often a looping process runs the retention steps; the beats between skip them | 0 (every beat); 30,000 for `qcloud-tick loop` |
 | `QCLOUD_TICK_AUDIENCE` | The OIDC audience the endpoint requires; with `QCLOUD_TICK_ALLOWED_EMAILS` (service accounts, comma separated) | unset |
 | `QCLOUD_TICK_SHARED_SECRET` | A development secret for `POST /internal/tick` (at least 24 characters). Not for production | unset |
 | `QCLOUD_WEBHOOK_KEY` | The key webhook secrets are sealed with (32 bytes, 64 hex digits or base64). Read by the Control API **and** the tick. Without it a webhook cannot be given a secret | unset |
 | `QCLOUD_WEBHOOK_DEV_MODE` | `true` allows `http:` and private destinations for webhooks. **Development only** | `false` |
 | `QCLOUD_WEBHOOK_BATCH`, `_CONCURRENCY`, `_BUDGET_MS`, `_TIMEOUT_MS`, `_LEASE_MS`, `_RATE_PER_MINUTE` | The sender: deliveries per pass (**0 turns sending off**), requests in flight, the time after which no new chunk starts, the bound on one attempt, a claim's lease (at least the timeout plus 5,000), attempts per webhook per minute | 50, 8, 5,000, 10,000, 30,000, 60 |
 | `QCLOUD_WEBHOOK_MAX_ATTEMPTS`, `_BASE_DELAY_MS`, `_MAX_DELAY_MS` | The retry policy | 8, 30,000, 3,600,000 |
+| `QCLOUD_WEBHOOK_DISABLE_AFTER` | Failed deliveries in a row after which a webhook is paused (0 never) | 20 |
+| `QCLOUD_WEBHOOK_KEEPALIVE_MS`, `_DNS_TTL_MS`, `_PER_DESTINATION`, `_BREAKER_FAILURES`, `_BREAKER_COOLDOWN_MS`, `_IDLE_MS` | `qcloud-tick send` only: how long a connection to a receiver is kept (0 off), how long a name's addresses are kept (0 off), requests in flight to one host and port, failed attempts in a row that pause a destination (0 never), how long it stays paused, the wait when nothing is due | 15,000, 30,000, 4, 5, 30,000, 500 |
+| `QCLOUD_WEBHOOK_KEEP_MS` | How long a finished webhook delivery stays readable; the tick only. With several ticks the shortest decides | 172,800,000 |
 | `QCLOUD_WORKFLOW_QUEUE` | The queue the workflow engine's node jobs travel on. Must be the name the `Engine` was given (`queueName`) | `__wf:steps` |
 | `QCLOUD_WORKFLOW_BATCH` | Workflow runs the tick looks at per pass, for due waits and for recovery each (**0 turns the step off**) | 100 |
 | `QCLOUD_WORKFLOW_IDLE_MS` | How long a `running`, `compensating` or `failed` run may show no write before the tick takes it over. Must exceed the longest gap between two writes of a live run (a running node writes every `heartbeatMs`, 10,000 by default) | 300,000 |
@@ -374,24 +431,30 @@ the price does not get measured until the real-account run (D9).
 
 | Worker | Sends | Receives | Deletes | Heartbeats and nacks | Requests per job |
 | --- | --- | --- | --- | --- | --- |
-| Room for 10 bells at once (concurrency 10) | 10 (a `SendMessageBatch` of 10 is one request) | 82 to 87 | 100 | 0 | **1.94 to 1.99** |
-| One slot (concurrency 1), the worst case | 10 | 101 | 100 | 0 | **2.13** |
+| Room for 10 bells at once (concurrency 10) | 10 (a `SendMessageBatch` of 10 is one request) | 78 to 83 | 15 to 19 (100 bells) | 0 | **1.07 to 1.14** |
+| One slot (concurrency 1), the worst case | 10 | 101 | 42 to 48 (100 bells) | 0 | **1.55 to 1.61** |
 
+- Deletes are batched (`DeleteMessageBatch`, up to 10 bells, sent when 10 are waiting or 5 ms after the first). A bell is
+  deleted a few milliseconds after its ack, and a worker that closes sends what it holds first. Before this the table was
+  100 deletes per 100 jobs and 1.94 to 1.99 requests per job (2.13 with one slot). **How many bells share a delete depends
+  on how close together the acks are**: a burst of 10 bells is one delete, bells that are acked more than 5 ms apart each
+  pay their own. The emulator answers a receive in about a millisecond; real SQS takes longer, so expect fewer bells per
+  delete there until the real-account run measures it.
 - A receive is demand-driven: it asks for what the worker has free, so a busy worker does about one receive per bell.
   Only an idle worker gets full batches of 10.
 - A heartbeat (`ChangeMessageVisibility`) is sent every third of the claim window while a handler runs, and a job claims
   in milliseconds, so none were sent. A `nack(retryInMs)` is one more request.
 - A bell that finds an empty claim (a re-ring of a job already running, a paused queue, a rate limit) is one more send
-  share, one receive and one delete: about 2.1 requests.
+  share, one receive and a delete share: about 1.1 to 2.1 requests.
 
 **Arithmetic.** At the list price of **$0.40 per million requests** (the first million a month free, a payload up to
 64 KB is one request; the price tiers down to about $0.24 per million at volume; **the live price page was not
 checked**):
 
-| Jobs a month | Requests at 2.1 per job | List price | After the free million |
+| Jobs a month | Requests at 1.6 per job (the one-slot figure; a busy wide worker was 1.1) | List price | After the free million |
 | --- | --- | --- | --- |
-| 1,000,000 | 2.1 million | **$0.84** | **$0.44** |
-| 100,000 | 0.21 million | $0.08 | $0 |
+| 1,000,000 | 1.6 million | **$0.64** | **$0.24** |
+| 100,000 | 0.16 million | $0.06 | $0 |
 
 - **Idle polling** is a floor: a long poll of 20 s is 3 requests a minute, about 130,000 a month per subscribed queue
   per worker process, about **$0.05**. Ten worker processes on three queues is 30 subscriptions, about $1.50.
@@ -408,6 +471,16 @@ seek-related storage fees for these messages"
 of one bell is paid once per queue of the environment, not once: **it grows with the number of queues**, and a queue
 added to a busy environment raises the bill of the others. No price is quoted here because the pricing page, with the
 rates and the per-request minimum size, could not be read. The first real-account run (D9) is where to measure it.
+
+**A hot queue** (`hot = true` in the Terraform, `QCLOUD_GCP_HOT_QUEUES`, `ensureQueue(…, { hot: true })`) has its own topic
+`qcloud.<ns>.hot.<queue>` and an unfiltered subscription of the same name. Its bells are delivered once, not once per queue
+of the environment, and the other queues' bells no longer pass through its subscription. The cost is one more topic and
+one more publish target per hot queue. Pub/Sub allows 10,000 subscriptions per topic and project: the shared topic
+holds the long tail, and a hot queue's own topic holds one. Past about 5,000 queues use another project (not built).
+Rolling it out: a subscription cannot change its topic, so a queue is moved by removing its subscription (what it held
+is rung again by the tick) and creating it again, and **every process must name the same hot list** or its `ring`
+publishes to the shared topic and nobody hears it until the tick re-rings (and the tick must have the list too).
+`ensureQueue` refuses to reuse a subscription that is on the other topic. Not measured: the emulator does not bill.
 
 ## 12. Webhooks (task 52)
 
@@ -433,7 +506,10 @@ correctness only.
 (10 s). So with a tick every minute (a scheduler-only deployment) the ceiling is **50 attempts a minute for the whole
 service**; with the in-process loop at 5 s it is 50 per 5 s, still **60 a minute per webhook**. Raise the batch and the
 rate for more, and past operator scale use a delivery queue of your own (webhooks.md, "Volume"). These are arithmetic on
-the settings, not a load test.
+the settings, not a load test. `qcloud-tick send` is not bound by the batch or the budget: it keeps
+`QCLOUD_WEBHOOK_CONCURRENCY` requests in flight and refills as they finish, so its ceiling is concurrency divided by the
+time of one request (8 in flight at 200 ms a request is about 40 a second), and the per-webhook rate still applies.
+That too is arithmetic.
 
 **What this does not promise.**
 
@@ -470,13 +546,17 @@ the settings, not a load test.
   `viewer`.** The input, the results and the signal payloads of a workflow are readable by anyone who may open the
   panel: a workflow that carries a secret in its input exposes it there. Keep secrets out of workflow input (pass a
   reference) or do not enable the Workflows page (`QCLOUD_API_WORKFLOWS=false`).
-- **A payload can take far more memory decoded than its 1 MiB.** The cap is on encoded bytes. A payload of one million
-  `null`s is 1 MiB and decodes to about **19 MB** in 6 ms; a Control API list page that holds 20 of them grew the process
-  by **357 MB** in 300 ms, and a page can hold 500. The list is cut to 1,024 bytes per payload only *after* every job of
-  the page is decoded. A producer that relays untrusted JSON into a payload can therefore make a list call exhaust the
-  API's memory (workers are not affected: each decodes one payload at a time). Until the product decides on a bound
-  (open finding F-2 of [the security review](security/review-v1.0.0.md)), set `QCLOUD_API_MAX_PAGE_SIZE` low and give the
-  API task memory for a page of the worst case you will tolerate, or keep untrusted structure out of payloads.
+- **A payload can take far more memory decoded than its 1 MiB, and a page is decoded whole.** The cap on encoded bytes
+  does not bound it: a payload of one million `null`s is 1 MiB and decoded to about **19 MB**, one of a million empty
+  arrays to about 70 MB, and a Control API list page that held 20 of the first kind grew the process by **357 MB** in
+  300 ms. So enqueue, a data edit and a completion also refuse a payload or result with more than **20,000** values
+  (object keys count) or nesting deeper than **64** (`PayloadTooComplexError`; options `maxPayloadNodes`,
+  `maxPayloadDepth`). Measured on the codec: up to 70 bytes of heap a value (empty objects and arrays), 8 for a number
+  or a short string, so a payload decodes to at most about 1.4 MB. The list route still decodes every job of a page
+  before it cuts each to 1,024 bytes: a page of 500 jobs that each hold the worst case takes about **700 MB**, so keep
+  `QCLOUD_API_MAX_PAGE_SIZE` to what the API's memory allows. Jobs enqueued before the limit are not rechecked. Workers
+  are not affected (each decodes one payload at a time). Finding F-2 of [the security review](security/review-v1.0.0.md)
+  is narrowed, not closed: the number and a lazy list decode are the owner's call.
 - **An action is a claim and a publish.** The version fence (`expectedVersion`) is a compare-and-set for `cancel` and
   `recover`; for `signal`, `retry-compensation` and `abandon-compensation` it is a check made before the store's own row
   lock, so a run that moves in between is judged by the store, not by the version. A request body is at most 1 MiB, an
@@ -494,3 +574,15 @@ the settings, not a load test.
   it" on the definition and the run. The actions are still offered: the job waits on the queue until a worker that has
   the definition starts, and an action on a live run that no worker serves therefore does nothing until then.
 
+## 14. Several databases (shards, review R21)
+
+- **A namespace lives on one database.** The journal lock, the tick lease and the transport names are per namespace, so one
+  busy namespace cannot be spread over shards. Several namespaces can.
+- **Routing is the map, nothing else.** A namespace the map does not list is refused. Nothing moves a namespace for you.
+- **No query crosses shards.** The panel and the Control API show one namespace; a total over all of them is yours to add up.
+- **Connections add up per shard**, not across them ([section 4](#4-connections)): each shard has its own budget.
+- **One loop per namespace, one pool per shard.** `QCLOUD_SHARD=a qcloud-tick loop` runs its namespaces' loops in one
+  process, so hundreds of busy namespaces on a shard want several processes.
+- **Tested** on two schemas of one Postgres standing in for two databases: a queue writes only to its namespace's shard,
+  `migrate` names each shard, and one loop ticks two namespaces over one pool and leaves the other shard alone.
+  **Not run** on two real database servers and **not measured** under load, so the gain is a design property, not a number.

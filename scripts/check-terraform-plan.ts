@@ -13,7 +13,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { budget } from '../packages/store-postgres/src/connection/budget';
+import { budget, workerRoleLimit } from '../packages/store-postgres/src/connection/budget';
 import {
   checkDatabase,
   checkIdentities,
@@ -23,6 +23,7 @@ import {
 } from './terraform-plan-assertions';
 import { checkAlerts, checkOptInAlerts } from './terraform-plan-alerts';
 import { checkAutoscaler } from './terraform-plan-autoscaler';
+import { checkBackground, checkManagedPooling } from './terraform-plan-background';
 import type { Plan } from './terraform-plan-model';
 import { Checks, get, ofType } from './terraform-plan-model';
 
@@ -30,7 +31,10 @@ const ROOT = resolve(import.meta.dir, '..');
 const EXAMPLE = join(ROOT, 'infra/gcp/example');
 const VARS = '-var-file=ci.tfvars.example';
 const NAMESPACE = 'ci';
-const QUEUES = { default: {}, emails: { ack_deadline_seconds: 60, max_delivery_attempts: 10 } };
+/** Overrides that take the loop and the sender out, so a plan's connection count is the workers' alone. */
+const NO_BACKGROUND = ['tick_loop=null', 'webhook_sender=null'];
+const QUEUES = { default: {}, emails: { ack_deadline_seconds: 60, max_delivery_attempts: 10, hot: true },
+};
 
 const env = {
   ...Object.fromEntries(
@@ -115,6 +119,7 @@ try {
     checkDatabase(p, checks, 100);
     checkMessaging(p, checks, NAMESPACE, QUEUES);
     checkServices(p, checks);
+    checkBackground(p, checks, 'qcloud-ci');
     checkAlerts(p, checks, ROOT);
     // 10 + 4 worker instances at pool 2, three control processes at pool 2, six reserved.
     const { instances, connections } = workerProcesses(p);
@@ -144,7 +149,8 @@ try {
         `scale-${workers}-${listen}`,
         `worker_services={worker={max_instances=${workers},listen_connections=${listen}}}`,
         'max_connections=1000',
-        'subnet_cidr=10.0.0.0/22'
+        'subnet_cidr=10.0.0.0/22',
+        ...NO_BACKGROUND
       );
       const out =
         scaled.plan === null
@@ -161,8 +167,35 @@ try {
         get(out, 'pooled_required') === ts.pooled,
         `${get(out, 'pooled_required')} vs ${ts.pooled}`
       );
+      checks.ok(
+        `${where}: the worker role limit matches the TypeScript budget`,
+        get(out, 'worker_role_limit') === workerRoleLimit(ts),
+        `${get(out, 'worker_role_limit')} vs ${workerRoleLimit(ts)}`
+      );
     }
   }
+
+  const managed = plan(
+    'managed-pooling',
+    'database_edition=ENTERPRISE_PLUS',
+    'database_tier=db-perf-optimization-N8',
+    'database_managed_pooling=true'
+  );
+  checks.ok('the example plans with managed pooling', managed.plan !== null, managed.diagnostics);
+  if (managed.plan !== null) checkManagedPooling(managed.plan, checks);
+  const both = plan(
+    'both-poolers',
+    'database_edition=ENTERPRISE_PLUS',
+    'database_managed_pooling=true',
+    'pooler={host="10.0.0.9"}'
+  );
+  checks.ok('managed pooling and an own pooler are exclusive', both.plan === null && /exclusive/.test(both.diagnostics));
+  const standard = plan('managed-needs-plus', 'database_managed_pooling=true');
+  checks.ok('managed pooling needs Enterprise Plus', standard.plan === null && /ENTERPRISE_PLUS/.test(standard.diagnostics));
+  const negative = plan('negative-timeout', 'database_session_timeouts={lock_ms=-1}');
+  checks.ok('a negative session timeout is refused', negative.plan === null && /non-negative/.test(negative.diagnostics));
+  const noKey = plan('sender-without-key', 'webhooks=false');
+  checks.ok('the sender needs the webhook key', noKey.plan === null && /webhook_sender needs webhooks/.test(noKey.diagnostics));
 
   const metrics = ['custom.googleapis.com/qcloud/claim_ms', 'custom.googleapis.com/qcloud/failed_total'];
   const optIn = plan(
@@ -180,7 +213,8 @@ try {
   );
   const followed = plan(
     'autoscaled',
-    'worker_services={worker={max_instances=10,autoscaling={queue="default"}},batch={max_instances=4,min_instances=0,memory="1Gi",autoscaling={queue="emails",backlog_per_instance=5}}}'
+    'worker_services={worker={max_instances=10,autoscaling={queue="default"}},batch={max_instances=4,min_instances=0,memory="1Gi",autoscaling={queue="emails",backlog_per_instance=5}}}',
+    ...NO_BACKGROUND
   );
   checks.ok('the example plans with autoscaled pools', followed.plan !== null, followed.diagnostics);
   if (followed.plan !== null) {

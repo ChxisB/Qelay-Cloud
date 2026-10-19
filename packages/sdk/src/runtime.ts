@@ -1,6 +1,7 @@
-import type { DeliveryTransport, JobOptions } from '@qelay-cloud/core';
+import type { DeliveryTransport, JobOptions, Lease, Outcome } from '@qelay-cloud/core';
 import { UnsupportedOptionError, validateJobOptions } from '@qelay-cloud/core';
 import { openDatabase, PostgresStore } from '@qelay-cloud/store-postgres';
+import { CompleteBatcher } from './groupComplete';
 import type { QueueOptions, TraceHandle, TraceSpan } from './options';
 import { checkQueueName, DEFAULT_NAMESPACE, rejectLegacyOptions, ringWindowMs } from './options';
 
@@ -11,6 +12,8 @@ export interface Runtime {
   readonly transport: DeliveryTransport;
   /** Validated once, merged under the options of every `add`. */
   readonly defaults: JobOptions;
+  /** `store.complete`, or with `groupComplete` a share of one `completeMany`. */
+  complete(lease: Lease, result: unknown): Promise<Outcome>;
   warn(message: string, context?: Readonly<Record<string, unknown>>): void;
   count(name: string, value?: number, tags?: Readonly<Record<string, string>>): void;
   observe(name: string, value: number, tags?: Readonly<Record<string, string>>): void;
@@ -27,15 +30,33 @@ export interface Runtime {
 }
 
 /** The options that say which store to use: a `Queue`'s, a `Worker`'s and `QueueEvents`' all have them. */
-export type StoreSource = Pick<QueueOptions, 'databaseUrl' | 'database' | 'store' | 'namespace'>;
+export type StoreSource = Pick<
+  QueueOptions,
+  'databaseUrl' | 'database' | 'shards' | 'store' | 'namespace' | 'ringCoverMs'
+>;
 
 function needsOne(options: StoreSource): void {
-  const { databaseUrl, database, store, namespace } = options;
+  const { databaseUrl, database, shards, store, namespace, ringCoverMs } = options;
   if (store !== undefined) {
-    if (databaseUrl !== undefined || database !== undefined || namespace !== undefined) {
+    if (
+      databaseUrl !== undefined ||
+      database !== undefined ||
+      shards !== undefined ||
+      namespace !== undefined ||
+      ringCoverMs !== undefined
+    ) {
       throw new UnsupportedOptionError(
         'store',
-        'cannot be combined with databaseUrl, database or namespace: the store has its own'
+        'cannot be combined with databaseUrl, database, shards, namespace or ringCoverMs: the store has its own'
+      );
+    }
+    return;
+  }
+  if (shards !== undefined) {
+    if (databaseUrl !== undefined || database !== undefined) {
+      throw new UnsupportedOptionError(
+        'shards',
+        'cannot be combined with databaseUrl or database: the map says which database holds the namespace'
       );
     }
     return;
@@ -43,7 +64,7 @@ function needsOne(options: StoreSource): void {
   if (databaseUrl === undefined && database === undefined) {
     throw new UnsupportedOptionError(
       'databaseUrl',
-      'is missing: pass databaseUrl or database (or a store)'
+      'is missing: pass databaseUrl or database (or shards, or a store)'
     );
   }
   if (databaseUrl !== undefined && database?.url !== undefined) {
@@ -75,13 +96,17 @@ export function openStore(
     }
     return { store: options.store, owned: false };
   }
+  const namespace = options.namespace ?? DEFAULT_NAMESPACE;
   const store = new PostgresStore({
-    db: openDatabase({
-      ...options.database,
-      ...(options.databaseUrl === undefined ? {} : { url: options.databaseUrl }),
-    }),
-    namespace: options.namespace ?? DEFAULT_NAMESPACE,
+    db: openDatabase(
+      options.shards?.databaseFor(namespace) ?? {
+        ...options.database,
+        ...(options.databaseUrl === undefined ? {} : { url: options.databaseUrl }),
+      }
+    ),
+    namespace,
     ringWindowMs: ringWindow,
+    ...(options.ringCoverMs === undefined ? {} : { ringCoverMs: options.ringCoverMs }),
     ...(leaseMs === undefined ? {} : { leaseMs }),
   });
   return { store, owned: true };
@@ -93,7 +118,7 @@ const NO_HANDLE: TraceHandle = { event() {}, fail() {} };
 export function openRuntime(
   name: string,
   options: QueueOptions,
-  worker: { readonly leaseMs?: number } = {}
+  worker: { readonly leaseMs?: number; readonly groupComplete?: number } = {}
 ): Runtime {
   rejectLegacyOptions(options);
   checkQueueName(name);
@@ -104,11 +129,19 @@ export function openRuntime(
   const { transport, logger, metrics, tracing } = options;
   const { store, owned } = openStore(options, ringWindowMs(transport), worker.leaseMs);
   let closing: Promise<void> | null = null;
-  return {
+  const completes =
+    worker.groupComplete === undefined
+      ? undefined
+      : new CompleteBatcher(store, worker.groupComplete, (size) =>
+          runtime.observe('qcloud.worker.complete_group_size', size)
+        );
+  const runtime: Runtime = {
     name,
     store,
     transport,
     defaults,
+    complete: (lease, result) =>
+      completes === undefined ? store.complete(lease, result) : completes.complete(lease, result),
     warn(message, context) {
       try {
         logger?.warn(message, context);
@@ -163,4 +196,5 @@ export function openRuntime(
       return closing;
     },
   };
+  return runtime;
 }

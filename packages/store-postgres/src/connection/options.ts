@@ -26,6 +26,11 @@ export interface ConnectionOptions extends TargetOptions {
   readonly listenUrl?: string;
   /** Upper bound on one store operation (a statement or a whole transaction). Default 10 s. */
   readonly operationDeadlineMs?: number;
+  /**
+   * Store operations this process may have in flight (running or waiting for a connection). The next is
+   * refused with `StoreOverloadedError` at once. Default 64 per connection in the pool.
+   */
+  readonly maxInFlight?: number;
   /** Time to open a connection. Default 10 s. */
   readonly connectTimeoutSeconds?: number;
   /** Age after which a connection is replaced; frees one a dead NAT mapping stalled. Default 300 s. */
@@ -51,6 +56,7 @@ export interface ResolvedConnection {
   readonly pooler: PoolerMode;
   readonly schema: string | null;
   readonly operationDeadlineMs: number;
+  readonly maxInFlight: number;
   readonly connectTimeoutSeconds: number;
   readonly maxLifetimeSeconds: number;
   readonly idleTimeoutSeconds: number;
@@ -132,6 +138,7 @@ export function resolveConnection(options: ConnectionOptions): ResolvedConnectio
     pooler,
     schema: options.schema ?? null,
     operationDeadlineMs: positive('operationDeadlineMs', options.operationDeadlineMs, 10_000),
+    maxInFlight: positive('maxInFlight', options.maxInFlight, poolSize * 64),
     connectTimeoutSeconds: positive('connectTimeoutSeconds', options.connectTimeoutSeconds, 10),
     maxLifetimeSeconds: positive('maxLifetimeSeconds', options.maxLifetimeSeconds, 300),
     idleTimeoutSeconds: positive('idleTimeoutSeconds', options.idleTimeoutSeconds, 30),

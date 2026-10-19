@@ -2,18 +2,21 @@ import type { SQL } from 'bun';
 
 /**
  * A text description of everything in a schema, read from the Postgres catalog: columns, constraints,
- * indexes, sequences, functions and triggers. It is what a snapshot test compares, so a change to
- * the DDL shows up as a diff of this text.
+ * indexes, storage parameters, sequences, functions and triggers. It is what a snapshot test
+ * compares, so a change to the DDL shows up as a diff of this text.
  *
  * Choices that keep it stable across servers and schema names:
  * - the schema name is replaced by `<schema>` wherever Postgres prints it;
  * - nullability comes from `pg_attribute.attnotnull`, and `pg_constraint` rows of type `n` (which
  *   PostgreSQL 18 stores for every NOT NULL, and 16 does not) are left out;
- * - everything is sorted by name, never by oid.
+ * - everything is sorted by name, never by oid;
+ * - the day partitions of `qcloud_deliveries` (`qcloud_deliveries_YYYYMMDD`) are left out: the tick makes
+ *   and drops them, so they depend on the date and are not part of the schema.
  */
 export async function schemaSnapshot(sql: SQL, schema: string): Promise<string[]> {
   const ns = sql`(SELECT oid FROM pg_namespace WHERE nspname = ${schema})`;
   const lines: string[] = [];
+  const dated = '^qcloud_deliveries_[0-9]{8}$';
 
   const columns = await sql<Array<{ table: string; line: string }>>`
     SELECT c.relname::text AS "table",
@@ -24,7 +27,8 @@ export async function schemaSnapshot(sql: SQL, schema: string): Promise<string[]
     FROM pg_attribute a
     JOIN pg_class c ON c.oid = a.attrelid
     LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-    WHERE c.relnamespace = ${ns} AND c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
+    WHERE c.relnamespace = ${ns} AND c.relkind IN ('r', 'p') AND c.relname::text !~ ${dated}
+      AND a.attnum > 0 AND NOT a.attisdropped
     ORDER BY c.relname, a.attnum`;
   let current = '';
   for (const row of columns) {
@@ -38,14 +42,27 @@ export async function schemaSnapshot(sql: SQL, schema: string): Promise<string[]
   const constraints = await sql<Array<{ line: string }>>`
     SELECT format('CONSTRAINT %s.%s %s', c.relname, k.conname, pg_get_constraintdef(k.oid)) AS line
     FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid
-    WHERE k.connamespace = ${ns} AND k.contype <> 'n' ORDER BY c.relname, k.conname`;
+    WHERE k.connamespace = ${ns} AND k.contype <> 'n' AND c.relname::text !~ ${dated} ORDER BY c.relname, k.conname`;
   lines.push(...constraints.map((row) => row.line));
 
   const indexes = await sql<Array<{ line: string }>>`
     SELECT pg_get_indexdef(i.indexrelid) AS line
-    FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
-    WHERE c.relnamespace = ${ns} ORDER BY c.relname`;
+    FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid
+    WHERE c.relnamespace = ${ns} AND t.relname::text !~ ${dated} ORDER BY c.relname`;
   lines.push(...indexes.map((row) => row.line));
+
+  const options = await sql<Array<{ line: string }>>`
+    SELECT format('OPTIONS %s %s', c.relname, array_to_string(c.reloptions, ', ')) AS line
+    FROM pg_class c
+    WHERE c.relnamespace = ${ns} AND c.relkind IN ('r', 'p') AND c.reloptions IS NOT NULL
+      AND c.relname::text !~ ${dated}
+    ORDER BY c.relname`;
+  lines.push(...options.map((row) => row.line));
+
+  const partitioned = await sql<Array<{ line: string }>>`
+    SELECT format('PARTITIONED %s %s', c.relname, pg_get_partkeydef(c.oid)) AS line
+    FROM pg_class c WHERE c.relnamespace = ${ns} AND c.relkind = 'p' ORDER BY c.relname`;
+  lines.push(...partitioned.map((row) => row.line));
 
   const sequences = await sql<Array<{ line: string }>>`
     SELECT format('SEQUENCE %s %s start %s min %s max %s increment %s cycle %s cache %s',

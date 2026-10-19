@@ -94,3 +94,17 @@ export function checkIngress(plan: Plan, checks: Checks, fx: Fixture, want: Expo
   checks.ok('no legacy security group rule resource', ofType(plan, 'aws_security_group_rule').length === 0);
   checks.ok('no public address on any service', ofType(plan, 'aws_ecs_service').every((s) => get(after(s), 'network_configuration', 0, 'assign_public_ip') === false));
 }
+
+/** The opt-in edge rate limit: one regional web ACL, allow by default, a 429 over the limit per address, on the load balancer. */
+export function checkEdgeRateLimit(plan: Plan, checks: Checks, limit: number): void {
+  const acls = ofType(plan, 'aws_wafv2_web_acl');
+  const acl = acls[0] === undefined ? undefined : after(acls[0]);
+  checks.ok('edge: one regional web ACL that allows by default', acls.length === 1 && get(acl, 'scope') === 'REGIONAL' && get(acl, 'default_action', 0, 'allow') !== undefined);
+  const rules = get(acl, 'rule');
+  const rule = Array.isArray(rules) ? rules[0] : undefined;
+  const rate = get(rule, 'statement', 0, 'rate_based_statement', 0);
+  checks.ok('edge: one rule, per address, over a minute, at the limit', Array.isArray(rules) && rules.length === 1 && get(rate, 'limit') === limit && get(rate, 'aggregate_key_type') === 'IP' && get(rate, 'evaluation_window_sec') === 60, json(rate));
+  const block = get(rule, 'action', 0, 'block', 0, 'custom_response', 0);
+  checks.ok('edge: over the limit it answers 429 with Retry-After', get(block, 'response_code') === 429 && get(block, 'response_header', 0, 'name') === 'Retry-After', json(block));
+  checks.ok('edge: attached to the control plane load balancer', ofType(plan, 'aws_wafv2_web_acl_association').length === 1 && rootReferences(plan, 'aws_wafv2_web_acl_association.edge', 'resource_arn').includes('aws_lb.control.arn'));
+}

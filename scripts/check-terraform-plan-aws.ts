@@ -14,8 +14,9 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { budget } from '../packages/store-postgres/src/connection/budget';
+import { budget, workerRoleLimit } from '../packages/store-postgres/src/connection/budget';
 import { checkAlarms, checkDatabase, checkMessaging, checkNetwork, checkProxy } from './terraform-plan-aws-data';
+import { checkBackground, checkCluster } from './terraform-plan-aws-background';
 import { checkIdentities } from './terraform-plan-aws-iam';
 import { checkAlarmRunbooks, checkAwsAlerts, checkAwsOptInAlerts } from './terraform-plan-aws-alerts';
 import { checkProcesses, checkScheduler, checkServices } from './terraform-plan-aws-services';
@@ -34,6 +35,8 @@ const SERVICES = {
   worker: { min: 1, max: 10, pool: 2, scaled: false },
   batch: { min: 0, max: 4, pool: 2, scaled: true },
 };
+/** The loop's one task and the sender's two: they hold a pool each, under the workers' database role. */
+const BACKGROUND = 3;
 const TICK_ENTRY = ['bun', '/app/packages/maintenance/src/bin.ts'];
 const CA_FILE = '/etc/ssl/certs/rds-global-bundle.pem';
 /** The heredoc in ci.tfvars.example, which Terraform strips of its indentation and ends with a newline. */
@@ -116,11 +119,11 @@ try {
     name: 'qcloud-ci',
     logGroups: {
       workers: ['/qcloud/qcloud-ci/workers/batch', '/qcloud/qcloud-ci/workers/worker'],
-      tick: '/qcloud/qcloud-ci/tick',
+      tick: ['/qcloud/qcloud-ci/tick', '/qcloud/qcloud-ci/tick-loop', '/qcloud/qcloud-ci/webhook-sender'],
     },
     secrets: {
       workers: ['qcloud-ci/database-url'],
-      tick: ['qcloud-ci/database-url'],
+      tick: ['qcloud-ci/database-url', 'qcloud-ci/webhook-key'],
     },
     queueArns: ['default', 'emails'].map((q) => `arn:aws:sqs:${REGION}:${ACCOUNT}:qcloud-ci__${q}`),
     deadLetterArns: ['default', 'emails'].map(
@@ -137,6 +140,7 @@ try {
     region: REGION,
     pooled: false,
     controlPool: 2,
+    webhooks: true,
     caPem: CA_PEM,
   };
 
@@ -153,11 +157,12 @@ try {
     checkAwsAlerts(p, checks, ['qcloud-ci-worker', 'qcloud-ci-batch'], ['default', 'emails']);
     checkAlarmRunbooks(p, checks, ROOT);
     checkServices(p, checks, SERVICES);
+    checkBackground(p, checks, TICK_ENTRY);
     checkProcesses(p, checks, processes, SERVICES, TICK_ENTRY);
     checkScheduler(p, checks);
     checkTickSchedule(p, checks, 1);
-    // 10 + 4 worker instances and four control processes, all at pool 2, six reserved.
-    const ts = budget({ workers: 14, controlProcesses: 4 });
+    // 10 + 4 worker instances, the loop and two senders, and four control processes, all at pool 2, six reserved.
+    const ts = budget({ workers: 14 + BACKGROUND, controlProcesses: 4 });
     const out = budgetOf(p);
     checks.ok(
       'the Terraform budget is the TypeScript budget (direct)',
@@ -217,17 +222,22 @@ try {
     const p = proxied.plan;
     checkProxy(p, checks, true);
     checkProcesses(p, checks, { ...processes, pooled: true }, SERVICES, TICK_ENTRY);
-    const ts = budget({ workers: 14, controlProcesses: 4, poolerPoolSize: 50 });
+    const ts = budget({ workers: 14 + BACKGROUND, controlProcesses: 4, poolerPoolSize: 50 });
     checks.ok(
       'behind the proxy the budget is pooled, at half of max_connections',
       get(budgetOf(p), 'mode') === 'pooled' && get(budgetOf(p), 'required') === ts.pooled,
+      JSON.stringify(budgetOf(p))
+    );
+    checks.ok(
+      'behind the proxy the worker role may open the proxy pool',
+      get(budgetOf(p), 'worker_role_limit') === workerRoleLimit(ts, true),
       JSON.stringify(budgetOf(p))
     );
     checkIdentities(p, checks, {
       ...iam,
       secrets: {
         workers: ['qcloud-ci/database-listen-url', 'qcloud-ci/database-url'],
-        tick: ['qcloud-ci/database-url'],
+        tick: ['qcloud-ci/database-url', 'qcloud-ci/webhook-key'],
       },
     });
     const off = plan('proxy-plaintext', 'rds_proxy={}', 'database_tls=off');
@@ -267,6 +277,7 @@ try {
   checkScaling(plan, checks);
   checkLevers(plan, checks);
   checkRefusals(plan, checks);
+  checkCluster(plan, checks);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

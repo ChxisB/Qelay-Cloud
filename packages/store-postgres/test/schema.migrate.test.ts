@@ -225,6 +225,16 @@ describeDb('schema migrate', () => {
       expect([...rows]).toEqual([{ note: 'kept', extra: null }]);
     });
 
+    test('a server statement_timeout does not stop a slow migration', async () => {
+      const strict = await freshSchema({ statementTimeoutMs: 100 });
+      try {
+        const slow = { ...one, statements: [...one.statements, 'SELECT pg_sleep(0.4)'] };
+        expect((await migrate(strict.db, { migrations: [slow] })).applied).toEqual([1]);
+      } finally {
+        await strict.drop();
+      }
+    });
+
     test('a statement that fails rolls the whole migration back and names the statement', async () => {
       await migrate(fresh.db, { migrations: [one] });
       const bad = two(['CREATE TABLE qcloud_b (id integer)', 'THIS IS NOT SQL']);

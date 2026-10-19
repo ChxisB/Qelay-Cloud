@@ -55,6 +55,13 @@ export function checkDatabase(plan: Plan, checks: Checks, maxConnections: number
     JSON.stringify(parameter('max_connections'))
   );
   checks.ok('plaintext connections are refused', get(parameter('rds.force_ssl'), 'value') === '1');
+  checks.ok(
+    'the session timeouts are set on the server, at once: statement 30 s, lock 5 s, idle in transaction 30 s',
+    ['statement_timeout:30000', 'lock_timeout:5000', 'idle_in_transaction_session_timeout:30000'].every((pair) => {
+      const [name, value] = pair.split(':') as [string, string];
+      return get(parameter(name), 'value') === value && get(parameter(name), 'apply_method') === 'immediate';
+    })
+  );
 
   checks.ok(
     "the database's group admits the tasks' group",

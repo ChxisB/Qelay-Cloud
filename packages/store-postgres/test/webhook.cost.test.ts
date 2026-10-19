@@ -55,7 +55,7 @@ describeDb('webhooks: the cost of the delivery trigger on the job path', () => {
     const [rows] = await t.fresh.sql<[{ hooked: number; bare: number }]>`
       SELECT count(*) FILTER (WHERE queue = 'hooked')::int AS hooked,
              count(*) FILTER (WHERE queue = 'bare')::int AS bare
-      FROM qcloud_webhook_deliveries`;
+      FROM qcloud_deliveries`;
     expect(rows.bare).toBe(0);
     expect(rows.hooked).toBe(JOBS * 3 * HOOKS);
     const per = (ms: number) => (ms / JOBS).toFixed(2);

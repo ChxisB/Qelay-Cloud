@@ -6,6 +6,7 @@ import {
   JOURNAL_TO_WEBHOOK,
   resolveDeliveryPolicy,
   WEBHOOK_EVENTS,
+  webhookAlertLevel,
   webhookRetryDelayMs,
 } from './webhook';
 
@@ -22,6 +23,15 @@ describe('webhook retry schedule', () => {
     expect(webhookRetryDelayMs(0, DEFAULT_DELIVERY_POLICY)).toBe(30_000);
   });
 
+  test('with random, a wait is spread by 20% either way and never passes the cap', () => {
+    const policy = { maxAttempts: 8, baseDelayMs: 1_000, maxDelayMs: 4_000 };
+    expect(webhookRetryDelayMs(2, policy, () => 0)).toBe(1_600);
+    expect(webhookRetryDelayMs(2, policy, () => 0.5)).toBe(2_000);
+    expect(webhookRetryDelayMs(2, policy, () => 0.999999)).toBe(2_400);
+    expect(webhookRetryDelayMs(9, policy, () => 0)).toBe(3_200);
+    expect(webhookRetryDelayMs(9, policy, () => 0.999999)).toBe(4_000);
+  });
+
   test('the default budget is eight attempts over 63.5 minutes of waiting', () => {
     let total = 0;
     for (let failed = 1; failed < DEFAULT_DELIVERY_POLICY.maxAttempts; failed += 1) {
@@ -35,6 +45,10 @@ describe('webhook retry schedule', () => {
     expect(() => resolveDeliveryPolicy({ maxAttempts: 0 })).toThrow('maxAttempts');
     expect(() => resolveDeliveryPolicy({ baseDelayMs: 2.5 })).toThrow('baseDelayMs');
     expect(() => resolveDeliveryPolicy({ baseDelayMs: 10, maxDelayMs: 5 })).toThrow('maxDelayMs');
+    expect(resolveDeliveryPolicy().disableAfter).toBe(20);
+    expect(resolveDeliveryPolicy({ disableAfter: 0 }).disableAfter).toBe(0);
+    expect(() => resolveDeliveryPolicy({ disableAfter: -1 })).toThrow('disableAfter');
+    expect(() => resolveDeliveryPolicy({ disableAfter: 1.5 })).toThrow('disableAfter');
   });
 });
 
@@ -86,5 +100,13 @@ describe('delivery body', () => {
     expect(deliveryBody(input)).toBe(
       '{"id":"1","event":"job.pushed","timestamp":5,"queue":"q","jobId":"j"}'
     );
+  });
+});
+
+describe('webhook alert level', () => {
+  test('steps at 50, 70, 90 and 100 percent of the limit, and is 0 when the limit is off', () => {
+    const levels = [0, 9, 10, 13, 14, 17, 18, 19, 20, 25].map((n) => webhookAlertLevel(n, 20));
+    expect(levels).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]);
+    expect(webhookAlertLevel(500, 0)).toBe(0);
   });
 });

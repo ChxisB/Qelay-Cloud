@@ -21,15 +21,17 @@ describeDb('webhooks: the registry', () => {
   });
 
   test('create returns the webhook with its defaults, and list and get agree', async () => {
-    const hook = await addHook(t, {
+    const { secret, ...hook } = await addHook(t, {
       events: ['job.failed', 'job.failed', 'job.pushed'],
       queue: 'q',
     });
+    // A store with a key signs every webhook: none was given, so one is made and returned this once.
+    expect(secret).toMatch(/^whsec_[0-9a-f]{64}$/);
     expect(hook).toMatchObject({
       url: 'https://hooks.example.com/in',
       events: ['job.failed', 'job.pushed'],
       queue: 'q',
-      signed: false,
+      signed: true,
       enabled: true,
       createdBy: 'tester',
       lastTriggered: null,
@@ -117,7 +119,7 @@ describeDb('webhooks: the registry', () => {
     await t.store.webhooks.sendTest(hook.id);
     await t.store.webhooks.delete(hook.id);
     const [{ n }] = await t.fresh.sql<[{ n: number }]>`
-      SELECT count(*)::int AS n FROM qcloud_webhook_deliveries`;
+      SELECT count(*)::int AS n FROM qcloud_deliveries`;
     expect(n).toBe(0);
   });
 

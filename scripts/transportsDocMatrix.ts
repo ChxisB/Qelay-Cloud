@@ -72,7 +72,7 @@ export const MATRIX: readonly Row[] = [
   [
     'Cost drivers',
     'Data volume published and delivered, a Cloud Scheduler job, Cloud Monitoring reads. Not measured (not run)',
-    'Requests: about 2.1 per job with room to receive, plus idle long polls and CloudWatch reads (emulator count; price not checked)',
+    'Requests: about 1.1 to 1.6 per job with room to receive (deletes batched), plus idle long polls and CloudWatch reads (emulator count; price not checked)',
     'Database load: one poll per queue per worker per interval (tested)',
     'None (tested)',
   ],

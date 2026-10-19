@@ -2,6 +2,7 @@ import type { JobOptions, JobRecord } from '@qelay-cloud/core';
 import { UnsupportedOptionError } from '@qelay-cloud/core';
 import type { StoreContext } from './context';
 import type { Envelope } from './prepare';
+import { identifier } from './prepare';
 import { MAX_PAGE_SIZE } from './readModels';
 import { JOB_COLUMNS } from './readQueries';
 import type { JobRow } from './reads';
@@ -143,7 +144,10 @@ export async function jobsDetails(
     const now = await ctx.db.time.now(sql);
     const rows = await sql.unsafe<DetailRow[]>(JOBS_DETAILS, [
       ctx.namespace,
-      sql.array([...ids], 'TEXT'),
+      sql.array(
+        ids.map((id) => identifier('ids[]', id)),
+        'TEXT'
+      ),
     ]);
     const byId = new Map(rows.map((row) => [row.id, toDetails(ctx, row, now)]));
     return ids.flatMap((id) => byId.get(id) ?? []);

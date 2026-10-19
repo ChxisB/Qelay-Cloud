@@ -3,8 +3,14 @@
 # been planned, never applied.
 
 locals {
-  pooled = var.pooler != null
-  use_ca = var.database_tls == "ca-file"
+  # Cloud SQL's managed pooler answers on the instance's own address at 6432, with Google's default of 50 server
+  # connections. `pooled` and the pool size must not wait on the database (the budget sizes the database), so only
+  # the address does.
+  pooled                  = var.database_managed_pooling || var.pooler != null
+  pooler_server_pool_size = var.database_managed_pooling ? 50 : try(var.pooler.server_pool_size, 20)
+  pooler_host             = var.database_managed_pooling ? module.database.private_ip_address : try(var.pooler.host, null)
+  pooler_port             = var.database_managed_pooling ? 6432 : try(var.pooler.port, null)
+  use_ca                  = var.database_tls == "ca-file"
 
   apis = [
     "compute.googleapis.com",
@@ -24,17 +30,19 @@ locals {
   # --- the connection strings: the one place the password is assembled ---------------------------------
   direct_url = "postgres://${module.database.user_name}:${module.database.password}@${module.database.private_ip_address}:5432/${module.database.database_name}"
   # Behind a pooler, every process connects to the pooler; the direct URL is kept for LISTEN.
-  database_url = local.pooled ? "postgres://${module.database.user_name}:${module.database.password}@${var.pooler.host}:${var.pooler.port}/${module.database.database_name}" : local.direct_url
+  database_url = local.pooled ? "postgres://${module.database.user_name}:${module.database.password}@${local.pooler_host}:${local.pooler_port}/${module.database.database_name}" : local.direct_url
 
   secret_names = toset(concat(
     ["database-url"],
     local.use_ca ? ["database-ca"] : [],
     local.pooled ? ["database-listen-url"] : [],
+    var.webhooks ? ["webhook-key"] : [],
   ))
   secret_values = merge(
     { "database-url" = local.database_url },
     { for key in ["database-ca"] : key => module.database.server_ca_cert if local.use_ca },
     { for key in ["database-listen-url"] : key => local.direct_url if local.pooled },
+    { for key in ["webhook-key"] : key => random_id.webhook_key[0].hex if var.webhooks },
   )
 
   # --- what every process is told ------------------------------------------------------------------------
@@ -54,6 +62,7 @@ locals {
       QCLOUD_GCP_PROJECT     = var.project_id
       QCLOUD_DATABASE_POOLER = local.pooled ? "transaction" : "none"
     },
+    module.messaging.hot_queues == "" ? {} : { QCLOUD_GCP_HOT_QUEUES = module.messaging.hot_queues },
     local.tls_env[var.database_tls],
   )
 
@@ -64,12 +73,17 @@ locals {
     }
   }
 
-  # The tick reads the URL and the CA; a worker also reads the direct URL behind a pooler, for LISTEN.
-  tick_secret_env    = { QCLOUD_DATABASE_URL = local.secret_ref["database-url"] }
-  tick_secret_keys   = toset(concat(["database-url"], local.use_ca ? ["database-ca"] : []))
-  worker_secret_keys = local.secret_names
+  # The tick reads the URL, the CA and the webhook key; a worker reads the URL and the CA, and the direct URL behind
+  # a pooler, for LISTEN. A worker never holds the webhook key: it sends nothing.
+  database_secret_env = { QCLOUD_DATABASE_URL = local.secret_ref["database-url"] }
+  tick_secret_env = merge(
+    local.database_secret_env,
+    { for key in ["webhook-key"] : "QCLOUD_WEBHOOK_KEY" => local.secret_ref[key] if var.webhooks },
+  )
+  tick_secret_keys   = toset(concat(["database-url"], local.use_ca ? ["database-ca"] : [], var.webhooks ? ["webhook-key"] : []))
+  worker_secret_keys = setsubtract(local.secret_names, ["webhook-key"])
   worker_secret_env = merge(
-    local.tick_secret_env,
+    local.database_secret_env,
     { for key in ["database-listen-url"] : "QCLOUD_DATABASE_LISTEN_URL" => local.secret_ref[key] if local.pooled },
   )
   secret_files = { for key in ["database-ca"] : local.ca_file => local.secret_ref[key] if local.use_ca }
@@ -79,8 +93,14 @@ locals {
   # from the instance count, not measured on Cloud Run.
   subnet_prefix   = tonumber(split("/", var.subnet_cidr)[1])
   subnet_usable   = pow(2, 32 - local.subnet_prefix) - 4 # Google reserves four addresses of every subnet
-  total_instances = sum([for service in values(var.worker_services) : service.max_instances]) + 1
+  total_instances = sum([for service in values(var.worker_services) : service.max_instances]) + sum(concat([0], [for pool in values(local.background) : pool.spec.instances])) + 1
   subnet_required = 2 * local.total_instances
+
+  # --- the always-on tick and the webhook sender: the tick image's worker pools, on the tick's identity ----------
+  background = merge(
+    var.tick_loop == null ? {} : { "tick-loop" = { subcommand = "loop", spec = var.tick_loop } },
+    var.webhook_sender == null ? {} : { "webhook-sender" = { subcommand = "send", spec = var.webhook_sender } },
+  )
 
   # --- the pools that follow a queue's backlog -----------------------------------------------------------
   autoscaled = { for key, pool in var.worker_services : "${var.name}-${key}" => pool if pool.autoscaling != null }
@@ -99,6 +119,14 @@ resource "terraform_data" "inputs" {
       error_message = "A worker pool's autoscaling.queue is not in `queues`: there is no subscription to follow."
     }
     precondition {
+      condition     = var.webhook_sender == null || var.webhooks
+      error_message = "webhook_sender needs webhooks = true: the sender signs with QCLOUD_WEBHOOK_KEY."
+    }
+    precondition {
+      condition     = !var.database_managed_pooling || var.pooler == null
+      error_message = "database_managed_pooling and pooler are exclusive: one pooler in front of the database."
+    }
+    precondition {
       condition     = local.subnet_required <= local.subnet_usable
       error_message = "The workers' subnet ${var.subnet_cidr} has ${local.subnet_usable} usable addresses and ${local.total_instances} instances at most (counting the tick) need ${local.subnet_required} during a rollover. Use a larger subnet_cidr or lower max_instances."
     }
@@ -110,6 +138,13 @@ resource "google_project_service" "api" {
 
   service            = each.key
   disable_on_destroy = false
+}
+
+# The key webhook secrets are sealed with: 32 random bytes as 64 hex digits (QCLOUD_WEBHOOK_KEY).
+resource "random_id" "webhook_key" {
+  count = var.webhooks ? 1 : 0
+
+  byte_length = 32
 }
 
 # --- network, budget, database ---------------------------------------------------------------------------
@@ -130,17 +165,26 @@ module "budget" {
   source = "../../modules/budget"
 
   max_connections = var.max_connections
-  services = {
-    for name, service in var.worker_services : name => {
-      max_instances      = service.max_instances
-      pool_size          = service.pool_size
-      listen_connections = service.listen_connections
-    }
-  }
+  services = merge(
+    {
+      for name, service in var.worker_services : name => {
+        max_instances      = service.max_instances
+        pool_size          = service.pool_size
+        listen_connections = service.listen_connections
+      }
+    },
+    {
+      for name, pool in local.background : name => {
+        max_instances      = pool.spec.instances
+        pool_size          = pool.spec.pool_size
+        listen_connections = 0
+      }
+    },
+  )
   control_processes       = var.control_processes
   control_pool_size       = var.control_pool_size
   pooled                  = local.pooled
-  pooler_server_pool_size = local.pooled ? var.pooler.server_pool_size : 20
+  pooler_server_pool_size = local.pooler_server_pool_size
 }
 
 module "database" {
@@ -150,6 +194,9 @@ module "database" {
   region              = var.region
   network_id          = module.network.network_id
   tier                = var.database_tier
+  edition             = var.database_edition
+  managed_pooling     = var.database_managed_pooling
+  session_timeouts    = var.database_session_timeouts
   high_availability   = var.database_high_availability
   disk_size_gb        = var.database_disk_size_gb
   max_connections     = module.budget.max_connections
@@ -186,6 +233,7 @@ module "iam" {
 
   name               = var.name
   topic_name         = module.messaging.topic_name
+  hot_topic_names    = module.messaging.hot_topic_names
   subscription_names = module.messaging.subscription_names
   secret_ids         = module.secrets.secret_ids
   worker_secrets     = local.worker_secret_keys
@@ -218,6 +266,33 @@ module "workers" {
   labels                = local.labels
 
   # The pool reads its secrets at start: it must not be created before it is allowed to.
+  depends_on = [module.iam, module.messaging, google_project_service.api]
+}
+
+# The tick image as long-running pools: `loop` (a beat every second) and `send` (the webhook sender). The tick's
+# identity reads the database and webhook secrets and rings the bells; neither process subscribes to a queue.
+module "background" {
+  source   = "../modules/workers"
+  for_each = local.background
+
+  name                  = "${var.name}-${each.key}"
+  region                = var.region
+  image                 = var.tick_image
+  command               = var.tick_command
+  args                  = [each.value.subcommand]
+  service_account_email = module.iam.tick_email
+  min_instances         = each.value.spec.instances
+  max_instances         = each.value.spec.instances
+  pool_size             = each.value.spec.pool_size
+  cpu                   = each.value.spec.cpu
+  memory                = each.value.spec.memory
+  network               = module.network.network_name
+  subnetwork            = module.network.subnetwork_name
+  env                   = merge(local.runtime_env, each.value.spec.env)
+  secret_env            = local.tick_secret_env
+  secret_files          = local.secret_files
+  labels                = local.labels
+
   depends_on = [module.iam, module.messaging, google_project_service.api]
 }
 

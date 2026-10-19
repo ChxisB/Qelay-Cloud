@@ -70,6 +70,26 @@ describe('resource names', () => {
     expect(queueNames('prod', 'emails').subscription).toBe('qcloud.prod.sub.emails');
   });
 
+  test('a hot queue has its own topic and an unfiltered subscription with the usual name', () => {
+    const shared = queueNames('prod', 'emails');
+    const hot = queueNames('prod', 'emails', true);
+    expect(shared.topic).toBe('qcloud.prod.bells');
+    expect(hot.topic).toBe('qcloud.prod.hot.emails');
+    expect(hot.topic).toMatch(RESOURCE_ID);
+    expect(queueNames('prod', 'a.b', true).topic).not.toBe(queueNames('prod', 'a_2eb', true).topic);
+    expect(shared.subscriptionFilter).toBe(shared.filter);
+    expect(hot.subscriptionFilter).toBeUndefined();
+    // Only the topic differs where it matters: the same subscription ids, the same dead-letter filter.
+    expect({ ...hot, topic: '', subscriptionFilter: '' }).toEqual({
+      ...shared,
+      topic: '',
+      subscriptionFilter: '',
+    });
+    expect(() => queueNames('prod', 'q'.repeat(MAX_RESOURCE_ID_LENGTH), true)).toThrow(
+      /at most 255/
+    );
+  });
+
   test('two queues, or two namespaces, never share a subscription or a route', () => {
     const a = queueNames('prod', 'a.b');
     expect(queueNames('prod', 'a_2eb').subscription).not.toBe(a.subscription);

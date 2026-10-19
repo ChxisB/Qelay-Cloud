@@ -1,5 +1,6 @@
 import { UnsupportedOptionError } from '@qelay-cloud/core';
 import type { StoreContext } from './context';
+import { identifier } from './prepare';
 import { DEFAULT_RE_RING_AFTER_MS, DEFAULT_RING_GRACE_MS } from './ringQuery';
 
 /**
@@ -191,7 +192,7 @@ async function existing(ctx: StoreContext, ids: readonly string[]): Promise<Set<
   return ctx.db.run('existingJobs', async (sql) => {
     const rows = await sql<Array<{ id: string }>>`
       SELECT id FROM qcloud_jobs
-      WHERE namespace = ${ctx.namespace} AND id = ANY(${sql.array([...new Set(ids)], 'TEXT')})`;
+      WHERE namespace = ${ctx.namespace} AND id = ANY(${sql.array([...new Set(ids.map((id) => identifier('ids[]', id)))], 'TEXT')})`;
     return new Set(rows.map((row) => row.id));
   });
 }

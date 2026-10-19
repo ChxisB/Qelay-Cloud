@@ -43,6 +43,12 @@ not copied. The Control API replaces the agent.
 - New API work goes through `src/lib/bq.ts` and `src/lib/bq/`. `src/lib/api.ts` is the first-generation client.
 - Storage keys keep the `qelay-` prefix; `src/lib/legacyStorage.ts` adopts the older `bq-dash-*` keys once.
 - The panel never imports from outside `packages/panel`.
+- **Disable what cannot be done safely.** A control the panel cannot make safe is not offered with a warning: it is disabled or
+  left off the page. An action is safe only when the server can refuse it if the job changed since the page read it (a state or
+  version precondition) and when it cannot duplicate a side effect of a job a worker is running. That is why cancel, discard,
+  DLQ retry, completed requeue and every transition of an active job are off in `shared/flowOperationPolicy.ts`. Enabling one
+  means giving the API the precondition first. The gate is the one place that changes, so the single-job and bulk surfaces
+  cannot disagree. The panel explains the reason only for active jobs; the other gated controls are silent about why.
 
 ## Connecting to a Control API
 
@@ -98,8 +104,8 @@ that is not offered a retry, the hidden pages, a viewer that cannot mutate, and 
 `e2e/deployment.e2e.ts` runs the real in-process tick (`TickLoop`, every second) with small thresholds (late after
 4 s, stale after 9 s) and stops it through the runtime's `POST /tick/stop`: the Dashboard's status strip goes amber, then
 red, links to the Deployment page, and is green again after `POST /tick/start`.
-The other specs are the upstream ones that still apply, run against this stack. They run in Chromium and WebKit
-here; the Firefox project is configured but was not run in the sandbox this was built in. The sign-in dialogs of
+The other specs are the upstream ones that still apply, run against this stack. Pull requests run them in Chromium; the
+nightly workflow runs Firefox and WebKit. No Firefox spec has run yet: the build sandbox refuses to start it. The sign-in dialogs of
 OIDC are covered by unit tests with a fake client, not by the browser specs.
 
 ## Not done yet

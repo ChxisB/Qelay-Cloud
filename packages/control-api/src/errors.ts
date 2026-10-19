@@ -2,6 +2,7 @@ import { QcloudError } from '@qelay-cloud/core';
 import {
   BatchTooLargeError,
   GroupFullError,
+  PayloadTooComplexError,
   PayloadTooLargeError,
   WebhookDisabledError,
   WebhookKeyError,
@@ -59,6 +60,18 @@ export function toApiError(error: unknown, requestId: string): ApiError {
       maxBytes: error.limit,
       index: error.index,
     });
+  }
+  if (error instanceof PayloadTooComplexError) {
+    return new ApiError(
+      413,
+      'payload_too_large',
+      'a job payload has too many values or nests too deep',
+      {
+        kind: error.kind,
+        limit: error.limit,
+        index: error.index,
+      }
+    );
   }
   if (error instanceof BatchTooLargeError) {
     return new ApiError(400, 'batch_too_large', 'too many jobs in one request', {
@@ -133,6 +146,12 @@ export function toApiError(error: unknown, requestId: string): ApiError {
         return new ApiError(502, 'transport_error', 'the message transport failed');
       case 'STORE_ERROR':
         return new ApiError(503, 'store_error', 'the database failed');
+      case 'STORE_OVERLOADED':
+        return new ApiError(
+          503,
+          'store_overloaded',
+          'the API is busy; nothing was changed, try again shortly'
+        );
       case 'OPERATION_DEADLINE':
         return new ApiError(
           504,

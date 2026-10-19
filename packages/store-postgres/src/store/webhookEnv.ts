@@ -15,6 +15,8 @@ export interface WebhookEnvSettings {
    * webhook can deliver to a receiver on localhost. Anything else is the strict policy.
    */
   readonly urlPolicy: WebhookUrlPolicy;
+  /** `QCLOUD_WEBHOOK_KEEP_MS`: how long a finished delivery stays readable. Absent: two days. The tick uses it; the Control API ignores it. */
+  readonly keepMs?: number;
 }
 
 /** Throws `UnsupportedOptionError` naming the variable, and never repeats the key. */
@@ -26,7 +28,15 @@ export function webhookSettingsFromEnv(env: Env): WebhookEnvSettings {
   }
   const urlPolicy: WebhookUrlPolicy =
     mode === '1' || mode === 'true' ? { allowHttp: true, allowPrivate: true } : STRICT_URL_POLICY;
-  if (raw === undefined || raw.trim() === '') return { urlPolicy };
+  const keep = env.QCLOUD_WEBHOOK_KEEP_MS;
+  if (keep !== undefined && keep !== '' && !/^[1-9]\d*$/.test(keep)) {
+    throw new UnsupportedOptionError(
+      'QCLOUD_WEBHOOK_KEEP_MS',
+      `must be a positive integer, not "${keep}"`
+    );
+  }
+  const keepMs = keep === undefined || keep === '' ? {} : { keepMs: Number(keep) };
+  if (raw === undefined || raw.trim() === '') return { urlPolicy, ...keepMs };
   parseSealKey(raw, 'QCLOUD_WEBHOOK_KEY');
-  return { key: raw, urlPolicy };
+  return { key: raw, urlPolicy, ...keepMs };
 }

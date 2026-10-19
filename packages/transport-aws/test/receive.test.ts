@@ -28,7 +28,8 @@ describeSqs('receive on the SQS emulator', () => {
       expect(new Set(seen).size).toBe(25);
       expect(seen).toHaveLength(25);
       expect(transport.metrics.largestReceive).toBeLessThanOrEqual(10);
-      expect(transport.metrics.deletes).toBe(25);
+      expect(transport.metrics.deletedBells).toBe(25);
+      expect(transport.metrics.deletes).toBeLessThan(25);
     });
   });
 

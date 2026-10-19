@@ -14,7 +14,7 @@ tick_command = ["bun", "/app/packages/maintenance/src/bin.ts"]
 
 queues = {
   default = {}
-  emails  = { ack_deadline_seconds = 60, max_delivery_attempts = 10 }
+  emails  = { ack_deadline_seconds = 60, max_delivery_attempts = 10, hot = true }
 }
 
 worker_services = {
@@ -23,5 +23,9 @@ worker_services = {
 }
 
 max_connections = 100
+
+webhooks       = true
+tick_loop      = {}
+webhook_sender = { instances = 2 }
 
 deployer_members = ["user:operator@example.com"]

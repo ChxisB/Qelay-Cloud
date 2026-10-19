@@ -16,11 +16,12 @@ import type {
   RungEntry,
   StateCounts,
   StateStore,
+  StoreError,
   TickBudget,
   TickReport,
 } from '@qelay-cloud/core';
 import { claimJobs } from './store/claim';
-import { completeJob } from './store/complete';
+import { completeJob, completeJobs } from './store/complete';
 import type { StoreContext } from './store/context';
 import type { ControlApi } from './store/controlApi';
 import { controlApi } from './store/controlApi';
@@ -63,6 +64,7 @@ import { flowApi } from './store/flowApi';
 import { heartbeat, release } from './store/lease';
 import { pauseQueue, resumeQueue, setConcurrencyLimit, setRateLimit } from './store/limits';
 import { cancelJob, changePriority, promoteJob } from './store/operator';
+import { prepareJobs } from './store/prepare';
 import { counts, getJob, listJobs } from './store/reads';
 import type { RecoveryReport } from './store/recovery';
 import { recoverExpired } from './store/recovery';
@@ -143,6 +145,11 @@ export class PostgresStore implements StateStore {
     return enqueueJobs(this.ctx, jobs);
   }
 
+  /** Throws what `enqueue` would throw about these jobs' own input, without using a connection. */
+  checkJobs(jobs: readonly NewJob[]): void {
+    prepareJobs(jobs, this.ctx.codec, this.ctx.limits);
+  }
+
   markRung(rung: readonly RungEntry[]): Promise<void> {
     return markRung(this.ctx, rung);
   }
@@ -197,6 +204,12 @@ export class PostgresStore implements StateStore {
 
   complete(lease: Lease, result: unknown): Promise<Outcome> {
     return completeJob(this.ctx, lease, result);
+  }
+
+  completeMany(
+    items: ReadonlyArray<{ readonly lease: Lease; readonly result: unknown }>
+  ): Promise<Array<Outcome | StoreError>> {
+    return completeJobs(this.ctx, items);
   }
 
   fail(lease: Lease, error: FailureInfo): Promise<Outcome> {

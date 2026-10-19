@@ -18,14 +18,14 @@ end of the plan).
 ## Findings
 
 Severity is the author's judgement, and where it is uncertain it is set higher, not lower. **No finding is rated high or critical.**
-One medium finding (F-2) is **open and needs your decision.**
+One medium finding (F-2) is **narrowed and still needs your decision.**
 
 | # | Finding | Severity | Status |
 | --- | --- | --- | --- |
 | F-1 | Two operator-only reads (`GET /audit`, `GET /transport/dead-letters`) were enforced by a check inside each handler, not declared with the route. A new read route could skip the check without anything failing. No bypass was found. | Low | **Fixed.** `operatorOnly` is a property of the route, enforced once in `app.ts`, and the generated [route table](routes.md) is held row by row by a test. |
-| F-2 | **Decode amplification.** The 1 MiB payload cap is on encoded bytes. One million `null`s is 1 MiB and decodes to about 19 MB. `GET /queues/:queue/jobs/list` decodes every payload of a page before cutting each to 1,024 bytes: 20 such jobs grew the API process by **357 MB** in 300 ms (measured against Postgres 18), and a page may hold 500. A producer that relays untrusted JSON into a payload can make a list call exhaust the API's memory, and it repeats while the job exists. Workers are not affected (one payload at a time, about 19 MB). | **Medium** (availability of the control plane, not confidentiality or integrity) | **Open. Needs the user's decision.** Documented in [limits](../limits.md) section 13 with the mitigation available today (`QCLOUD_API_MAX_PAGE_SIZE`, task memory). A fix narrows what a payload may be, which is a change to the queue's contract, so it was not made here. Options: (a) cap decoded elements per payload at enqueue (a walk of the encoded bytes; the number is the decision, 250,000 would pass any realistic payload); (b) decode lazily, one job at a time, in the list route; (c) accept and keep the documentation. Recommended: (a) and (b) together. |
+| F-2 | **Decode amplification.** The 1 MiB payload cap is on encoded bytes. One million `null`s is 1 MiB and decodes to about 19 MB. `GET /queues/:queue/jobs/list` decodes every payload of a page before cutting each to 1,024 bytes: 20 such jobs grew the API process by **357 MB** in 300 ms (measured against Postgres 18), and a page may hold 500. A producer that relays untrusted JSON into a payload can make a list call exhaust the API's memory, and it repeats while the job exists. Workers are not affected (one payload at a time, about 19 MB). | **Medium** (availability of the control plane, not confidentiality or integrity) | **Narrowed after the review (option (a) with 20,000 values and 64 levels, not 250,000; it walks the value, not the encoded bytes). Still needs the user's decision on the number and on (b).** Documented in [limits](../limits.md) section 13 with the mitigation available today (`QCLOUD_API_MAX_PAGE_SIZE`, task memory). A fix narrows what a payload may be, which is a change to the queue's contract, so it was not made here. Options: (a) cap decoded elements per payload at enqueue (a walk of the encoded bytes; the number is the decision, 250,000 would pass any realistic payload); (b) decode lazily, one job at a time, in the list route; (c) accept and keep the documentation. Recommended: (a) and (b) together. |
 | F-3 | A webhook may point at any port of a public host, and the failure category (`refused`, `timeout`, `tls`, `bad_response`) is visible to an operator, so an operator can use the sender as a port-scan oracle against public hosts. Internal addresses stay refused. | Low | **Accepted.** Only an operator can register a webhook, and an operator can already see the audit trail of what they did. Restrict to 443 if you want it closed. |
-| F-4 | Both control-plane Terraform roots default to `exposure = "public"`: Cloud Run with `allUsers` as invoker, or an internet-facing load balancer. The application's token check is then the only barrier, and no web application firewall or edge rate limit is deployed. | Medium (posture) | **Accepted as the documented default.** `exposure = "private"` exists in both and is tested by `check:terraform`. Use it, or put identity-aware access in front, when payloads are sensitive. |
+| F-4 | Both control-plane Terraform roots default to `exposure = "public"`: Cloud Run with `allUsers` as invoker, or an internet-facing load balancer. The application's token check is then the only barrier, and no web application firewall or edge rate limit is deployed unless you set one (`edge` on GCP, `edge_rate_limit_per_minute` on AWS, both off by default, plan-checked and never applied). | Medium (posture) | **Accepted as the documented default.** `exposure = "private"` exists in both and is tested by `check:terraform`. Use it, or put identity-aware access in front, when payloads are sensitive. |
 | F-5 | Container images were not built, scanned for vulnerabilities, or published with SBOMs. The Dockerfiles were read (below). | Not assessed | **Deferred to the Docker run at the end of the plan** (owner: you). Not closed, so the release in task 73 should not claim scanned images. |
 | F-6 | Namespace isolation is not a hard boundary (one credential, shared tables). | Informational | **Accepted and documented** in [concepts](../concepts.md#namespaces-queues-and-the-panel) and the [threat model](threat-model.md#namespaces). |
 | F-7 | The panel shows payloads, results and workflow inputs to every `viewer`. | Medium if payloads hold secrets | **Accepted and documented** ([limits](../limits.md) section 13). Reviewing what a panel should reveal is owed to the independent test. |
@@ -61,7 +61,7 @@ One medium finding (F-2) is **open and needs your decision.**
   400 for bad UTF-8). A job's encoded payload and its result are each at most 1 MiB, refused with `PayloadTooLargeError` and nothing
   written, at `add`, `addBulk`, edit and completion. A batch is at most 1,000 jobs. Lists are paged (500 by default at most, the store
   allows 1,000), flows return at most 5,000 jobs, event streams are capped per principal and per instance. All of this is in
-  [limits](../limits.md). **The one gap is F-2:** a byte cap does not bound the memory a decode takes.
+  [limits](../limits.md). **The one gap is F-2:** a byte cap does not bound the memory a decode takes; a cap on values and nesting now does for one payload, not for a page.
 - **SQL.** All values are parameters. There are 28 `.unsafe(` call sites in 14 files of `packages/*/src`; each was read. The text
   they build is constant, or interpolates only a constant fragment chosen in code (a column list, a sort direction from a closed
   set, a count of placeholders), and the schema name reaches the connection as a startup parameter (`search_path`), not through
@@ -74,7 +74,7 @@ One medium finding (F-2) is **open and needs your decision.**
   - a RegExp extension with an invalid pattern throws `SyntaxError` on decode; an Error extension with an unknown class name decodes
     to a plain `Error` carrying that name (no lookup of a constructor from the name), and the name `__proto__` is just a string;
   - a `__proto__` key survives as an own property and does not touch the prototype (the codec's own test);
-  - **a flat array of tiny elements decodes to 19 times its size: F-2.**
+  - **a flat array of tiny elements decodes to 19 times its size, and an array of empty arrays to 70: F-2** (now capped at 20,000 values a payload).
   A decoded RegExp from a payload is the application's to handle: a pattern of its choosing run against attacker text is a ReDoS
   risk in the application's handler, not in this system.
 - **JSON in the API.** Bodies are parsed as JSON only, validated by schema, and payloads leave as the tagged encoding (`bigint`,
@@ -87,12 +87,20 @@ Self-review of the sender (task 52) against [webhooks](../webhooks.md#where-a-we
 - the name is resolved by the sender and every address must be public; loopback, private, link-local (the metadata addresses),
   carrier-grade NAT, multicast and the IPv6 equivalents, including IPv4-mapped forms, are refused; the connection is made to the
   resolved address, so a second lookup cannot rebind it (DNS rebinding);
-- a redirect is a failed attempt and is never followed; only the status line of the answer is read, at most 16 KiB, within a 10 s
-  bound for the whole exchange; a response body and a resolved address are never kept;
+- a redirect is a failed attempt and is never followed; only the status line of a success is read; a failed answer's first 1 KB (at most 4 KB) is kept as text in the
+  attempt's history, and not at all when private addresses are allowed unless asked, within a 10 s bound for the whole exchange; a resolved
+  address is never kept;
 - a delivery records a failure category and nothing else; the URL a viewer sees is cut to its origin;
 - the signature is `HMAC-SHA256(secret, timestamp + "." + body)` with a timestamp header, so a receiver can reject a replay; the
   secret is sealed at rest with `QCLOUD_WEBHOOK_KEY`, is returned once when set, is not in an audit row or a log line, and the key
   must be the same in the Control API and the tick;
+- `qcloud-tick send` (R14) keeps connections and names, and neither weakens the checks: a kept connection is keyed by address,
+  port, TLS name and CA, so one verified for a name is not used for another; a cached name keeps its addresses, never a verdict,
+  so every address is checked on every use and a name that turns private is refused once its entry expires (at most
+  `QCLOUD_WEBHOOK_DNS_TTL_MS`, 30 s by default, after the change; the connection to an address already checked is the same
+  pin as before); a connection is kept only after a clean `HTTP/1.1` answer of known length, so a response cannot desynchronise
+  the next request on it; the sender holds one entry per destination in memory, bounded by the webhooks of a namespace (100) and
+  1,024 cached names;
 - the tests are `packages/maintenance/test/webhook.*.test.ts` and `packages/core/src/webhookUrl.test.ts`, which include a rebinding
   resolver and a redirect.
 
@@ -106,7 +114,7 @@ real-world SSRF bypasses live.
   no commits yet, so no history was scanned**; run `gitleaks git` on the first commit and before every release.
 - No payload, result, token, password or connection string is in any log line the repository writes
   (`test/observability/logs.test.ts` scans every log call and sends a canary payload and secret through the API and the SDK), none
-  in an API response (phase 2 pass), and a webhook secret is never returned after it is set.
+  in an API response (phase 2 pass), and a webhook secret is never returned after it is set (a generated one is returned once, in the response that made it).
 - The database credential reaches the processes through the cloud secret manager only: Secret Manager with a per-secret
   `secretAccessor` grant on GCP, Secrets Manager with a per-secret read policy on AWS. The `.dockerignore` keeps `.env*`,
   `*.tfvars`, state and plans out of images.
@@ -159,7 +167,7 @@ Read in `infra/gcp` and `infra/aws` (104 `.tf` files), and checked by `check:ter
 
 ## To do before production use with sensitive data
 
-1. Decide F-2 (see its row), then re-run the `limits` measurement.
+1. Decide F-2's number and whether the list decodes lazily (see its row), then re-run the `limits` measurement.
 2. Build the images, scan them, produce and publish the SBOMs (F-5).
 3. Commission an independent test, starting with the webhook sender and the panel's exposure of payloads.
 4. Run the real-cloud checks that D9 holds back: an alert firing, a restore, a secret rotation.

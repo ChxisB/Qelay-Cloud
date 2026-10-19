@@ -1,3 +1,4 @@
+import type { StoreError } from './errors';
 import type {
   ClaimedJob,
   ClaimOptions,
@@ -38,7 +39,8 @@ export interface StateStore {
   /**
    * Admits jobs in one transaction, preserving order. Idempotent per custom id and dedup key: a
    * live duplicate returns the existing job with `created: false`. Each admitted job that is
-   * claimable now or inside the delay window carries a `ring`.
+   * claimable now or inside the delay window carries a `ring`, except one a recent bell covers (the store's
+   * `ringCoverMs`, off by default).
    */
   enqueue(jobs: readonly NewJob[]): Promise<EnqueuedJob[]>;
 
@@ -71,6 +73,17 @@ export interface StateStore {
 
   /** Completes the job and promotes flow parents. Guarded by the lease token. Returns rings. */
   complete(lease: Lease, result: unknown): Promise<Outcome>;
+
+  /**
+   * `complete` for many jobs in one transaction, in input order. Each entry is its own outcome (`ok: false`
+   * for a lost lease, or a repeat of a lease earlier in the list); a result the codec or the size limit
+   * refuses comes back as that entry's `StoreError` and the rest are completed. The rings of the whole
+   * batch (flow parents it promoted) are on the first `ok` outcome. Any other failure throws and nothing
+   * is written. At most `MAX_BATCH` entries.
+   */
+  completeMany(
+    items: ReadonlyArray<{ readonly lease: Lease; readonly result: unknown }>
+  ): Promise<Array<Outcome | StoreError>>;
 
   /** Counts the attempt, then retries after the job's backoff or moves it to the DLQ. Guarded by the lease token. */
   fail(lease: Lease, error: FailureInfo): Promise<Outcome>;

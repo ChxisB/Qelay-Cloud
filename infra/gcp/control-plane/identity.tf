@@ -2,7 +2,8 @@
 # except the one optional project-level permission, which is a custom role of a single permission.
 #
 #   api      publisher on the doorbell topic (adding or retrying a job rings a bell); subscriber on the
-#            dead-letter subscriptions (peek, then give the messages back); accessor on the database secrets;
+#            dead-letter subscriptions (peek, then give the messages back); accessor on the database secrets and, when
+#            webhooks are on, the webhook key;
 #            read of Pub/Sub depth and age from Cloud Monitoring
 #   panel    nothing: it serves static files and a config document built from its environment
 #   migrate  accessor on the database secrets it needs: the direct URL (or the pooled one) and the CA
@@ -24,6 +25,14 @@ resource "google_service_account" "migrate" {
 
 resource "google_pubsub_topic_iam_member" "api_publish" {
   topic  = var.topic_name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_pubsub_topic_iam_member" "api_publish_hot" {
+  for_each = var.hot_topic_names
+
+  topic  = each.value
   role   = "roles/pubsub.publisher"
   member = "serviceAccount:${google_service_account.api.email}"
 }

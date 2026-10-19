@@ -63,7 +63,7 @@ describeDb('schema indexes', () => {
       SELECT 'ns', 'w' || g, 'https://hooks.example.com/' || g, ARRAY['job.pushed'], 'op', g
       FROM generate_series(0, 39) g`);
     await fresh.sql.unsafe(`
-      INSERT INTO qcloud_webhook_deliveries (namespace, webhook_id, event_id, event_name, queue, job_id,
+      INSERT INTO qcloud_deliveries (namespace, webhook_id, event_id, event_name, queue, job_id,
                                              occurred_at, status, attempts, next_attempt_at, created_at,
                                              finished_at)
       SELECT 'ns', 'w' || (g % 40), g, 'job.pushed', 'q', 'j' || g, g * 1000, st, 1, g * 1000, g * 1000,
@@ -104,7 +104,7 @@ describeDb('schema indexes', () => {
       'qcloud_flow_failures',
       'qcloud_completions',
       'qcloud_webhooks',
-      'qcloud_webhook_deliveries',
+      'qcloud_deliveries',
       'qcloud_workflow_executions',
       'qcloud_workflow_executions_archive',
       'qcloud_workflow_definitions',
@@ -121,6 +121,16 @@ describeDb('schema indexes', () => {
   // Sequential scans are off for every plan. For an ordered query sorts and bitmap scans are off
   // too, so the plan shows whether the index can deliver the order and not only whether it can find
   // the rows: on a small table a sort over a bitmap scan is a fair choice, and not what is tested.
+  // A partitioned table's plan names the index of each partition: this maps it to the parent's.
+  let parentIndex = new Map<string, string>();
+  beforeAll(async () => {
+    const rows = await fresh.sql<Array<{ child: string; parent: string }>>`
+      SELECT c.relname::text AS child, p.relname::text AS parent
+      FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent
+      WHERE c.relkind = 'i' AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = ${fresh.name})`;
+    parentIndex = new Map(rows.map((row) => [row.child, row.parent]));
+  });
+
   const plan = async (
     text: string,
     ordered = false,
@@ -152,7 +162,11 @@ describeDb('schema indexes', () => {
         );
       }
       const used = [
-        ...new Set(nodes.flatMap((node) => (node['Index Name'] ? [node['Index Name']] : []))),
+        ...new Set(
+          nodes.flatMap((node) =>
+            node['Index Name'] ? [parentIndex.get(node['Index Name']) ?? node['Index Name']] : []
+          )
+        ),
       ];
       const wanted = [entry.index, ...(entry.alternatives ?? [])];
       if (!wanted.some((name) => used.includes(name))) expect(used).toContain(entry.index);
@@ -165,7 +179,9 @@ describeDb('schema indexes', () => {
     const rows = await fresh.sql<Array<{ name: string }>>`
       SELECT c.relname::text AS name FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
       WHERE c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = ${fresh.name})
-        AND NOT i.indisprimary`;
+        AND NOT i.indisprimary AND NOT c.relispartition
+        -- The old delivery table (versions 8 to 12): nothing reads it, and the release after 13 drops it.
+        AND c.relname NOT LIKE 'qcloud\_webhook\_deliveries\_%'`;
     const planned = new Set(PLANNED.map((entry) => entry.index));
     const unused = rows.map((row) => row.name).filter((name) => !planned.has(name));
     expect(unused).toEqual([]);

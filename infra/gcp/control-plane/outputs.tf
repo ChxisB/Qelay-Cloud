@@ -12,6 +12,15 @@ output "exposure" {
   value = var.exposure
 }
 
+output "edge" {
+  description = "The load balancer's address when `edge` is set, else null: point the two host names at ip_address."
+  value = local.edge ? {
+    ip_address     = google_compute_global_address.edge[0].address
+    api_hostname   = var.edge.api_hostname
+    panel_hostname = var.edge.panel_hostname
+  } : null
+}
+
 output "migrate_job" {
   description = "The migration job's name: gcloud run jobs execute <name> --region <region> --wait"
   value       = google_cloud_run_v2_job.migrate.name

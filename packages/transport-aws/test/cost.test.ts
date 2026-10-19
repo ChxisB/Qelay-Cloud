@@ -50,6 +50,7 @@ describeDb('doorbell on SQS: request count per job', () => {
         sends: producer.sendCalls + consumer.sendCalls,
         receives: consumer.receiveCalls,
         deletes: consumer.deletes,
+        deletedBells: consumer.deletedBells,
         heartbeats: consumer.heartbeats,
         nacks: consumer.nacks,
         emptyClaims: worker.stats.emptyClaims,
@@ -59,26 +60,29 @@ describeDb('doorbell on SQS: request count per job', () => {
       return { line, producer, consumer };
     }
 
-    test('a worker with room for ten: one send per ten bells, about one receive and one delete each', async () => {
+    test('a worker with room for ten: one send per ten bells, deletes shared by the bells acked together', async () => {
       const { line, producer, consumer } = await run('q-cost-wide', 10);
-      // 100 bells are 10 batches of 10, and each is deleted once.
+      // 100 bells are 10 batches of 10, and each is deleted once, in a batch with whatever was acked
+      // within a few milliseconds of it.
       expect(producer.sentBells).toBe(JOBS);
       expect(line.sends).toBe(JOBS / 10);
-      expect(line.deletes).toBe(consumer.received);
+      expect(line.deletedBells).toBe(consumer.received);
+      expect(line.deletes).toBeLessThan(line.deletedBells);
       // Slots free one job at a time and a receive asks for what is free, so a busy worker receives
       // about once per bell (the long-poll tail adds a few). Never more than that.
       expect(line.receives).toBeLessThanOrEqual(JOBS + 5);
-      expect(line.requestsPerJob).toBeGreaterThanOrEqual(1.2);
-      expect(line.requestsPerJob).toBeLessThan(2.3);
+      expect(line.requestsPerJob).toBeGreaterThanOrEqual(0.8);
+      expect(line.requestsPerJob).toBeLessThan(1.6);
       expect(line.nacks).toBe(0);
     }, 90_000);
 
     test('a worker with one slot takes one bell per receive: the worst case', async () => {
       const { line } = await run('q-cost-narrow', 1);
-      // One receive and one delete per bell, and a tenth of a send.
+      // One receive per bell, a delete request for a few bells each and a tenth of a send. Deletes
+      // only share a request when acks land within a few milliseconds of each other.
       expect(line.receives).toBeGreaterThanOrEqual(JOBS);
-      expect(line.requestsPerJob).toBeGreaterThanOrEqual(2.0);
-      expect(line.requestsPerJob).toBeLessThan(3.0);
+      expect(line.requestsPerJob).toBeGreaterThanOrEqual(1.2);
+      expect(line.requestsPerJob).toBeLessThan(2.3);
     }, 90_000);
   });
 });

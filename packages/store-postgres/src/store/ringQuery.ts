@@ -28,6 +28,8 @@ export interface RingQuery {
   readonly graceMs?: number;
   /** Most rings returned per queue, so a backlog is not one bell per waiting job on every tick. */
   readonly perQueueCap?: number;
+  /** Most of those per queue that are re-rings (a bell at least `reRingAfterMs` old). Default `perQueueCap`. */
+  readonly staleCap?: number;
   /**
    * How far ahead a delayed job is rung: one whose `run_at` is within this of now is returned with
    * `dueInMs`. Clamped to the transport's window (`ringWindowMs` of the store), so a transport that
@@ -41,6 +43,7 @@ export interface ResolvedRingQuery {
   readonly reRingAfterMs: number;
   readonly graceMs: number;
   readonly perQueueCap: number;
+  readonly staleCap: number;
   readonly windowMs: number;
 }
 
@@ -58,11 +61,16 @@ export function resolveRingQuery(ctx: StoreContext, query: RingQuery = {}): Reso
   if (!Number.isSafeInteger(perQueueCap) || perQueueCap < 1) {
     throw new UnsupportedOptionError('perQueueCap', 'must be a positive integer');
   }
+  const staleCap = query.staleCap ?? perQueueCap;
+  if (!Number.isSafeInteger(staleCap) || staleCap < 1) {
+    throw new UnsupportedOptionError('staleCap', 'must be a positive integer');
+  }
   const requested = nonNegative('windowMs', query.windowMs, ctx.ringWindowMs);
   return {
     reRingAfterMs: nonNegative('reRingAfterMs', query.reRingAfterMs, DEFAULT_RE_RING_AFTER_MS),
     graceMs: nonNegative('graceMs', query.graceMs, DEFAULT_RING_GRACE_MS),
     perQueueCap,
+    staleCap,
     windowMs: Math.min(requested, ctx.ringWindowMs),
   };
 }
@@ -81,7 +89,7 @@ interface CandidateRow {
  *    the grace (index `qcloud_jobs_unrung_idx`, in `run_at` order), with `dueInMs` the wait until
  *    `run_at`; then
  * 2. claimable jobs whose bell is at least `reRingAfterMs` old (index `qcloud_jobs_ring_idx`, oldest
- *    bell first), with `dueInMs` 0. A pre-rung delayed job's `rung_at` is its `run_at`, so it falls
+ *    bell first, at most `staleCap`), with `dueInMs` 0. A pre-rung delayed job's `rung_at` is its `run_at`, so it falls
  *    in here only once its time has passed and its bell has not been seen to arrive.
  *
  * Never-rung jobs come first: they have no bell at all. The queues are listed by hopping through
@@ -90,7 +98,7 @@ interface CandidateRow {
  * spent on empty claims, and `resume` clears them so the tick rings the backlog afterwards.
  */
 export async function dueForRing(ctx: StoreContext, query?: RingQuery): Promise<Ring[]> {
-  const { reRingAfterMs, graceMs, perQueueCap, windowMs } = resolveRingQuery(ctx, query);
+  const { reRingAfterMs, graceMs, perQueueCap, staleCap, windowMs } = resolveRingQuery(ctx, query);
   return ctx.db.run('dueForRing', async (sql) => {
     const now = await ctx.db.time.now(sql);
     const ns = ctx.namespace;
@@ -141,7 +149,7 @@ export async function dueForRing(ctx: StoreContext, query?: RingQuery): Promise<
           AND job.rung_at <= ${now - reRingAfterMs}
           AND job.run_at <= ${now}
         ORDER BY job.rung_at, job.id
-        LIMIT ${perQueueCap}
+        LIMIT ${staleCap}
       ) candidate
       WHERE queues.queue IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM qcloud_queue_state state

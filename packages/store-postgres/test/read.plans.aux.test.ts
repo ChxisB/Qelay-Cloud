@@ -5,12 +5,14 @@ import { CLEAN_CANDIDATES } from '../src/store/clean';
 import { COMPLETION_CANDIDATES, COMPLETION_CUT } from '../src/store/completions';
 import { IDLE_GROUPS } from '../src/store/groupRetention';
 import { TRIM_JOB_LOGS } from '../src/store/logs';
+import { PRUNE_METRIC_BUCKETS } from '../src/store/metricRetention';
 import {
   JOB_LOGS,
   NAMESPACE_TOTALS,
   THROUGHPUT_BUCKETS,
   THROUGHPUT_TOTALS,
 } from '../src/store/readQueries';
+import { COVER_RINGS } from '../src/store/ringCover';
 import type { FreshSchema } from './helpers';
 import { freshSchema } from './helpers';
 import type { Planned } from './planHelpers';
@@ -93,6 +95,23 @@ const PLANNED: readonly Planned[] = [
     statement: { text: COMPLETION_CANDIDATES, params: ['ns', 50_000, 'c50000', 1_001] },
     indexes: ['qcloud_completions_recent_idx'],
     ordered: true,
+  },
+  {
+    name: 'metric prune: buckets past the retention, a probe per queue',
+    statement: { text: PRUNE_METRIC_BUCKETS, params: ['ns', 1_000, 1_000] },
+    // The totals are two rows per queue, so reading them all is fair; the buckets are the big table.
+    indexes: ['qcloud_metric_buckets_pkey'],
+    forceIndex: true,
+    writes: true,
+  },
+  {
+    name: 'ring cover: the latest recent bell of each queue, a backward range scan',
+    statement: {
+      text: COVER_RINGS,
+      params: ['ns', NOW, 1_000, JSON.stringify([{ id: 'a', queue: 'q' }])],
+    },
+    indexes: ['qcloud_jobs_ring_idx'],
+    writes: true,
   },
   {
     name: 'group prune: idle groups',

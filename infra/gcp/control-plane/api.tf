@@ -38,6 +38,7 @@ locals {
     },
     local.database_env,
     local.fleet_env,
+    length(var.hot_topic_names) == 0 ? {} : { QCLOUD_GCP_HOT_QUEUES = join(",", sort(keys(var.hot_topic_names))) },
     var.role_claim == null ? {} : { QCLOUD_API_ROLE_CLAIM = var.role_claim },
     var.operator_roles == null ? {} : { QCLOUD_API_OPERATOR_ROLES = join(",", var.operator_roles) },
     var.viewer_roles == null ? {} : { QCLOUD_API_VIEWER_ROLES = join(",", var.viewer_roles) },
@@ -47,7 +48,7 @@ locals {
 resource "google_cloud_run_v2_service" "api" {
   name                = local.api_name
   location            = var.region
-  ingress             = local.private ? "INGRESS_TRAFFIC_INTERNAL_ONLY" : "INGRESS_TRAFFIC_ALL"
+  ingress             = local.ingress
   deletion_protection = false
   labels              = local.labels
 
@@ -126,6 +127,19 @@ resource "google_cloud_run_v2_service" "api" {
         }
       }
 
+      dynamic "env" {
+        for_each = var.webhook_key_secret == null ? [] : [var.webhook_key_secret]
+        content {
+          name = "QCLOUD_WEBHOOK_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = env.value.secret_id
+              version = env.value.version
+            }
+          }
+        }
+      }
+
       dynamic "volume_mounts" {
         for_each = local.use_ca ? [1] : []
         content {
@@ -155,5 +169,6 @@ resource "google_cloud_run_v2_service" "api" {
   depends_on = [
     google_secret_manager_secret_iam_member.api_read,
     google_pubsub_topic_iam_member.api_publish,
+    google_pubsub_topic_iam_member.api_publish_hot,
   ]
 }

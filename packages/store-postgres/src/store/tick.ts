@@ -9,6 +9,7 @@ import { pruneEventCommits } from './eventCommitPrune';
 import { trimEvents } from './eventRetention';
 import { expirePending } from './expiry';
 import { pruneGroupStates } from './groupRetention';
+import { pruneMetricBuckets } from './metricRetention';
 import { recoverExpired } from './recovery';
 import { dueForRing } from './ringQuery';
 import { pruneWebhookDeliveries } from './webhookRetention';
@@ -31,11 +32,13 @@ function positive(name: string, value: number): number {
  * 5. delete DLQ entries past their queue's `maxAge`, workers that stopped heartbeating, and webhook
  *    deliveries that are too old (expired if live, deleted if finished);
  * 6. trim the event journal to its window and caps, and delete the commit envelopes nothing uses;
- * 7. delete completion records of jobs that are gone and group state nothing uses;
+ * 7. delete completion records of jobs that are gone, group state nothing uses, and metric buckets
+ *    past their retention;
  * 8. find every job that needs a bell (always: this is what bounds a lost bell, invariant 3).
  *
  * Each step is capped by `maxItems`. When `maxDurationMs` of wall-clock time has gone by after a
- * step, the steps (2 to 7) still to come are skipped and `moreWork` is true. Steps 1 and 8 are not
+ * step, the steps (2 to 7) still to come are skipped and `moreWork` is true. `skipUpkeep` leaves
+ * out steps 5 to 7 (the loop's rounds between upkeeps, with no `moreWork`). Steps 1 and 8 are not
  * skipped: they are what the tick is for, and each is bounded by its own cap. The cap on rings per
  * queue is not "more work": a backlog is rung from the oldest, and the next tick rings the next
  * stretch as the first bells age past `reRingAfterMs`.
@@ -104,35 +107,45 @@ export async function runTick(ctx: StoreContext, budget: TickBudget): Promise<Ti
     expired = ttl.expired;
     note(ttl.more);
   }
-  if (overBudget()) {
-    moreWork = true;
-  } else {
-    await timed('retention', async () => {
-      note((await purgeExpiredDlq(ctx, maxItems)) >= maxItems);
-      note((await expireWorkers(ctx, maxItems)).more);
-      note((await pruneWebhookDeliveries(ctx, maxItems)).more);
-    });
-  }
-  if (overBudget()) {
-    moreWork = true;
-  } else {
-    await timed('events', async () => {
-      note((await trimEvents(ctx, maxItems)).more);
-      note((await pruneEventCommits(ctx, maxItems)) >= maxItems);
-    });
-  }
-  if (overBudget()) {
-    moreWork = true;
-  } else {
-    await timed('completions', async () => {
-      note((await pruneCompletions(ctx, maxItems)).more);
-      note((await pruneGroupStates(ctx, maxItems)).more);
-    });
+  const upkeep: ReadonlyArray<readonly [string, () => Promise<void>]> = [
+    [
+      'retention',
+      async () => {
+        note((await purgeExpiredDlq(ctx, maxItems)) >= maxItems);
+        note((await expireWorkers(ctx, maxItems)).more);
+        note((await pruneWebhookDeliveries(ctx, maxItems)).more);
+      },
+    ],
+    [
+      'events',
+      async () => {
+        note((await trimEvents(ctx, maxItems)).more);
+        note((await pruneEventCommits(ctx, maxItems)) >= maxItems);
+      },
+    ],
+    [
+      'completions',
+      async () => {
+        note((await pruneCompletions(ctx, maxItems)).more);
+        note((await pruneGroupStates(ctx, maxItems)).more);
+        note((await pruneMetricBuckets(ctx, maxItems)).more);
+      },
+    ],
+  ];
+  for (const [step, run] of budget.skipUpkeep === true ? [] : upkeep) {
+    if (overBudget()) {
+      moreWork = true;
+    } else {
+      await timed(step, run);
+    }
   }
 
   const due = await timed('ringQuery', () =>
     dueForRing(ctx, {
       perQueueCap,
+      ...(budget.maxStaleRingsPerQueue === undefined
+        ? {}
+        : { staleCap: budget.maxStaleRingsPerQueue }),
       reRingAfterMs: budget.reRingAfterMs,
       graceMs: budget.ringGraceMs,
       windowMs: budget.ringWindowMs,

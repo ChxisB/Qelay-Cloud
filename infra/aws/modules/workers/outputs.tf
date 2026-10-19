@@ -27,3 +27,13 @@ output "max_instances" {
 output "pool_size" {
   value = var.pool_size
 }
+
+output "entry_point" {
+  description = "The container's entry point override, for the plan check."
+  value       = var.entry_point
+}
+
+output "command" {
+  description = "The container's command override, for the plan check."
+  value       = var.command
+}

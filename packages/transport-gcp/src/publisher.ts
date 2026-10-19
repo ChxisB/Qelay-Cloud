@@ -38,10 +38,10 @@ export function publishSettings(budgetMs: number): PublishOptions {
 /**
  * Publishes one message per item and returns one result per item, in order. A failure becomes a
  * result, never a throw: the caller reports only the bells that were taken, and the tick rings the
- * rest. `onError` gets the first error of the call.
+ * rest. `onError` gets the first error of the call. `topicOf` names the topic of a queue's bells.
  */
 export async function publishBells(
-  topic: Pick<Topic, 'publishMessage'>,
+  topicOf: (queue: string) => Pick<Topic, 'publishMessage'>,
   namespace: string,
   items: readonly RingItem[],
   onError: (error: unknown) => void
@@ -63,19 +63,21 @@ export async function publishBells(
     try {
       const { data, attributes } = encodeBell(item.bell);
       publishing.push(
-        topic.publishMessage({ data, attributes }).then(
-          () => {
-            results[index] = { ok: true };
-          },
-          (error: unknown) => {
-            firstError ??= error;
-            const code = (error as { code?: number } | null)?.code;
-            results[index] = {
-              ok: false,
-              reason: code === INVALID_ARGUMENT ? 'rejected' : 'unreachable',
-            };
-          }
-        )
+        topicOf(item.bell.queue)
+          .publishMessage({ data, attributes })
+          .then(
+            () => {
+              results[index] = { ok: true };
+            },
+            (error: unknown) => {
+              firstError ??= error;
+              const code = (error as { code?: number } | null)?.code;
+              results[index] = {
+                ok: false,
+                reason: code === INVALID_ARGUMENT ? 'rejected' : 'unreachable',
+              };
+            }
+          )
       );
     } catch (error) {
       // A name that cannot be a subscription id: no subscriber could ever receive this bell.

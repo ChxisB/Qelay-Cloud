@@ -3,6 +3,7 @@ import { DEFAULT_MAX_COMPLETED_JOBS } from './completions';
 import { DEFAULT_EVENT_RETENTION_MS, DEFAULT_MAX_QUEUE_EVENTS } from './eventRetention';
 import { DEFAULT_MAX_JOB_LOGS, MAX_JOB_LOGS } from './logs';
 import { DEFAULT_MAX_METRIC_BUCKETS } from './metrics';
+import { DEFAULT_WEBHOOK_KEEP_MS } from './webhookRetention';
 import { DEFAULT_WORKER_ACTIVE_MS, DEFAULT_WORKER_EXPIRE_MS } from './workers';
 
 /** The store options that are plain numbers: each is floored and kept at least 1 (0 for the metric buckets). */
@@ -25,6 +26,11 @@ export interface StoreSettingsOptions {
   readonly auditRetentionMs?: number;
   /** Entries the operator audit log keeps; past it the oldest go. Default 100,000. */
   readonly maxAuditEntries?: number;
+  /**
+   * How long a finished webhook delivery stays readable. Default two days. A day partition is dropped
+   * once its day ended this long ago, so the shortest value among the processes that tick decides.
+   */
+  readonly webhookKeepMs?: number;
 }
 
 export interface StoreSettings {
@@ -37,6 +43,7 @@ export interface StoreSettings {
   readonly maxCompletedJobs: number;
   readonly auditRetentionMs: number;
   readonly maxAuditEntries: number;
+  readonly webhookKeepMs: number;
 }
 
 const whole = (value: number | undefined, fallback: number, least: number): number =>
@@ -54,5 +61,6 @@ export function resolveSettings(options: StoreSettingsOptions): StoreSettings {
     maxCompletedJobs: whole(options.maxCompletedJobs, DEFAULT_MAX_COMPLETED_JOBS, 1),
     auditRetentionMs: whole(options.auditRetentionMs, DEFAULT_AUDIT_RETENTION_MS, 1),
     maxAuditEntries: whole(options.maxAuditEntries, DEFAULT_MAX_AUDIT_ENTRIES, 1),
+    webhookKeepMs: whole(options.webhookKeepMs, DEFAULT_WEBHOOK_KEEP_MS, 1),
   };
 }

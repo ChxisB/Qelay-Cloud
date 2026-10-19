@@ -25,6 +25,7 @@ locals {
       }
     },
     var.command == null ? {} : { command = var.command },
+    var.entry_point == null ? {} : { entryPoint = var.entry_point },
   )
 }
 

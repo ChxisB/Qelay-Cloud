@@ -139,6 +139,8 @@ export class WorkerBridge {
         transport,
         concurrency: CONCURRENCY,
         heartbeatInterval: 0,
+        // A claim the model did not deliver a bell for would race its next command.
+        claimAgain: false,
         // Never: a drain check is a store read the model did not ask for.
         drainedAfterMs: 3_600_000,
       });

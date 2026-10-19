@@ -21,7 +21,9 @@ export function delivery(overrides: Partial<ClaimedDelivery> = {}): ClaimedDeliv
     error: null,
     progress: null,
     secret: SECRET,
+    previousSecret: null,
     secretUnreadable: false,
+    body: null,
     ...overrides,
   };
 }

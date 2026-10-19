@@ -33,9 +33,16 @@ describe('transportSettingsFromEnv', () => {
     expect(transportSettingsFromEnv({})).toEqual({
       transport: 'gcp-pubsub',
       projectId: undefined,
+      hotQueues: [],
       region: undefined,
       endpoint: undefined,
     });
+  });
+
+  test('hot queues are a comma separated list, with blanks dropped', () => {
+    expect(transportSettingsFromEnv({ QCLOUD_GCP_HOT_QUEUES: ' emails, ,sms,' }).hotQueues).toEqual(
+      ['emails', 'sms']
+    );
   });
 
   test('reads each broker its own variables, and treats an empty one as unset', () => {
@@ -49,6 +56,7 @@ describe('transportSettingsFromEnv', () => {
     ).toEqual({
       transport: 'aws-sqs',
       projectId: undefined,
+      hotQueues: [],
       region: 'eu-west-2',
       endpoint: 'http://127.0.0.1:59324',
     });
@@ -72,6 +80,7 @@ describe('openTransport', () => {
   const settings = (transport: (typeof TRANSPORT_KINDS)[number]) => ({
     transport,
     projectId: 'p',
+    hotQueues: [],
     region: 'us-east-1',
     endpoint: undefined,
   });

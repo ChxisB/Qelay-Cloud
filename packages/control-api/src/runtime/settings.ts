@@ -1,6 +1,6 @@
 import { UnsupportedOptionError } from '@qelay-cloud/core';
 import type { DatabaseOptions, WebhookEnvSettings } from '@qelay-cloud/store-postgres';
-import { databaseOptionsFromEnv, webhookSettingsFromEnv } from '@qelay-cloud/store-postgres';
+import { databaseOptionsForNamespace, webhookSettingsFromEnv } from '@qelay-cloud/store-postgres';
 import type { TransportKind, TransportSettings } from '@qelay-cloud/transports';
 import { transportSettingsFromEnv } from '@qelay-cloud/transports';
 import type { ControlApiOptions, DeploymentSettings, FleetSettings } from '../config';
@@ -161,10 +161,11 @@ export function runtimeSettingsFromEnv(env: Env): RuntimeSettings {
       `QCLOUD_API_SHUTDOWN_GRACE_MS must be at most ${MAX_SHUTDOWN_GRACE_MS}`
     );
   }
+  const namespace = text(env, 'QCLOUD_NAMESPACE') ?? 'default';
   return {
-    namespace: text(env, 'QCLOUD_NAMESPACE') ?? 'default',
+    namespace,
     ...broker,
-    database: databaseOptionsFromEnv(env, {
+    database: databaseOptionsForNamespace(env, namespace, {
       applicationName: 'qcloud-api',
       purpose: 'the database the API reads and writes',
     }),

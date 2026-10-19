@@ -22,3 +22,8 @@ output "utilization" {
   description = "required / max_connections."
   value       = local.utilization
 }
+
+output "worker_role_limit" {
+  description = "CONNECTION LIMIT for the role the workers log in as (the worker share of the budget, by the mode chosen). Nothing here runs SQL: an operator sets it, see docs/operations.md."
+  value       = local.worker_role_limit
+}

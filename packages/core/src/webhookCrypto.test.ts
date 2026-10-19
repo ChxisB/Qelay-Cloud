@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  generateWebhookSecret,
   openSecret,
   parseSealKey,
   sealSecret,
@@ -123,4 +124,10 @@ describe('sealed secrets', () => {
     );
     expect(String(refusal)).toContain('32 bytes');
   });
+});
+
+test('a generated secret is whsec_ and 64 hex digits, a new one each time', () => {
+  const secret = generateWebhookSecret();
+  expect(secret).toMatch(/^whsec_[0-9a-f]{64}$/u);
+  expect(generateWebhookSecret()).not.toBe(secret);
 });

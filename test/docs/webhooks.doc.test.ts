@@ -3,6 +3,15 @@ import { resolve } from 'node:path';
 import {
   DEFAULT_DELIVERY_POLICY,
   DEFAULT_REPLAY_TOLERANCE_MS,
+  MAX_FILTER_DEPTH,
+  MAX_FILTER_LIST,
+  MAX_FILTER_NODES,
+  MAX_FILTER_STRING,
+  MAX_REF_CHARS,
+  MAX_SHAPE_BYTES,
+  MAX_SHAPE_DEPTH,
+  MAX_SHAPE_NODES,
+  MAX_SHAPED_BODY_BYTES,
   MAX_WEBHOOK_URL_CHARS,
   MAX_WEBHOOKS,
   signWebhook,
@@ -13,9 +22,15 @@ import {
 } from '../../packages/core/src';
 import {
   DEFAULT_WEBHOOK_BATCH,
+  DEFAULT_WEBHOOK_BREAKER_COOLDOWN_MS,
+  DEFAULT_WEBHOOK_BREAKER_FAILURES,
   DEFAULT_WEBHOOK_BUDGET_MS,
   DEFAULT_WEBHOOK_CONCURRENCY,
+  DEFAULT_WEBHOOK_DNS_TTL_MS,
+  DEFAULT_WEBHOOK_IDLE_MS,
+  DEFAULT_WEBHOOK_KEEPALIVE_MS,
   DEFAULT_WEBHOOK_LEASE_MS,
+  DEFAULT_WEBHOOK_PER_DESTINATION,
   DEFAULT_WEBHOOK_RATE_PER_MINUTE,
   DEFAULT_WEBHOOK_TIMEOUT_MS,
 } from '../../packages/maintenance/src';
@@ -108,6 +123,18 @@ describe('docs/webhooks.md: its figures are the code', () => {
     expect(defaultOf('QCLOUD_WEBHOOK_RATE_PER_MINUTE')).toBe(
       figure(DEFAULT_WEBHOOK_RATE_PER_MINUTE)
     );
+    expect(defaultOf('QCLOUD_WEBHOOK_KEEPALIVE_MS')).toBe(figure(DEFAULT_WEBHOOK_KEEPALIVE_MS));
+    expect(defaultOf('QCLOUD_WEBHOOK_DNS_TTL_MS')).toBe(figure(DEFAULT_WEBHOOK_DNS_TTL_MS));
+    expect(defaultOf('QCLOUD_WEBHOOK_PER_DESTINATION')).toBe(
+      figure(DEFAULT_WEBHOOK_PER_DESTINATION)
+    );
+    expect(defaultOf('QCLOUD_WEBHOOK_BREAKER_FAILURES')).toBe(
+      figure(DEFAULT_WEBHOOK_BREAKER_FAILURES)
+    );
+    expect(defaultOf('QCLOUD_WEBHOOK_BREAKER_COOLDOWN_MS')).toBe(
+      figure(DEFAULT_WEBHOOK_BREAKER_COOLDOWN_MS)
+    );
+    expect(defaultOf('QCLOUD_WEBHOOK_IDLE_MS')).toBe(figure(DEFAULT_WEBHOOK_IDLE_MS));
     const { maxAttempts, baseDelayMs, maxDelayMs } = DEFAULT_DELIVERY_POLICY;
     expect(defaultOf('QCLOUD_WEBHOOK_MAX_ATTEMPTS`, `_BASE_DELAY_MS`, `_MAX_DELAY_MS')).toBe(
       `${maxAttempts}, ${figure(baseDelayMs)}, ${figure(maxDelayMs)}`
@@ -121,5 +148,20 @@ describe('docs/webhooks.md: its figures are the code', () => {
     expect(doc).toContain(`**last ${WEBHOOK_HISTORY_ENTRIES} attempts**`);
     for (const event of WEBHOOK_EVENTS) expect(doc).toContain(`\`${event}\``);
     for (const header of Object.values(WEBHOOK_HEADERS)) expect(doc).toContain(`\`${header}\``);
+  });
+});
+
+describe('docs/webhooks.md: the filter and shape limits are the code', () => {
+  test('sizes', () => {
+    const flat = doc.replace(/\s+/g, ' ');
+    expect(flat).toContain(
+      `At most ${MAX_FILTER_NODES} terms, ${MAX_FILTER_DEPTH} levels deep, ${MAX_FILTER_LIST} values per list, ${MAX_FILTER_STRING} characters per text`
+    );
+    expect(flat).toContain(
+      `At most ${MAX_SHAPE_NODES} values, ${MAX_SHAPE_DEPTH} levels deep, ${MAX_SHAPE_BYTES / 1024} KiB for the template`
+    );
+    expect(flat).toContain(`cut to ${MAX_REF_CHARS} characters`);
+    expect(flat).toContain(`body past ${MAX_SHAPED_BODY_BYTES / 1024} KiB`);
+    expect(flat).toContain(`larger than ${MAX_SHAPED_BODY_BYTES} bytes`);
   });
 });

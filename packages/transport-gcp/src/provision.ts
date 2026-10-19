@@ -1,5 +1,7 @@
 import type { PubSub } from '@google-cloud/pubsub';
+import { TransportError } from '@qelay-cloud/core';
 import { environmentNames, queueNames } from './names';
+import { projectOf } from './options';
 
 /**
  * Creates and removes the Pub/Sub resources the transport expects, for an emulator, a test, or a
@@ -20,6 +22,12 @@ export interface TopologyOptions {
   /** Redelivery backoff after a nack or an expired deadline, in seconds, 0 to 600. Default 1 and 10. */
   readonly minimumBackoffSeconds?: number;
   readonly maximumBackoffSeconds?: number;
+  /**
+   * Give the queue its own topic, with an unfiltered subscription, instead of a filtered one on the
+   * environment's topic (`queueNames(..., hot)`). Moving an existing queue means `removeQueue` and
+   * `ensureQueue` again: a subscription cannot change topic. The tick rings what that drops.
+   */
+  readonly hot?: boolean;
 }
 
 const ALREADY_EXISTS = 6;
@@ -45,8 +53,10 @@ export async function ensureEnvironment(pubsub: PubSub, namespace: string): Prom
 }
 
 /**
- * One queue's subscription and its dead-letter subscription, both filtered to the queue's bells.
- * Needs `ensureEnvironment` first. Safe to repeat; it does not change a subscription that exists.
+ * One queue's subscription and its dead-letter subscription, filtered to the queue's bells (the
+ * queue's own is unfiltered on a hot queue's own topic, which this creates). Needs `ensureEnvironment`
+ * first. Safe to repeat; it does not change a subscription that exists, and it refuses one that is on
+ * another topic than the queue's current one.
  */
 export async function ensureQueue(
   pubsub: PubSub,
@@ -55,14 +65,15 @@ export async function ensureQueue(
   options: TopologyOptions = {}
 ): Promise<void> {
   const environment = environmentNames(namespace);
-  const names = queueNames(namespace, queue);
+  const names = queueNames(namespace, queue, options.hot === true);
   const deadLetterTopic = pubsub.topic(environment.deadLetterTopic);
   await ignoring(ALREADY_EXISTS, () =>
     deadLetterTopic.createSubscription(names.deadLetterSubscription, { filter: names.filter })
   );
+  if (options.hot === true) await ignoring(ALREADY_EXISTS, () => pubsub.createTopic(names.topic));
   await ignoring(ALREADY_EXISTS, () =>
-    pubsub.topic(environment.topic).createSubscription(names.subscription, {
-      filter: names.filter,
+    pubsub.topic(names.topic).createSubscription(names.subscription, {
+      ...(names.subscriptionFilter === undefined ? {} : { filter: names.subscriptionFilter }),
       ackDeadlineSeconds: options.ackDeadlineSeconds ?? 30,
       // No ordering key and no exactly-once delivery: Postgres orders and fences, the bell only wakes.
       deadLetterPolicy: {
@@ -75,6 +86,13 @@ export async function ensureQueue(
       },
     })
   );
+  const [metadata] = await pubsub.subscription(names.subscription).getMetadata();
+  const topic = `projects/${await projectOf(pubsub)}/topics/${names.topic}`;
+  if (metadata.topic !== topic) {
+    throw new TransportError(
+      `the subscription ${names.subscription} is on ${metadata.topic}, not ${topic}: a subscription cannot change topic, so call removeQueue and then ensureQueue again`
+    );
+  }
 }
 
 /** Deletes what `ensureQueue` made. A resource that is already gone is not an error. */
@@ -83,6 +101,8 @@ export async function removeQueue(pubsub: PubSub, namespace: string, queue: stri
   for (const id of [names.subscription, names.deadLetterSubscription]) {
     await ignoring(NOT_FOUND, () => pubsub.subscription(id).delete());
   }
+  // A hot queue's own topic, if it has one: the subscription is gone, so the topic can go.
+  await ignoring(NOT_FOUND, () => pubsub.topic(queueNames(namespace, queue, true).topic).delete());
 }
 
 /** Deletes what `ensureEnvironment` made. Remove the queues first. */

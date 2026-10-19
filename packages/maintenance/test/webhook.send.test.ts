@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { verifyWebhookSignature, WEBHOOK_HEADERS } from '@qelay-cloud/core';
+import { verifyWebhookSignature, WEBHOOK_HEADERS, WEBHOOK_SCHEMA_VERSION } from '@qelay-cloud/core';
 import { sendDelivery } from '../src/webhookSend';
 import { delivery, NOW, PUBLIC_ADDRESS, script, SECRET } from './webhookSupport';
 
@@ -50,6 +50,28 @@ describe('webhook attempt: the request', () => {
         now: NOW,
       })
     ).toBe(true);
+  });
+
+  test('during a rotation both secrets sign, and a receiver holding either verifies', async () => {
+    const s = script();
+    const previous = 'whsec_previous0123456789abcdef012345';
+    await sendDelivery(delivery({ previousSecret: previous }), s.deps());
+    const { headers, body } = s.calls[0]!;
+    const signature = headers[WEBHOOK_HEADERS.signature]!;
+    expect(signature.split(',')).toHaveLength(2);
+    for (const secret of [SECRET, previous]) {
+      const input = { secret, timestamp: String(NOW), body, signature, now: NOW };
+      expect(await verifyWebhookSignature(input)).toBe(true);
+    }
+    expect(
+      await verifyWebhookSignature({
+        secret: 'whsec_other',
+        timestamp: String(NOW),
+        body,
+        signature,
+        now: NOW,
+      })
+    ).toBe(false);
   });
 
   test('the body never carries job data, whatever the event holds', async () => {
@@ -223,5 +245,32 @@ describe('webhook attempt: what the answer means', () => {
     await sendDelivery(delivery(), s.deps({ timeoutMs: 500 }));
     expect(s.calls[0]!.timeoutMs).toBeLessThan(500);
     expect(s.calls[0]!.timeoutMs).toBeGreaterThan(300);
+  });
+});
+
+describe('webhook attempt: a body the writer made', () => {
+  test('sends and signs the stored bytes, and does not claim the default schema', async () => {
+    const s = script();
+    const body = '{"a":1,"id":"41"}';
+    await sendDelivery(delivery({ body }), s.deps());
+    const [request] = s.calls;
+    expect(request!.body).toBe(body);
+    expect(request!.headers[WEBHOOK_HEADERS.schema]).toBeUndefined();
+    const expected = createHmac('sha256', SECRET).update(`${NOW}.${body}`).digest('hex');
+    expect(request!.headers[WEBHOOK_HEADERS.signature]).toBe(`v1=${expected}`);
+  });
+
+  test('the default body is marked with the schema version', async () => {
+    const s = script();
+    await sendDelivery(delivery({ body: null }), s.deps());
+    expect(s.calls[0]!.headers[WEBHOOK_HEADERS.schema]).toBe(WEBHOOK_SCHEMA_VERSION);
+  });
+
+  test('a body that was too large to make is refused without a request', async () => {
+    const s = script();
+    const result = await sendDelivery(delivery({ body: '' }), s.deps());
+    expect(result).toMatchObject({ ok: false, statusCode: null });
+    expect(result.error).toContain('too large');
+    expect(s.calls).toEqual([]);
   });
 });

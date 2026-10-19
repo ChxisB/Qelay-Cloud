@@ -180,7 +180,7 @@ describeSqs('subscriptions on the SQS emulator: faults and shutdown', () => {
           },
           { capacity: () => 1 }
         );
-        await waitFor(() => delivery !== null && transport.metrics.deletes === 1, 'the ack');
+        await waitFor(() => delivery !== null && transport.metrics.deletedBells === 1, 'the ack');
         await sub.close();
         const { staleHandles, deleteErrors } = transport.metrics;
         // The emulator answers a delete of a missing message with an error SQS would not raise; either

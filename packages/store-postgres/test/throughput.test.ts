@@ -2,11 +2,12 @@ import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { UnsupportedOptionError } from '@qelay-cloud/core';
 import { describeDb } from '../../../test/support/db';
 import { MAX_THROUGHPUT_MINUTES } from '../src/store/throughput';
-import { claimOne, resetTables } from './finishHelpers';
+import { claimOne, metric, resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { enqueueN, openTestStore, START } from './storeHelpers';
 
 const MINUTE = 60_000;
+const BUDGET = { maxItems: 10, maxRingsPerQueue: 1, maxDurationMs: 10_000, reRingAfterMs: 1_000 };
 /** `START` is not on a minute boundary in general; the points are. */
 const START_MINUTE = Math.floor(START / MINUTE) * MINUTE;
 
@@ -133,6 +134,23 @@ describeDb('throughput reads', () => {
     expect(points.reduce((sum, point) => sum + point.completed, 0)).toBe(1);
     expect(points.at(-1)!.completed).toBe(1);
     expect(totals.completed).toBe(2);
+  });
+
+  test('the tick, not the write, deletes buckets past the retention; the totals keep their count', async () => {
+    const short = t.another({ maxMetricBuckets: 2 });
+    for (const advance of [0, 5 * MINUTE]) {
+      t.clock.advance(advance);
+      await enqueueN(short, 1);
+      const [job] = await short.claim('q', 'w', 1);
+      await short.complete(job!.lease, 'ok');
+    }
+    expect((await metric(t, 'q', 'completed')).buckets).toHaveLength(2);
+    await short.tick(BUDGET);
+    const after = await metric(t, 'q', 'completed');
+    expect(after.buckets).toHaveLength(1);
+    expect(after.total).toBe(2);
+    await t.another({ maxMetricBuckets: 0 }).tick(BUDGET);
+    expect((await metric(t, 'q', 'completed')).buckets).toEqual([]);
   });
 
   test('the longest range is a bounded read', async () => {

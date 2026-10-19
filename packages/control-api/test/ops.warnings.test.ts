@@ -24,6 +24,7 @@ const healthy = (): Parts => ({
     staleAfterMs: 300_000,
   },
   doorbells: { notRung: 0, oldestNotRungAgeMs: null, queuesScanned: 3, partial: false },
+  webhooks: { failing: 0, paused: 0 },
 });
 
 const warn = (change: (parts: Parts) => Partial<Parts>) => {
@@ -48,6 +49,7 @@ describe('deploymentWarnings', () => {
       connections: { inUse: null, maxConnections: null, needed: null, mode: null },
       tick: { ...parts.tick, state: 'unknown', lastSuccessAt: null, ageMs: null },
       doorbells: { notRung: null, oldestNotRungAgeMs: null, queuesScanned: null, partial: false },
+      webhooks: null,
     });
     // Not knowing the tick is worth saying; not knowing a count never turns into a zero or a healthy.
     expect(warnings.map((warning) => warning.code)).toEqual(['tick_unknown']);
@@ -75,6 +77,8 @@ describe('deploymentWarnings', () => {
       (): Partial<Parts> => ({ schema: { current: 4, expected: 5, state: 'behind' } }),
     ],
     ['dev_token_enabled', 'warning', (): Partial<Parts> => ({ devToken: true })],
+    ['webhook_paused', 'warning', (): Partial<Parts> => ({ webhooks: { failing: 0, paused: 1 } })],
+    ['webhook_failing', 'warning', (): Partial<Parts> => ({ webhooks: { failing: 2, paused: 0 } })],
   ] as const)('%s is a %s', (code, severity, change) => {
     expect(only(warn(change), code)).toEqual([{ code, severity, message: expect.any(String) }]);
   });

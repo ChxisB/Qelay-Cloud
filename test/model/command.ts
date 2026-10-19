@@ -10,6 +10,7 @@ export const COMMAND_NAMES = [
   'heartbeat',
   'release',
   'complete',
+  'completeMany',
   'fail',
   'zombie',
   'advanceClock',

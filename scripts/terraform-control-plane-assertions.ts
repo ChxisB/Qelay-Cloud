@@ -13,6 +13,8 @@ export interface Fixture {
   readonly region: string;
   readonly namespace: string;
   readonly queues: readonly string[];
+  /** The queues with a topic of their own, which the API publishes to as well. */
+  readonly hotQueues: readonly string[];
 }
 
 function find(plan: Plan, type: string, name: string): ResourceChange | undefined {
@@ -87,6 +89,7 @@ export function checkServices(plan: Plan, checks: Checks, fx: Fixture): void {
   // A credential is a secret reference, never a value in the plan.
   const url_ = apiEnv.get('QCLOUD_DATABASE_URL');
   checks.ok('the database URL is a secret reference', url_?.secret !== undefined && url_.value === undefined);
+  checks.ok('the webhook key is a secret reference', apiEnv.get('QCLOUD_WEBHOOK_KEY')?.secret !== undefined);
   for (const [service, env] of [['API', apiEnv], ['panel', panelEnv]] as const) {
     const leaked = [...env.entries()].filter(([, e]) => /:\/\/[^/]*:[^/@]*@/.test(e.value ?? ''));
     checks.ok(`no credential in the ${service}'s environment values`, leaked.length === 0, leaked.map(([n]) => n).join(', '));
@@ -173,7 +176,14 @@ export function checkIdentities(plan: Plan, checks: Checks, fx: Fixture): void {
         JSON.stringify(['monitoring.timeSeries.list'])
   );
   const publishers = members('google_pubsub_topic_iam_member');
-  checks.ok('the API publishes to the bells topic and nothing else', publishers.length === 1 && get(publishers[0], 'role') === 'roles/pubsub.publisher');
+  checks.ok(
+    'the API publishes to the bells topic and each hot queue topic, and nothing else',
+    publishers.length === 1 + fx.hotQueues.length &&
+      publishers.every((m) => get(m, 'role') === 'roles/pubsub.publisher')
+  );
+  const hotTopics = publishers.map((m) => String(get(m, 'topic'))).filter((t) => t.includes('.hot.')).sort();
+  const hotWanted = fx.hotQueues.map((q) => queueNames(fx.namespace, q, true).topic).sort();
+  checks.ok('the hot topics it publishes to are the transport\'s', JSON.stringify(hotTopics) === JSON.stringify(hotWanted), `${hotTopics} vs ${hotWanted}`);
   // It may peek at the dead-letter subscription of each queue, by the names the transport computes.
   const expected = fx.queues.map((q) => queueNames(fx.namespace, q).deadLetterSubscription).sort();
   const peeked = members('google_pubsub_subscription_iam_member')
@@ -185,5 +195,6 @@ export function checkIdentities(plan: Plan, checks: Checks, fx: Fixture): void {
     members('google_pubsub_subscription_iam_member').every((m) => get(m, 'role') === 'roles/pubsub.subscriber')
   );
   const secrets = ofType(plan, 'google_secret_manager_secret_iam_member');
-  checks.ok('the API and the migration read the secrets they use and nothing else', secrets.length === 4, String(secrets.length));
+  // The migration job never signs a webhook: the key is the API's alone (it seals and opens webhook secrets).
+  checks.ok('the API and the migration read the secrets they use and nothing else', secrets.length === 5, String(secrets.length));
 }

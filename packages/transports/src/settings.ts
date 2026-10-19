@@ -13,6 +13,11 @@ export interface TransportSettings {
   readonly transport: TransportKind;
   /** The Google Cloud project of the Pub/Sub transport (`QCLOUD_GCP_PROJECT`). */
   readonly projectId: string | undefined;
+  /**
+   * Queues with their own Pub/Sub topic (`QCLOUD_GCP_HOT_QUEUES`, comma separated; a queue name with
+   * a comma in it cannot be listed). The same list for every process of a deployment.
+   */
+  readonly hotQueues: readonly string[];
   /** The AWS region of the SQS transport (`QCLOUD_AWS_REGION`): explicit, never read from the machine. */
   readonly region: string | undefined;
   /** An SQS endpoint for LocalStack or ElasticMQ (`QCLOUD_AWS_SQS_ENDPOINT`). */
@@ -45,6 +50,10 @@ export function transportSettingsFromEnv(env: Env): TransportSettings {
   return {
     transport,
     projectId: env.QCLOUD_GCP_PROJECT || undefined,
+    hotQueues: (env.QCLOUD_GCP_HOT_QUEUES ?? '')
+      .split(',')
+      .map((queue) => queue.trim())
+      .filter((queue) => queue !== ''),
     region,
     endpoint: env.QCLOUD_AWS_SQS_ENDPOINT || undefined,
   };

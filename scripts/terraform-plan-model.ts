@@ -17,7 +17,16 @@ export interface ResourceChange {
 
 interface ConfigModule {
   readonly resources?: ReadonlyArray<{ readonly address: string; readonly expressions?: unknown }>;
-  readonly module_calls?: Readonly<Record<string, { readonly module: ConfigModule }>>;
+  readonly module_calls?: Readonly<
+    Record<
+      string,
+      {
+        readonly module: ConfigModule;
+        /** What the call passes in, each with the addresses its expression refers to. */
+        readonly expressions?: Readonly<Record<string, { readonly references?: readonly string[] }>>;
+      }
+    >
+  >;
 }
 
 export interface Plan {

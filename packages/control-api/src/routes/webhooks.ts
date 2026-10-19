@@ -1,4 +1,9 @@
-import { validateWebhookUrl } from '@qelay-cloud/core';
+import {
+  previewWebhook,
+  validateFilter,
+  validateShape,
+  validateWebhookUrl,
+} from '@qelay-cloud/core';
 import type { WebhookUrlPolicy } from '@qelay-cloud/core';
 import { ApiError } from '../errors';
 import type { Route } from '../http/router';
@@ -6,7 +11,10 @@ import type { JobsContext } from '../jobs/context';
 import {
   deliveriesQuery,
   enabledBody,
+  previewBody,
+  rotateBody,
   toDeliveryWire,
+  toIssuedWire,
   toWebhookWire,
   webhookBody,
 } from '../jobs/webhookModel';
@@ -26,8 +34,10 @@ const webhookNotFound = (id: string): ApiError =>
  * The name is deliberately not resolved here: a registration that told a caller whether a name
  * reaches an internal address would be a way to probe the network.
  *
- * The secret is read from the create body and goes to the store, which seals it. No response, error
- * or audit entry carries it, and no call reads it back. The URL can carry a token in its path, so a
+ * The secret is read from the create body (or rotate body) and goes to the store, which seals it. No
+ * error or audit entry carries it, and no call reads it back. The one response that carries a secret
+ * is the create or rotate of a webhook given none: the store made one, and this is the only time it
+ * is shown. The URL can carry a token in its path, so a
  * read-only caller sees only its origin; the audit trail records a webhook's id, never its URL.
  */
 export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route[] {
@@ -78,15 +88,31 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
             ...(body.queue == null ? {} : { queue: body.queue }),
             ...(body.secret == null ? {} : { secret: body.secret }),
             ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
+            ...(body.filter == null ? {} : { filter: body.filter }),
+            ...(body.shape == null ? {} : { shape: body.shape }),
           },
           context.principal!.subject
         );
         // The entry was written before this ran, so it could not know the id.
         context.audit(`webhook=${webhook.id}`);
-        return Response.json(
-          { ok: true, data: { webhook: toWebhookWire(webhook, 'operator') } },
-          { status: 201 }
+        return Response.json({ ok: true, data: toIssuedWire(webhook) }, { status: 201 });
+      },
+    },
+    {
+      method: 'POST',
+      path: '/webhooks/preview',
+      access: 'write',
+      async handle(context) {
+        const body = await context.json(previewBody);
+        // Pure: no store, no network. A bad filter or shape is 400 `unsupported_option` naming which.
+        const filter = body.filter == null ? null : validateFilter(body.filter);
+        const shape = body.shape == null ? null : validateShape(body.shape);
+        const { event } = body;
+        const preview = previewWebhook(
+          { filter, shape },
+          { ...event, occurredAt: event.occurredAt ?? Date.now() }
         );
+        return { ok: true, data: { preview } };
       },
     },
     {
@@ -98,6 +124,18 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
         const webhook = await store.webhooks.setEnabled(context.params.id!, enabled);
         if (webhook === null) throw webhookNotFound(context.params.id!);
         return { ok: true, data: { webhook: toWebhookWire(webhook, 'operator') } };
+      },
+    },
+    {
+      method: 'POST',
+      path: '/webhooks/:id/rotate-secret',
+      access: 'write',
+      async handle(context) {
+        const body = (await context.json(rotateBody.optional())) ?? {};
+        // The old secret keeps signing beside the new one for a day, so the receiver can switch over.
+        const webhook = await store.webhooks.rotateSecret(context.params.id!, body.secret);
+        if (webhook === null) throw webhookNotFound(context.params.id!);
+        return { ok: true, data: toIssuedWire(webhook) };
       },
     },
     {

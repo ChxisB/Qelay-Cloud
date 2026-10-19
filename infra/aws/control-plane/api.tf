@@ -50,7 +50,10 @@ locals {
 
   # The database URL is a secret: ECS reads it with the execution role when the task starts and hands it over as an
   # environment variable. It never appears in the task definition's environment.
-  api_secrets = { QCLOUD_DATABASE_URL = var.database_url_secret }
+  api_secrets = merge(
+    { QCLOUD_DATABASE_URL = var.database_url_secret },
+    var.webhook_key_secret == null ? {} : { QCLOUD_WEBHOOK_KEY = var.webhook_key_secret },
+  )
 
   api_container = {
     name         = "api"

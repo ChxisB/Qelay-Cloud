@@ -1,18 +1,23 @@
+locals {
+  instance = local.cluster ? null : aws_db_instance.main[0]
+  writer   = local.cluster ? aws_rds_cluster.main[0] : null
+}
+
 output "address" {
-  description = "The instance's DNS name (private addresses only)."
-  value       = aws_db_instance.main.address
+  description = "The DNS name to connect to (private addresses only): the instance's, or the cluster's writer endpoint."
+  value       = local.cluster ? local.writer.endpoint : local.instance.address
 }
 
 output "port" {
-  value = aws_db_instance.main.port
+  value = local.cluster ? local.writer.port : local.instance.port
 }
 
 output "database_name" {
-  value = aws_db_instance.main.db_name
+  value = var.database_name
 }
 
 output "user_name" {
-  value = aws_db_instance.main.username
+  value = var.user_name
 }
 
 output "password" {
@@ -22,8 +27,13 @@ output "password" {
 }
 
 output "identifier" {
-  description = "The instance identifier, the CloudWatch dimension of its metrics."
-  value       = aws_db_instance.main.identifier
+  description = "The instance identifier, or the cluster identifier with a cluster: the CloudWatch dimension of its metrics."
+  value       = local.cluster ? local.writer.cluster_identifier : local.instance.identifier
+}
+
+output "metric_dimension" {
+  description = "The name of that CloudWatch dimension."
+  value       = local.cluster ? "DBClusterIdentifier" : "DBInstanceIdentifier"
 }
 
 output "security_group_id" {

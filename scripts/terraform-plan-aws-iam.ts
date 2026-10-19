@@ -14,7 +14,7 @@ export interface IamExpectation {
   readonly account: string;
   readonly region: string;
   readonly name: string;
-  readonly logGroups: { readonly workers: readonly string[]; readonly tick: string };
+  readonly logGroups: { readonly workers: readonly string[]; readonly tick: readonly string[] };
   readonly secrets: { readonly workers: readonly string[]; readonly tick: readonly string[] };
   readonly queueArns: readonly string[];
   readonly deadLetterArns: readonly string[];
@@ -177,7 +177,7 @@ export function checkIdentities(plan: Plan, checks: Checks, want: IamExpectation
     );
   };
   execution('workers_execution', want.logGroups.workers, want.secrets.workers);
-  execution('tick_execution', [want.logGroups.tick], want.secrets.tick);
+  execution('tick_execution', want.logGroups.tick, want.secrets.tick);
 
   const run = statementsOf('scheduler');
   checks.ok('the scheduler may run tasks and pass roles, nothing else', run?.length === 2);

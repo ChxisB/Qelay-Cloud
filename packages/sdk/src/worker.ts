@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import type { ClaimedJob, ClaimOptions, Delivery, Subscription } from '@qelay-cloud/core';
-import { MAX_CLAIM } from '@qelay-cloud/store-postgres';
-import { asError, errorMessage } from './errorText';
+import type { ClaimedJob, Delivery, Subscription } from '@qelay-cloud/core';
+import { errorMessage } from './errorText';
 import type { RunHooks } from './jobRunner';
 import { JobRun } from './jobRunner';
 import type { Runtime } from './runtime';
@@ -11,7 +10,6 @@ import { within } from './timing';
 import { emitIsolated, TypedEmitter } from './typedEmitter';
 import {
   CLAIM_ERROR_RETRY_MS,
-  claimForBell,
   NO_SLOT_RETRY_MS,
   returnMalformedBell,
   settleBell,
@@ -25,7 +23,8 @@ import type {
   WorkerEvents,
   WorkerOptions,
 } from './workerOptions';
-import { resolveWorkerOptions } from './workerOptions';
+import { resolveWorkerOptions, runtimeOptions } from './workerOptions';
+import { Pump } from './workerPump';
 import { WorkerRegistry } from './workerRegistry';
 import { shutdownWorker } from './workerShutdown';
 
@@ -58,8 +57,7 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
   readonly #hooks: RunHooks;
   readonly #runs = new Set<JobRun>();
   readonly #rings = new Set<Promise<void>>();
-  readonly #claimOptions: ClaimOptions;
-  #reserved = 0;
+  readonly #pump: Pump;
   #subscription: Subscription | null = null;
   #paused = false;
   #closing: Promise<void> | null = null;
@@ -73,16 +71,21 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
     if (typeof processor !== 'function')
       throw new TypeError('Worker: the processor must be a function');
     this.#options = resolveWorkerOptions(options);
-    this.#rt = openRuntime(
-      name,
-      options,
-      this.#options.lockDuration === undefined ? {} : { leaseMs: this.#options.lockDuration }
-    );
+    this.#rt = openRuntime(name, options, runtimeOptions(this.#options));
     this.name = name;
     this.#processor = processor;
     this.id = `${hostname().slice(0, 100)}-${process.pid}-${randomUUID().slice(0, 8)}`;
     const { group } = this.#options;
-    this.#claimOptions = group === undefined ? {} : { group };
+    this.#pump = new Pump({
+      rt: this.#rt,
+      queue: name,
+      owner: this.id,
+      options: group === undefined ? {} : { group },
+      capacity: () => this.#capacity(),
+      closing: () => this.#closing !== null,
+      start: (job, startedAt) => this.#start(job, startedAt),
+      emitError: (error) => this.#emitError(error),
+    });
     this.#registry = new WorkerRegistry(this.#rt, {
       id: this.id,
       name: this.#options.workerName,
@@ -111,7 +114,7 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
     });
     this.#drain = new DrainWatch({
       afterMs: this.#options.drainedAfterMs,
-      idle: () => this.#runs.size === 0 && this.#reserved === 0 && this.#closing === null,
+      idle: () => this.#runs.size === 0 && this.#pump.reserved === 0 && this.#closing === null,
       pending: async () => {
         const counts = await this.#rt.store.counts(this.name);
         return counts.waiting + counts.prioritized;
@@ -195,7 +198,7 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
   /** How many bells the transport may deliver right now: the free slots, none when paused or closing. */
   #capacity(): number {
     if (this.#paused || this.#closing !== null) return 0;
-    return Math.max(0, this.#options.concurrency - this.#runs.size - this.#reserved);
+    return Math.max(0, this.#options.concurrency - this.#runs.size - this.#pump.reserved);
   }
 
   /**
@@ -205,39 +208,16 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
   async #onBell(delivery: Delivery): Promise<void> {
     // Not a bell: back to the broker, counted (see `returnMalformedBell`).
     if (delivery.bell === null) return returnMalformedBell(this.#rt, this.name, delivery);
-    const want = Math.min(this.#capacity(), MAX_CLAIM);
+    const want = this.#pump.want();
     if (want <= 0) {
       await this.#settle(() => delivery.nack(NO_SLOT_RETRY_MS));
       return;
     }
-    this.#reserved += want;
-    const startedAt = performance.now();
-    let claimed: ClaimedJob[];
-    try {
-      claimed = await claimForBell(this.#rt, {
-        queue: this.name,
-        owner: this.id,
-        want,
-        options: this.#claimOptions,
-        closing: () => this.#closing !== null,
-      });
-    } catch (error) {
-      this.#reserved -= want;
-      this.#rt.count('qcloud.worker.claim_failed');
-      this.#emitError(asError(error));
-      await this.#settle(() => delivery.nack(CLAIM_ERROR_RETRY_MS));
-      return;
-    }
-    this.#reserved -= want;
-    if (this.#closing !== null) {
-      // The claim landed after `close` began: give the jobs back instead of starting them.
-      await Promise.all(claimed.map((job) => this.#rt.store.release(job.lease).catch(() => {})));
-      await this.#settle(() => delivery.ack());
-      return;
-    }
-    for (const job of claimed) this.#start(job, startedAt);
-    await this.#settle(() => delivery.ack());
-    if (claimed.length === 0) this.#drain.arm();
+    const started = await this.#pump.claimAndStart(want);
+    await this.#settle(() =>
+      started === null ? delivery.nack(CLAIM_ERROR_RETRY_MS) : delivery.ack()
+    );
+    if (started === 0) this.#drain.arm();
   }
 
   #settle(action: () => Promise<void>): Promise<void> {
@@ -261,6 +241,8 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
       this.#runs.delete(run);
       this.#subscription?.refresh();
       this.#drain.arm();
+      // A run that lost its lease or was released leaves a job another claim may find: not a reason to claim.
+      if (run.wrote && this.#options.claimAgain) void this.#pump.pump();
     });
   }
 

@@ -4,6 +4,7 @@ import {
   UnsupportedOptionError,
 } from '@qelay-cloud/core';
 import type { DeliveryPolicy, WebhookUrlPolicy } from '@qelay-cloud/core';
+import { DEFAULT_USER_AGENT } from './webhookHttp';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -13,6 +14,16 @@ export const DEFAULT_WEBHOOK_BUDGET_MS = 5_000;
 export const DEFAULT_WEBHOOK_TIMEOUT_MS = 10_000;
 export const DEFAULT_WEBHOOK_LEASE_MS = 30_000;
 export const DEFAULT_WEBHOOK_RATE_PER_MINUTE = 60;
+/** The sender process (`qcloud-tick send`) only, from here to `DEFAULT_WEBHOOK_BREAKER_COOLDOWN_MS`. */
+export const DEFAULT_WEBHOOK_KEEPALIVE_MS = 15_000;
+export const DEFAULT_WEBHOOK_DNS_TTL_MS = 30_000;
+export const DEFAULT_WEBHOOK_PER_DESTINATION = 4;
+export const DEFAULT_WEBHOOK_BREAKER_FAILURES = 5;
+export const DEFAULT_WEBHOOK_BREAKER_COOLDOWN_MS = 30_000;
+export const DEFAULT_WEBHOOK_IDLE_MS = 500;
+/** Bytes of a failed answer's body kept in the delivery history; 0 keeps none. */
+export const DEFAULT_WEBHOOK_RESPONSE_BYTES = 1_024;
+export const MAX_WEBHOOK_RESPONSE_BYTES = 4_096;
 /** What a lease must outlast the request timeout by: the chunk's other requests, then the record. */
 export const MIN_LEASE_MARGIN_MS = 5_000;
 
@@ -33,6 +44,26 @@ export interface WebhookSenderOptions {
   readonly maxAttempts?: number;
   readonly baseDelayMs?: number;
   readonly maxDelayMs?: number;
+  /** Failed deliveries in a row after which a webhook is paused. 0: never. Default 20. */
+  readonly disableAfter?: number;
+  /** `send` only: how long an idle connection to a receiver is kept. 0: a connection per delivery. */
+  readonly keepAliveMs?: number;
+  /** `send` only: how long a name's addresses are kept. 0: a lookup per delivery. */
+  readonly dnsTtlMs?: number;
+  /** `send` only: requests in flight to one destination (host and port). */
+  readonly perDestination?: number;
+  /** `send` only: failed attempts in a row that stop sending to a destination for `breakerCooldownMs`. 0: never. */
+  readonly breakerFailures?: number;
+  readonly breakerCooldownMs?: number;
+  /** `send` only: how long it waits before looking again when nothing is due. */
+  readonly idleMs?: number;
+  /**
+   * Bytes of a failed answer's body kept in the attempt's history. 0: none. Default 1 KB, but 0 when the
+   * URL policy allows private addresses (a receiver on an internal network is not the operator's to read).
+   */
+  readonly responseBytes?: number;
+  /** The `User-Agent` header: printable ASCII, at most 100 characters. */
+  readonly userAgent?: string;
 }
 
 export interface WebhookSenderConfig {
@@ -44,11 +75,28 @@ export interface WebhookSenderConfig {
   readonly timeoutMs: number;
   readonly leaseMs: number;
   readonly ratePerMinute: number;
+  readonly keepAliveMs: number;
+  readonly dnsTtlMs: number;
+  readonly perDestination: number;
+  readonly breakerFailures: number;
+  readonly breakerCooldownMs: number;
+  readonly idleMs: number;
+  readonly responseBytes: number;
+  readonly userAgent: string;
 }
+
+const USER_AGENT = /^[\x20-\x7e]{1,100}$/u;
 
 function positive(name: string, value: number): number {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new UnsupportedOptionError(name, 'must be a positive integer');
+  }
+  return value;
+}
+
+function notNegative(name: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new UnsupportedOptionError(name, 'must be a non-negative integer');
   }
   return value;
 }
@@ -74,6 +122,7 @@ export function resolveWebhookConfig(
       maxAttempts: options.maxAttempts ?? DEFAULT_DELIVERY_POLICY.maxAttempts,
       baseDelayMs: options.baseDelayMs ?? DEFAULT_DELIVERY_POLICY.baseDelayMs,
       maxDelayMs: options.maxDelayMs ?? DEFAULT_DELIVERY_POLICY.maxDelayMs,
+      disableAfter: options.disableAfter ?? DEFAULT_DELIVERY_POLICY.disableAfter,
     }),
     batch: positive('webhook batch', batch),
     concurrency: positive(
@@ -87,7 +136,50 @@ export function resolveWebhookConfig(
       'webhook ratePerMinute',
       options.ratePerMinute ?? DEFAULT_WEBHOOK_RATE_PER_MINUTE
     ),
+    keepAliveMs: notNegative(
+      'webhook keepAliveMs',
+      options.keepAliveMs ?? DEFAULT_WEBHOOK_KEEPALIVE_MS
+    ),
+    dnsTtlMs: notNegative('webhook dnsTtlMs', options.dnsTtlMs ?? DEFAULT_WEBHOOK_DNS_TTL_MS),
+    perDestination: positive(
+      'webhook perDestination',
+      options.perDestination ?? DEFAULT_WEBHOOK_PER_DESTINATION
+    ),
+    breakerFailures: notNegative(
+      'webhook breakerFailures',
+      options.breakerFailures ?? DEFAULT_WEBHOOK_BREAKER_FAILURES
+    ),
+    breakerCooldownMs: positive(
+      'webhook breakerCooldownMs',
+      options.breakerCooldownMs ?? DEFAULT_WEBHOOK_BREAKER_COOLDOWN_MS
+    ),
+    idleMs: positive('webhook idleMs', options.idleMs ?? DEFAULT_WEBHOOK_IDLE_MS),
+    responseBytes: responseBytes(options.responseBytes, urlPolicy),
+    userAgent: userAgent(options.userAgent),
   };
+}
+
+function responseBytes(value: number | undefined, urlPolicy: WebhookUrlPolicy): number {
+  if (value === undefined) return urlPolicy.allowPrivate ? 0 : DEFAULT_WEBHOOK_RESPONSE_BYTES;
+  const bytes = notNegative('webhook responseBytes', value);
+  if (bytes > MAX_WEBHOOK_RESPONSE_BYTES) {
+    throw new UnsupportedOptionError(
+      'webhook responseBytes',
+      `must be at most ${MAX_WEBHOOK_RESPONSE_BYTES}`
+    );
+  }
+  return bytes;
+}
+
+function userAgent(value: string | undefined): string {
+  if (value === undefined) return DEFAULT_USER_AGENT;
+  if (!USER_AGENT.test(value)) {
+    throw new UnsupportedOptionError(
+      'webhook userAgent',
+      'must be 1 to 100 printable ASCII characters'
+    );
+  }
+  return value;
 }
 
 const NUMBERS: ReadonlyArray<readonly [string, keyof WebhookSenderOptions]> = [
@@ -100,11 +192,21 @@ const NUMBERS: ReadonlyArray<readonly [string, keyof WebhookSenderOptions]> = [
   ['QCLOUD_WEBHOOK_MAX_ATTEMPTS', 'maxAttempts'],
   ['QCLOUD_WEBHOOK_BASE_DELAY_MS', 'baseDelayMs'],
   ['QCLOUD_WEBHOOK_MAX_DELAY_MS', 'maxDelayMs'],
+  ['QCLOUD_WEBHOOK_DISABLE_AFTER', 'disableAfter'],
+  ['QCLOUD_WEBHOOK_KEEPALIVE_MS', 'keepAliveMs'],
+  ['QCLOUD_WEBHOOK_DNS_TTL_MS', 'dnsTtlMs'],
+  ['QCLOUD_WEBHOOK_PER_DESTINATION', 'perDestination'],
+  ['QCLOUD_WEBHOOK_BREAKER_FAILURES', 'breakerFailures'],
+  ['QCLOUD_WEBHOOK_BREAKER_COOLDOWN_MS', 'breakerCooldownMs'],
+  ['QCLOUD_WEBHOOK_IDLE_MS', 'idleMs'],
+  ['QCLOUD_WEBHOOK_RESPONSE_BYTES', 'responseBytes'],
 ];
 
 /** The sender's options from the environment. Throws `UnsupportedOptionError` naming the variable. */
 export function webhookOptionsFromEnv(env: Env): WebhookSenderOptions {
-  const options: Record<string, number> = {};
+  const options: Record<string, number | string> = {};
+  const agent = env.QCLOUD_WEBHOOK_USER_AGENT;
+  if (agent !== undefined && agent !== '') options.userAgent = agent;
   for (const [name, key] of NUMBERS) {
     const raw = env[name];
     if (raw === undefined || raw === '') continue;

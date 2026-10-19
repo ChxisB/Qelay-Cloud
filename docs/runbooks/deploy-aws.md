@@ -40,7 +40,7 @@ same variables. These are the differences.
 | Transport page | Depth, in flight and delayed come from `GetQueueAttributes`: SQS calls them approximate, so the page prefixes them with "≈" and says how old the reading is. The age of the oldest bell comes from CloudWatch, about five minutes behind (`monitoring_read = false` leaves it blank). |
 | Database URL | A Secrets Manager reference (the task definition's `secrets`, the full ARN). Read when a task starts. |
 | Database CA | `QCLOUD_DATABASE_TLS_CA`: the PEM text of the region's RDS bundle, a plain environment value (Fargate has no file mount). Exactly one of it, `QCLOUD_DATABASE_TLS_CA_FILE` and `QCLOUD_DATABASE_TLS` is set. |
-| Exposure | An ALB with HTTPS on a certificate you bring and two host names you point at it. `public` (default), `private`. See the README. |
+| Exposure | An ALB with HTTPS on a certificate you bring and two host names you point at it. `public` (default), `private`. Optional WAF rate limit: `edge_rate_limit_per_minute`. See the README. |
 | Tick | A one-shot task started by EventBridge Scheduler: no listener, no token to check. |
 | Migration | `aws ecs run-task` of `<name>-migrate`. |
 | Scaling | The API and the panel are a fixed count. The connection budget counts the API's tasks, so there is no autoscaling. |
@@ -65,7 +65,9 @@ Order matters: the control plane reads what the data plane made.
 1. **Data plane first** (once). In its variables: `tick_image` the API image with
    `tick_command = ["bun", "/app/packages/maintenance/src/bin.ts"]`; `database_ca_pem` the PEM text of the RDS bundle of
    your region (`https://truststore.pki.rds.amazonaws.com/<region>/<region>-bundle.pem`; behind RDS Proxy also the Amazon
-   roots); `control_processes = 4` (two ticks plus two API tasks; more API tasks need more); and
+   roots); `control_processes = 4` (two ticks plus two API tasks; more API tasks need more); for webhooks `webhooks = true`
+   (it makes the key, which is in the Terraform state: back it up), `tick_loop = {}` and `webhook_sender = {}` (ECS
+   services of the tick image, each holding a pool the budget counts); and
    `additional_principal_arns = ["arn:aws:iam::<account>:role/<control plane name>-api-task"]`, **before** the queues'
    policies are applied, or every call the API makes to a queue is denied. Then `terraform -chdir=infra/aws/example apply`.
 2. **A certificate and two names.** An ACM certificate in the same region covering `api_hostname` and `panel_hostname`
@@ -219,7 +221,7 @@ no account is contacted. For the control plane it asserts, among others: no unau
 a 404 and two rules route by host name only), HTTPS on a TLS 1.3 policy, one inbound rule on the tasks' group (8080 from the
 load balancer's), no secret and no development token in any environment, the idle timeout against the heartbeat, every IAM
 statement scoped, the connection budget against the data plane's, the handover names against the data plane's
-`control_plane_inputs`, and 22 refusals.
+`control_plane_inputs`, and 22 refusals. The data plane's plan also asserts that the loop and the sender run as the tick's roles and that no worker role can read the webhook key.
 
 ## What has never run
 

@@ -19,6 +19,9 @@ variable "queues" {
     max_delivery_attempts = optional(number, 5)
     min_backoff_seconds   = optional(number, 1)
     max_backoff_seconds   = optional(number, 10)
+    # Its own topic and an unfiltered subscription, for a queue busy enough that the shared topic's filters
+    # would cost it. Tell every process the list (`hot_queues` output, QCLOUD_GCP_HOT_QUEUES).
+    hot = optional(bool, false)
   }))
 
   validation {

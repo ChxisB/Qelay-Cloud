@@ -48,14 +48,71 @@ With the default `max_connections` of 100 a direct fleet tops out at about 44 wo
   settings (`search_path` for a non-default schema, `statement_timeout`, `lock_timeout`) belong on the database role
   (`ALTER ROLE ... SET`), and anything that needs `LISTEN` (the local transport) needs a direct `QCLOUD_DATABASE_LISTEN_URL`.
   The cloud transports hold no listener. No session-level advisory lock is used anywhere.
+- **Database timeouts are set on the server.** Terraform sets `statement_timeout` 30 s, `lock_timeout` 5 s and
+  `idle_in_transaction_session_timeout` 30 s on the database (`database_session_timeouts`, 0 turns one off). The SDK's own
+  deadline retires a pool but cannot stop a statement the server already runs; `statement_timeout` is what does, and the
+  idle-in-transaction one frees a session that opened a transaction and vanished. The migrator sets `statement_timeout` to 0
+  inside its own transaction, so a slow index build is bounded by its deadline and not by the 30 s, and `lock_timeout`
+  stays so a DDL that cannot lock gives up and the release step is retried. A one-off long statement you run yourself
+  (a manual backfill) needs `SET statement_timeout = 0` in its session.
+- **Cap the workers' role, so a runaway fleet cannot take the control plane's connections.** The budget is arithmetic;
+  Postgres enforces it only when the workers log in as a role of their own with a `CONNECTION LIMIT`. Terraform does not do
+  this: it creates one shared database user for every process and runs no SQL. Its `connection_budget` output has
+  `worker_role_limit` (direct: the workers' pools and listeners; pooled: the pooler's server pool plus listeners), and an
+  operator runs, once, as the owner of the tables:
+
+  ```sql
+  CREATE ROLE qcloud_worker LOGIN PASSWORD '<from the secret manager>' CONNECTION LIMIT <worker_role_limit>;
+  GRANT USAGE ON SCHEMA public TO qcloud_worker;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO qcloud_worker;
+  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO qcloud_worker;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO qcloud_worker;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO qcloud_worker;
+  ```
+
+  Then point the workers' connection string at that role; the tick and the Control API keep the other one. A role beyond
+  its limit is refused with `53300` for that role only, the others still connect. A worker stuck at its limit retries, so
+  size the limit with headroom for a rolling deploy (old and new revisions overlap), and change it with
+  `ALTER ROLE qcloud_worker CONNECTION LIMIT n` (`workerRoleLimitSql` builds the statement). The default privileges apply
+  to tables a later migration creates *as the role that ran this block*: repeat them for the migrating role if it differs.
+  Not exercised against a real Cloud SQL or RDS instance (D9). `connection.roleLimit.test.ts` checks the `53300` refusal on
+  a local Postgres.
 - **The sizes** are in [limits.md](limits.md#2-sizes-and-counts): a payload is at most 1 MiB, `addBulk` takes 1,000 jobs, a
   flow 1,000 jobs.
+
+## Shards
+
+One Postgres has a ceiling (connections, write throughput on its disk). Past it, put namespaces on several databases.
+Every table is scoped by namespace and a namespace never spans databases, so the routing is a table you write:
+
+```
+QCLOUD_SHARDS=acme=a,globex=b,initech=a
+QCLOUD_SHARD_A_DATABASE_URL=...        # from the secret manager, per process
+QCLOUD_SHARD_B_DATABASE_URL=...
+QCLOUD_SHARD_B_DATABASE_POOL_SIZE=5    # optional: overrides QCLOUD_DATABASE_POOL_SIZE for shard b
+```
+
+- **Workers and the SDK:** `new Queue(name, { namespace, shards })` (a `ShardMap`), or the same variables.
+- **Control API:** one process per namespace, `QCLOUD_NAMESPACE=acme`. It opens that namespace's shard and holds no other
+  shard's URL. A namespace outside the map is refused at start.
+- **Migrations:** `qcloud-api migrate` with `QCLOUD_SHARDS` set migrates every shard in turn, names each in its output,
+  and stops at the first that fails (exit 1) after the ones before it finished.
+- **Tick:** `QCLOUD_SHARD=a qcloud-tick loop` runs one loop per namespace of shard `a` over one pool. Run two for
+  failover; the lease is per namespace. The scheduler job still calls `/internal/tick` for one namespace at a time.
+- **Connection budget:** work it out per shard (every process that opens that shard, at its pool size).
+- **Adding a namespace:** add it to the map everywhere at once, then migrate. A process with the old map refuses it.
+- **Moving a namespace** is manual and untested here: stop its writers, copy its rows (every table has `namespace`) to the
+  other database, edit the map, restart. Its cloud queue and topic names do not change.
+- **Not built:** one API for many namespaces, queries across shards, Terraform for more than one database. Decision D10
+  in [DESIGN.md](../DESIGN.md#shards-review-r21).
 
 ## Choosing where the tick runs
 
 The one-minute cloud scheduler is always there and is enough for correctness. It sets how late a delayed job, a retry's
 backoff or a cron entry can be: up to a minute. If you need seconds, also run the tick inside an always-on worker. Do not
-remove the scheduler job; it is the cron source and the safety net. The measured lateness for each case is
+remove the scheduler job; it is the cron source and the safety net. The simplest always-on form is the
+`qcloud-tick loop` command: one process (two for failover) with the same environment as `serve`, which beats every second
+and gives the lease up on SIGTERM. Both Terraform examples run it for you (`tick_loop`, a fixed count of tasks of the tick image). The measured lateness for each case is
 [limits.md section 1](limits.md#1-delay-precision-by-hosting-mode). The tick's own settings (`QCLOUD_TICK_*`) are in the
 configuration reference; the defaults suit the one-minute scheduler.
 
@@ -105,6 +162,36 @@ Because of that rule, rolling back the application is serving the previous revis
 build reports the schema as `ahead` and stays ready. **Do not run the older build's migration job**: it refuses a schema
 newer than it knows (exit 1) and changes nothing. A column or table the release added stays; the previous release ignores it.
 
+**Rolling back past version 13 (webhook deliveries by day).** Version 13 moves the webhook deliveries to `qcloud_deliveries`,
+and moves the ones still to be sent with it. The previous release reads the old table, which gets nothing new: a tick of the
+old release sends nothing it has not already, and deliveries made since the migration stay in the new table unsent until the
+newer release runs again (they expire after 24 hours, as any unsent delivery does). During a rolling upgrade the same holds for
+an old tick that is still running. A delivery that was being sent when the migration ran is moved as `sending` and can be sent
+again after its lease lapses: at least once, as always. The old table is dropped by a later release. Day partitions are made
+and dropped by the tick (`QCLOUD_WEBHOOK_KEEP_MS`); watch `pg_inherits` for `qcloud_deliveries` if a drop seems late: a day with
+a delivery still waiting is kept.
+
+**Rolling back past version 14 (the webhook delivery writer).** Version 14 adds `qcloud_webhook_writers`, three webhook columns
+(`filter`, `shape`, `active_from`) and `qcloud_deliveries.body`. The previous release ignores all of them, but a namespace
+with the writer on has no trigger-made deliveries: **run `qcloud-tick webhook-writer off` before rolling back**, or the old
+release's webhooks get no new deliveries until the newer release runs again. A webhook that has a `filter` or `shape` blocks
+`off`; delete it first, or the old release sends it unfiltered and with the default body.
+
+**Rolling back past version 15 (webhook pause and rotation).** Version 15 adds six `qcloud_webhooks` columns (the failure
+streak, the alert level, the pause reason and time, and the previous sealed secret and its end). The previous release
+ignores them, with two consequences: a webhook the newer release paused has `enabled = false`, so the old release
+sends nothing for it either and the writer's held deliveries expire; and a secret still in its rotation window signs with
+the new secret only. Enable paused webhooks again after the rollback if they should send.
+
+### Switching webhook deliveries to the writer
+
+`qcloud-tick webhook-writer on | off | status` (see [webhooks](webhooks.md#filters-and-shapes)) switches who makes a
+namespace's webhook deliveries. Each is safe to repeat and loses no event. `on` starts from the journal's end now. `off` waits for
+job transactions that were already running, and can take a few seconds under load; it is refused while a webhook has a filter or
+shape. While the writer is on, **a process that writes must be running**: the tick with `QCLOUD_WEBHOOK_BATCH` above 0, or
+`qcloud-tick send`. The gauge `qcloud.tick.webhooks.writer_gaps` at 1 means the journal's retention removed events before the
+writer read them (those events made no deliveries): run `send` so the writer is never far behind.
+
 ### Rotating the database secret
 
 The password is a generated secret that each service pins by version, so a rotation rolls new revisions: change it in the
@@ -118,7 +205,7 @@ against a real project. The steps are in the [GCP runbook](runbooks/deploy-gcp.m
 - **Back up Postgres.** It is the only state: the queues hold bells, not jobs. Both data planes turn on backups with
   point-in-time recovery and database deletion protection. Bells are not state: after a restore the tick rings every
   claimable job again.
-- **Retention.** The tick removes old completed jobs, events, completion records and group state by the rules of each queue
+- **Retention.** The tick removes old completed jobs, events, completion records, group state and metric buckets by the rules of each queue
   (`POST /queues/{queue}/clean` removes finished jobs on demand). A queue's dead-letter queue keeps its entries for the
   configured time (`/queues/{queue}/dlq-config`).
 - **A webhook delivery** is retried 8 times over about an hour and can reach a receiver twice; deduplicate on `X-Webhook-Id`

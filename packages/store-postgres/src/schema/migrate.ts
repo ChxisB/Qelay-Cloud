@@ -77,6 +77,9 @@ async function applyPending(
   const from = checkRecorded(recorded, migrations, latest);
   if (from === latest) return { from, to: latest, applied: [] };
 
+  // A server-wide `statement_timeout` (infra sets 30 s) must not kill an index build. The client's
+  // migration deadline is the bound, and `lock_timeout` stays, so a DDL that cannot lock gives up.
+  await tx.unsafe(`SELECT set_config('statement_timeout', '0', true)`);
   if (!recorded.present) {
     await refuseForeignTables(tx, migrations, latest);
     await tx.unsafe(`CREATE TABLE qcloud_schema_migrations (

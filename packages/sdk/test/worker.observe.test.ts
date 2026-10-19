@@ -53,6 +53,28 @@ describeDb('worker and queue: metrics and tracing hooks', () => {
     expect(observed.every(([, ms]) => ms >= 0)).toBe(true);
   });
 
+  test('an add, a group commit and a complete are each timed', async () => {
+    const { observed, metrics } = sink();
+    const done: string[] = [];
+    const worker = kit.worker('m3', async () => 'ok', { metrics });
+    worker.on('completed', () => done.push('x'));
+    const names = () => observed.map(([name]) => name);
+    await f.queue('m3', { metrics }).add('a', {});
+    await until('the job', () => done.length === 1);
+    expect(names().filter((name) => name === 'qcloud.add.ms')).toHaveLength(1);
+    expect(names().filter((name) => name === 'qcloud.worker.complete_ms')).toHaveLength(1);
+    await Promise.all([
+      f.queue('m3', { metrics, store: f.store, groupCommit: true }).add('b', {}),
+      f.queue('m3', { metrics, store: f.store, groupCommit: true }).add('c', {}),
+    ]);
+    expect(names()).toContain('qcloud.add.group_size');
+    expect(
+      observed
+        .filter(([name]) => name.endsWith('_ms') || name === 'qcloud.add.ms')
+        .every(([, ms]) => ms >= 0)
+    ).toBe(true);
+  });
+
   test('a metrics sink without observe, or one that throws, does not stop the worker', async () => {
     const queue = f.queue('m2');
     const done: string[] = [];

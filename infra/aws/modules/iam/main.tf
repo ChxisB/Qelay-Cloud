@@ -5,7 +5,8 @@
 #                       queues' depth; read queue metrics
 #   workers execution   pull the image, write the log group, read the worker secrets (ECS does this at task start)
 #   tick task           send on the queues (the tick only rings)
-#   tick execution      the same as the workers' execution role, with the tick's secrets and log group
+#   tick execution      the same as the workers' execution role, with the tick's secrets and log groups (the loop's and
+#                       the sender's too: they run as the tick, with the webhook key the workers never read)
 #   scheduler           run the tick task definition in the one cluster, and pass the tick's two roles to ECS
 #
 # The database is reached on its private address with a password, so no role holds an RDS permission. The queues'
@@ -248,7 +249,7 @@ resource "aws_iam_role_policy" "tick_execution" {
           Sid      = "WriteLogs"
           Effect   = "Allow"
           Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-          Resource = ["${local.logs_arn}:${var.tick_log_group}:*"]
+          Resource = [for group in concat([var.tick_log_group], var.tick_extra_log_groups) : "${local.logs_arn}:${group}:*"]
         },
         {
           Sid      = "ReadSecrets"

@@ -35,17 +35,18 @@ reserve for an explicit go-ahead (decision D9). What was and was not run is list
 | Module | Resources |
 | --- | --- |
 | network | `google_compute_network`, `google_compute_subnetwork` (private Google access), a reserved global address, `google_service_networking_connection` |
-| database | `google_sql_database_instance` (private IP only, `ENCRYPTED_ONLY`, backups with point-in-time recovery, deletion protection, `prevent_destroy`), `google_sql_database`, `google_sql_user`, `random_password` |
+| database | `google_sql_database_instance` (private IP only, `ENCRYPTED_ONLY`, backups with point-in-time recovery, deletion protection, `prevent_destroy`, and managed connection pooling when asked for), `google_sql_database`, `google_sql_user`, `random_password` |
 | messaging | two `google_pubsub_topic`; per queue two `google_pubsub_subscription`; the Pub/Sub service agent's grants |
-| secrets | `google_secret_manager_secret` and `_version` for the database URL, the CA, and the direct URL when a pooler is used |
+| secrets | `google_secret_manager_secret` and `_version` for the database URL, the CA, the direct URL when a pooler is used, and the webhook key when `webhooks` is on (a `random_id`) |
 | iam | `google_service_account` x3 and resource-level IAM members |
 | workers | `google_cloud_run_v2_worker_pool` per worker service (a pool has no ingress and no port) |
 | autoscaler | only when a pool sets `autoscaling`: a service account, a Parameter Manager parameter and version, five kinds of grant, and one always-on `google_cloud_run_v2_service` (8 resources for one pool) |
+| background | only when `tick_loop` or `webhook_sender` is set: a `google_cloud_run_v2_worker_pool` each, of the tick image, on the tick's service account, with a fixed count |
 | tick | `google_cloud_run_v2_service` (one instance, public URL, OIDC only), `google_cloud_run_v2_service_iam_member` |
 | scheduler | `google_cloud_scheduler_job` with an OIDC token |
 | monitoring | `google_monitoring_alert_policy` x6 (x8 with the two exported-metric alerts) |
 
-With the CI values this is 58 resources to add (66 with one pool autoscaled).
+With the CI values this is 67 resources to add (75 with one pool autoscaled); 61 of them are there without the webhook key, the loop and the sender.
 
 ## Quick start
 
@@ -102,12 +103,18 @@ organisation enables APIs elsewhere.
 | `autoscaler_image` | CREMA 1.3 | The image of the autoscaler service. **Pin a digest for anything that lives:** the service may update the pools (`run.developer`), so a tag that moves is a way to run code as the workers. |
 | `control_processes`, `control_pool_size` | 3, 2 | Other processes that hold a pool: the tick and each Control API instance at its `api_max_instances` (the control plane's plan refuses more). The panel holds no connection. |
 | `database_tier` | `db-custom-1-3840` | Machine tier. The database is the cost floor. |
+| `database_edition` | `ENTERPRISE` | `ENTERPRISE_PLUS` needs a `db-perf-optimization` tier and is what managed pooling runs on. |
+| `database_session_timeouts` | `{ statement_ms = 30000, lock_ms = 5000, idle_in_transaction_ms = 30000 }` | Server-wide `statement_timeout`, `lock_timeout` and `idle_in_transaction_session_timeout`, in milliseconds, 0 = off. The migrator lifts the statement timeout for its own transaction, so a slow index build is bounded only by its own deadline. Whether the cloud accepts all three flags was not run (`terraform plan` only). |
+| `database_managed_pooling` | false | Cloud SQL's connection pooling in transaction mode (private IP, port 6432). See the connection budget. Exclusive with `pooler`. |
 | `database_high_availability` | false | A regional standby. |
 | `database_disk_size_gb` | 10 | Disk size. |
 | `max_connections` | 100 | The flag value, and what the budget is checked against. |
 | `database_deletion_protection` | true | See Teardown. |
 | `database_tls` | `ca-file` | `ca-file`, `unverified` or `off` (the last only with a pooler). |
 | `pooler` | null | `{ host, port = 6432, server_pool_size = 20 }` of a PgBouncer you run. |
+| `webhooks` | false | Generates `QCLOUD_WEBHOOK_KEY` into Secret Manager (secret `webhook-key`). The tick, the loop, the sender and the control plane's API read it; no worker does. |
+| `tick_loop` | null | `{ instances = 1, pool_size = 2, cpu = "1", memory = "512Mi", env = {} }`: an always-on worker pool that runs `qcloud-tick loop`. Null: no loop. |
+| `webhook_sender` | null | `{ instances = 2, pool_size = 2, cpu, memory, env }`: a worker pool that runs `qcloud-tick send`. Needs `webhooks`. Fixed count: nothing scales it on a backlog. |
 | `subnet_cidr` | `10.10.0.0/24` | The workers' subnet. Checked against the instance count. |
 | `abandon_peering_on_destroy` | false | Teardown aid. |
 | `scheduler_schedule` | `* * * * *` | Cron expression of the scheduler job, UTC. |
@@ -119,7 +126,7 @@ organisation enables APIs elsewhere.
 
 Outputs: `connection_budget`, `database_connection_name`, `database_private_ip`, `topic_name`,
 `dead_letter_topic_name`, `subscription_names`, `dead_letter_subscription_names`, `tick_url`, `tick_audience`,
-`worker_services`, `service_accounts`, `secret_ids`, `alert_policy_ids`. None is secret.
+`worker_services`, `service_accounts`, `secret_ids`, `alert_policy_ids`, and `control_plane_inputs` (which carries the webhook key's secret id and version, never its value). None is secret.
 
 ## The connection budget
 
@@ -157,8 +164,18 @@ be another paid, stateful service to own); set `pooler = { host = ... }` and it 
 pooled budget. Behind a transaction pooler, settings that a startup parameter cannot carry
 (`search_path` for a non-default schema, `statement_timeout`, `lock_timeout`) belong on the database role with
 `ALTER ROLE ... SET`; the driver refuses them as options and says so. This configuration runs no SQL, so it does not set
-them: the defaults (schema `public`, the SDK's own deadlines) need none. `database_tls = "off"` exists for a plaintext hop to a pooler on the private network only; the instance
+them per role: it sets the same three timeouts server-wide as database flags (`database_session_timeouts`), and the defaults
+(schema `public`, the SDK's own deadlines) need nothing more. `database_tls = "off"` exists for a plaintext hop to a pooler on the private network only; the instance
 itself always refuses plaintext.
+
+**Managed pooling.** `database_managed_pooling = true` (with `database_edition = "ENTERPRISE_PLUS"`) turns on Cloud SQL's own pooler instead of one you run. Every process gets `QCLOUD_DATABASE_POOLER=transaction` and the pooler's port, and the budget counts Google's default of 50 server connections. The module sets only the on switch and does not set a pool size: Google's flag names for the size could not be checked here. It is the same transaction-mode discipline as above, and a feature Google lists as unsupported behind the pooler is the check to make before turning it on.
+
+**The loop and the sender.** Each is a worker pool of the tick image with a fixed count, and each holds a pool of its own that the budget counts: `tick_loop.instances x pool_size` and `webhook_sender.instances x pool_size`. They log in with the same database user as the workers, so they also count against `worker_role_limit`.
+
+**Capping the workers.** The `connection_budget` output has `worker_role_limit`, the worker share of the budget. Nothing here
+creates a role or runs SQL (every process shares one database user), so the cap is an operator step: create a role for the
+workers with `CONNECTION LIMIT` set to that value and point their connection string at it. The statements are in
+[operations](../../docs/operations.md#connection-budget).
 
 The value Cloud SQL accepts for `max_connections` depends on the tier's memory. An unsupported value fails at apply, not
 at plan.
@@ -174,7 +191,7 @@ resource. Five predefined roles are used:
 | `<name>-workers` | `roles/pubsub.publisher` | the bells topic | A worker enqueues too (a job adds a job), and a retry rings a bell. |
 | `<name>-workers` | `roles/secretmanager.secretAccessor` | the database URL, its CA, the listen URL | Read the connection strings. |
 | `<name>-tick` | `roles/pubsub.publisher` | the bells topic | Ring bells for waiting and due jobs. |
-| `<name>-tick` | `roles/secretmanager.secretAccessor` | the database URL and its CA | Same. |
+| `<name>-tick` | `roles/secretmanager.secretAccessor` | the database URL and its CA, and the webhook key when `webhooks` is on | Same. The loop and the sender run as this account. |
 | `<name>-scheduler` | `roles/run.invoker` | the tick service only | Call `POST /internal/tick`. |
 | `deployer_members` | `roles/iam.serviceAccountUser` | the three service accounts | Deploy Cloud Run services that run as them. |
 | Pub/Sub service agent | `roles/pubsub.publisher` / `subscriber` | the dead-letter topic / each main subscription | Dead-lettering is done by the service itself. |
@@ -189,6 +206,8 @@ Things that are deliberately absent:
   single permission `monitoring.timeSeries.list`, the only project-level grant anywhere), `<name>-migrate` (read the direct
   URL and the CA) and `<name>-panel` (no grants). `allUsers` holds `run.invoker` on the API and the panel, by design: the
   application checks the token, and `/health` is the only route without one.
+
+The webhook key is read by the tick account (the tick, the loop and the sender) and by the control plane's API account, and by no worker account: a job's code cannot read the key that seals webhook secrets. It is a Terraform `random_id`, so it is in the state, like the database password. Back the state up: a lost key leaves every stored webhook secret unreadable until each is rotated.
 
 The tick's URL is public, because Cloud Scheduler calls it from outside the VPC, but it accepts only an OIDC token
 issued for the scheduler service account: Cloud Run IAM checks `run.invoker`, and the application checks the audience
@@ -205,7 +224,11 @@ refuses others).
 - Names: topic `qcloud.<namespace>.bells`, dead-letter topic `qcloud.<namespace>.bells-dlq`, subscription
   `qcloud.<namespace>.sub.<queue>`, dead-letter subscription `qcloud.<namespace>.dlq.<queue>`. The plan check asserts
   these equal what `packages/transport-gcp` computes.
-- Each subscription filters on `attributes.route = "<namespace>.<queue>"`. **A subscription's filter cannot be changed**,
+- A queue with `hot = true` has its own topic, `qcloud.<namespace>.hot.<queue>`, and an unfiltered subscription of the same name
+  (the dead-letter side stays shared). The module's `hot_queues` output is the value of `QCLOUD_GCP_HOT_QUEUES`, which the
+  example sets on every process and hands to the control plane (`hot_topic_names`). A subscription cannot change topic, so
+  flipping `hot` replaces it: the tick rings what it held. Do it for a queue whose traffic makes the shared topic's filters cost.
+- Each other subscription filters on `attributes.route = "<namespace>.<queue>"`. **A subscription's filter cannot be changed**,
   so changing it replaces the subscription; any bells in it are lost, and the tick re-rings what is waiting.
 - Defaults: acknowledgement deadline 30 s, five delivery attempts then the dead-letter topic, retry backoff 1 to 10 s,
   no ordering, no exactly-once delivery, seven days of retention.
@@ -240,10 +263,8 @@ does at the limit is a refusal for the next connection, not an outage of the one
 ## Delay precision
 
 Cloud Scheduler's finest period is a minute, so with only the scheduler a delayed job can be up to a minute late. For
-better, run the tick inside an always-on worker too: keep `min_instances >= 1`, have the worker's host start the
-maintenance package's `TickLoop` (the SDK does not import it) with `tickOptionsFromEnv`, and set
-`QCLOUD_TICK_INTERVAL_MS` on the worker service (through its `env`). The loop elects one leader with a lease on the
-database clock, so any number of instances is safe. The scheduler job stays: it is the cron source and the safety net if every worker is down. Measured
+better, set `tick_loop = {}`: a worker pool runs `qcloud-tick loop`, a beat every second (`QCLOUD_TICK_INTERVAL_MS`, through the pool's `env`) with the retention steps every 30 s. The loop elects one leader with a lease on the
+database clock, so any number of instances is safe; `instances = 2` gives failover, since only the lease holder ticks. The scheduler job stays: it is the cron source and the safety net if the loop is down. Measured
 lateness for the loop is in [docs/spikes/06-phase0-gate.md](../../docs/spikes/06-phase0-gate.md).
 
 ## The container contract
@@ -326,8 +347,8 @@ The enabled APIs stay enabled.
 bun run check:terraform
 ```
 
-Runs `terraform fmt -check`, `init -backend=false`, `validate`, a plan of `example/` with `ci.tfvars.example`, and 161
-assertions on the plan and its variations (then the same for `control-plane/`, 108 more, see the runbook): the resources and their safety settings (private IP only, `ENCRYPTED_ONLY`, backups on, deletion
+Runs `terraform fmt -check`, `init -backend=false`, `validate`, a plan of `example/` with `ci.tfvars.example`, and 202
+assertions on the plan and its variations (then the same for `control-plane/`, 131 more, see the runbook): the resources and their safety settings (private IP only, `ENCRYPTED_ONLY`, backups on, deletion
 protection on, no public ingress for workers), the roles (only the five above, only on resources), the Pub/Sub names
 against `packages/transport-gcp`, the budget against `budget()` in TypeScript, and the refusals: 60 instances over
 `max_connections`, plaintext without a pooler, a subnet too small, a queue name the transport would encode.
@@ -367,5 +388,9 @@ project, and each is a step of the first apply:
     parameter, and metrics) are broader than the rest.
 13. **Shutdown inside 10 s.** That a worker given a SIGTERM and a fixed 10 s hands its leases back or leaves them to the
     stall check, and that the idle alert (`cloud_run_worker_pool`, `worker_pool_name`) matches what a pool emits.
+
+14. **The loop and the sender.** That a worker pool starts the tick image with `args = ["loop"]` and `["send"]` over the image's entrypoint, reaches the database and Pub/Sub on the tick's account, and holds its fixed count.
+15. **Managed pooling.** That Cloud SQL accepts `connection_pool_config` on this tier and edition, that the pooler listens on 6432 with the 50 server connections the budget counts, and what it does with this repo's statements. Enterprise Plus pricing and the pool-size flags were not looked up.
+16. **The webhook key's secret.** That the loop, the sender and the API read it at start, and that the workers' account is refused.
 
 The task's Result in `.claude/.planning/v1.0.0/21-infra-gcp.md` records what was run instead.

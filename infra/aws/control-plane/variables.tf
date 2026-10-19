@@ -129,6 +129,17 @@ variable "database_direct_url_secret" {
   default     = null
 }
 
+variable "webhook_key_secret" {
+  description = "The full ARN of the secret that holds QCLOUD_WEBHOOK_KEY (the data plane's `webhook_key_secret` output), which the API seals and opens webhook secrets with. Null: no webhooks, and the API refuses to store one."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.webhook_key_secret == null ? true : can(regex("^arn:[a-z-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+-[A-Za-z0-9]{6}$", var.webhook_key_secret))
+    error_message = "webhook_key_secret is the secret's full ARN, which ends in a dash and six characters (ECS cannot read a secret by its name here)."
+  }
+}
+
 variable "database_tls_env" {
   description = "How the processes check the database's certificate, exactly as the data plane's workers do: its `database_tls_env` output (QCLOUD_DATABASE_TLS_CA with the PEM, QCLOUD_DATABASE_TLS_CA_FILE, or QCLOUD_DATABASE_TLS)."
   type        = map(string)
@@ -343,6 +354,23 @@ variable "ingress_cidrs" {
   description = "Who may open a connection to the load balancer. Null: the internet for exposure = public, and the VPC for exposure = private."
   type        = list(string)
   default     = null
+}
+
+variable "edge_rate_limit_per_minute" {
+  description = <<-EOT
+    A WAF rate limit on the load balancer: requests per minute from one client address, over the API and the panel together.
+    Over it the load balancer answers 429 with `Retry-After: 60` before a request reaches a task. Null (the default) adds no
+    WAF and costs nothing; a web ACL bills per ACL, per rule and per million requests (see AWS WAF pricing). Clients behind one shared address (an office, a NAT) share the count, so size it above the
+    busiest of them; 1200 is the API's own per-principal limit (20 a second) for a minute. The in-process limiter stays on as
+    the second layer: it is per task and per principal, this is per address and shared by every task.
+  EOT
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.edge_rate_limit_per_minute == null ? true : var.edge_rate_limit_per_minute >= 10 && floor(var.edge_rate_limit_per_minute) == var.edge_rate_limit_per_minute
+    error_message = "edge_rate_limit_per_minute is a whole number from 10 (the least a WAF rate rule takes), or null."
+  }
 }
 
 variable "alb_subnet_slot" {

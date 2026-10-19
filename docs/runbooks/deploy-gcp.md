@@ -46,6 +46,7 @@ any OIDC provider, needs no load balancer, no certificate and no extra product, 
 | --- | --- | --- |
 | `public` (default) | most teams | as above |
 | `private` | the panel is only used from the VPC (a VPN, an internal load balancer, a jump host) | `ingress = INTERNAL_ONLY`. The token check stays. Nothing outside the VPC reaches either service, so the browser must be inside it. |
+| `public` + `edge` | you want a rate limit that counts per client address across every instance, before a request reaches one | `edge = { api_hostname, panel_hostname, rate_limit_per_minute }` adds an external HTTPS load balancer, a Google-managed certificate and a Cloud Armor rate rule (429 over the limit), and sets `ingress = INTERNAL_LOAD_BALANCER` so the `run.app` URLs stop answering the internet. The two host names are yours: point DNS at `edge.ip_address`, and re-register the `oidc_redirect_uris` (they now name the host names). Only HTTPS is served. Billed separately from Cloud Run (load balancer, policy, rule, requests). Off by default; the plan is checked, never applied or run against a real project (D9). |
 | IAP | the organisation requires Google identity at the edge | **Not in this Terraform.** The google provider (6.50) has no `iap_enabled` on `google_cloud_run_v2_service`; IAP needs a serverless NEG behind an external HTTPS load balancer, a certificate and a domain, which is a different shape. Use `private` ingress behind that load balancer and keep the application's token check: IAP then identifies the person at the edge and the API still authorizes by role. |
 
 If the organisation's policy blocks `allUsers` (domain-restricted sharing), the apply fails on the invoker binding. The
@@ -83,6 +84,8 @@ certificate is a mounted file.
 | `QCLOUD_DATABASE_TLS_CA_FILE` / `QCLOUD_DATABASE_TLS` | `/etc/qcloud/db-ca/ca.pem` / `unverified` or `off` | How the certificate is checked. The two are exclusive (and so is `QCLOUD_DATABASE_TLS_CA`, the PEM inline, used on AWS). |
 | `QCLOUD_NAMESPACE` | the data plane's | The tenant of every row. |
 | `QCLOUD_TRANSPORT`, `QCLOUD_GCP_PROJECT` | `gcp-pubsub`, the project | The doorbell the API rings when it adds, retries or promotes a job. |
+| `QCLOUD_WEBHOOK_KEY` | secret reference, when `webhook_key_secret` is given | The key webhook signing secrets are sealed with (the data plane's `webhooks = true` makes it). Without it a webhook cannot be given a secret (409). |
+| `QCLOUD_GCP_HOT_QUEUES` | `hot_topic_names` keys, when any | Queues with their own topic. Set only when a queue has `hot = true`. |
 | `QCLOUD_API_OIDC_ISSUER`, `_AUDIENCE`, `_JWKS_URL` | `oidc_issuer`, `oidc_audience` (comma separated), `oidc_jwks_url` | What a token must satisfy. All three are required in production. |
 | `QCLOUD_API_ROLE_CLAIM`, `_OPERATOR_ROLES`, `_VIEWER_ROLES` | optional | Where roles are and which values mean what. |
 | `QCLOUD_API_CORS_ORIGINS` | the panel's URL and `extra_cors_origins` | Exact origins. A wildcard is refused at start. |
@@ -144,7 +147,10 @@ Order matters because the control plane reads what the data plane made.
 
 1. **Data plane first** (once). `terraform -chdir=infra/gcp/example apply`. Set `tick_image` to the API image and
    `tick_command = ["bun", "/app/packages/maintenance/src/bin.ts"]`. Control plane capacity: `control_processes` must
-   count the tick plus every API instance at `api_max_instances`; the control plane's plan refuses otherwise.
+   count the tick plus every API instance at `api_max_instances`; the control plane's plan refuses otherwise. For webhooks set
+   `webhooks = true` (it makes the key), `tick_loop = {}` for a delay of a second and `webhook_sender = {}` for the sender;
+   the loop and the sender are worker pools of the tick image, and each holds a pool of connections the budget counts. The
+   key is in the Terraform state: back it up, because a lost key leaves every stored webhook secret unreadable.
 2. **Build and push the images**, by digest:
 
    ```bash
@@ -284,7 +290,7 @@ The plan check drops every `GOOGLE_*` and `CLOUDSDK_*` variable and gives the pr
 credentials are never used. It asserts, among others: the only `run.invoker` binding is `allUsers` on the API and the
 panel (the application enforces tokens; the scheduler's binding on the tick stays in the data plane), no secret and no
 development token in any environment, request timeouts above the stream lifetime, the connection budget against the data
-plane's, the handoff names against the fixture's values, and 13 refusals.
+plane's, the handoff names against the fixture's values, and 13 refusals. The data plane's plan also asserts that the loop and the sender run the tick image as the tick's account, and that no worker account can read the webhook key.
 
 ## What has never run
 

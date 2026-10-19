@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { MAX_STATUS_LINE_BYTES, postOverSocket } from '../src/webhookHttp';
+import { MAX_STATUS_LINE_BYTES } from '../src/webhookHttp';
+import { postOverSocket } from '../src/webhookPool';
 import { sendDelivery } from '../src/webhookSend';
 import { listener, request } from './webhookSockets';
 import { delivery, script } from './webhookSupport';

@@ -8,6 +8,7 @@ import {
   JobVersionError,
   LeaseLostError,
   OperationDeadlineError,
+  StoreOverloadedError,
   OutcomeUnknownError,
   QueuePausedError,
   StoreError,
@@ -17,6 +18,7 @@ import {
 import {
   BatchTooLargeError,
   GroupFullError,
+  PayloadTooComplexError,
   PayloadTooLargeError,
 } from '@qelay-cloud/store-postgres';
 import { ApiError, errorBody, toApiError } from '../src';
@@ -48,6 +50,12 @@ describe('toApiError', () => {
       413,
       'payload_too_large',
     ],
+    [
+      'PAYLOAD_TOO_COMPLEX',
+      new PayloadTooComplexError('nodes', 20_000, 0),
+      413,
+      'payload_too_large',
+    ],
     ['BATCH_TOO_LARGE', new BatchTooLargeError(5_000, 1_000), 400, 'batch_too_large'],
     ['GROUP_FULL', new GroupFullError('q', 'g1', 10, 0), 409, 'group_full'],
     ['UNSUPPORTED_OPTION', new UnsupportedOptionError('lifo'), 400, 'unsupported_option'],
@@ -58,6 +66,7 @@ describe('toApiError', () => {
       'transport_error',
     ],
     ['STORE_ERROR', new StoreError(SQL_TEXT, { cause: driverCause }), 503, 'store_error'],
+    ['STORE_OVERLOADED', new StoreOverloadedError('claim', 128), 503, 'store_overloaded'],
     ['OPERATION_DEADLINE', new OperationDeadlineError('claim', 5000), 504, 'operation_deadline'],
     [
       'OUTCOME_UNKNOWN',

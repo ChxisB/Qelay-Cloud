@@ -3,7 +3,7 @@ import { WEBHOOK_EVENTS } from '@qelay-cloud/core';
 import { createMsgpackCodec } from '../src/codec';
 import type { StoreEvent } from '../src/store/events';
 import { journalRecorder } from '../src/store/journal';
-import type { WebhookRecord, WebhookSpec } from '../src/store/webhookTypes';
+import type { WebhookIssued, WebhookSpec } from '../src/store/webhookTypes';
 import type { TestStore } from './storeHelpers';
 import { START } from './storeHelpers';
 
@@ -19,7 +19,7 @@ const recorder = journalRecorder({ namespace: 'test', codec: createMsgpackCodec(
 export function addHook(
   t: Pick<TestStore, 'store'>,
   spec: Partial<WebhookSpec> = {}
-): Promise<WebhookRecord> {
+): Promise<WebhookIssued> {
   return t.store.webhooks.create(
     { url: 'https://hooks.example.com/in', events: [...WEBHOOK_EVENTS], ...spec },
     'tester'
@@ -29,6 +29,18 @@ export function addHook(
 /** Writes journal events as an operation would, one transaction, at the clock's time. */
 export async function journal(t: TestStore, events: readonly StoreEvent[]): Promise<void> {
   await t.fresh.sql.begin((tx) => recorder.record(tx, events, t.clock.now()));
+}
+
+/** As `journal`, but the transaction stays open (its events uncommitted) until `hold` settles. */
+export async function journalHeld(
+  t: TestStore,
+  events: readonly StoreEvent[],
+  hold: Promise<void>
+): Promise<void> {
+  await t.fresh.sql.begin(async (tx) => {
+    await recorder.record(tx, events, t.clock.now());
+    await hold;
+  });
 }
 
 export const event = (
@@ -55,7 +67,7 @@ export async function rawDeliveries(t: TestStore): Promise<RawDelivery[]> {
   return t.fresh.sql<RawDelivery[]>`
     SELECT d.id::text AS id, d.webhook_id, d.event_name, d.queue, d.job_id, d.status, d.attempts,
            d.attempt_base, d.next_attempt_at, d.event_id::text AS event_id
-    FROM qcloud_webhook_deliveries d ORDER BY d.id`;
+    FROM qcloud_deliveries d ORDER BY d.id`;
 }
 
 export const names = async (t: TestStore): Promise<string[]> =>
@@ -69,7 +81,13 @@ export const CLAIM = { limit: 50, leaseMs: 30_000, ratePerMinute: 1_000 };
 /** A successful or failed result for a claimed delivery, as the sender would report it. */
 export function outcome(
   claimed: { deliveryId: string; webhookId: string; attempt: number },
-  result: { ok: boolean; statusCode?: number | null; error?: string | null; at?: number },
+  result: {
+    ok: boolean;
+    statusCode?: number | null;
+    error?: string | null;
+    response?: string | null;
+    at?: number;
+  },
   durationMs = 12
 ): import('../src/store/webhookTypes').AttemptOutcome {
   return {
@@ -79,6 +97,7 @@ export function outcome(
     ok: result.ok,
     statusCode: 'statusCode' in result ? result.statusCode! : result.ok ? 200 : 500,
     error: 'error' in result ? result.error! : result.ok ? null : 'receiver answered 500',
+    ...(result.response === undefined ? {} : { response: result.response }),
     startedAt: result.at ?? START,
     durationMs,
   };

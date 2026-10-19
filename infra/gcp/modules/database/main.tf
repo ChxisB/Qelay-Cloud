@@ -54,10 +54,38 @@ resource "google_sql_database_instance" "main" {
       name  = "max_connections"
       value = tostring(var.max_connections)
     }
+
+    database_flags {
+      name  = "statement_timeout"
+      value = tostring(var.session_timeouts.statement_ms)
+    }
+
+    database_flags {
+      name  = "lock_timeout"
+      value = tostring(var.session_timeouts.lock_ms)
+    }
+
+    database_flags {
+      name  = "idle_in_transaction_session_timeout"
+      value = tostring(var.session_timeouts.idle_in_transaction_ms)
+    }
+
+    dynamic "connection_pool_config" {
+      for_each = var.managed_pooling ? [1] : []
+      content {
+        # Google's defaults: 50 server connections per database and user pair, 5,000 client connections.
+        connection_pooling_enabled = true
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+
+    precondition {
+      condition     = !var.managed_pooling || var.edition == "ENTERPRISE_PLUS"
+      error_message = "Managed connection pooling needs edition = \"ENTERPRISE_PLUS\" (and a db-perf-optimization tier)."
+    }
   }
 }
 

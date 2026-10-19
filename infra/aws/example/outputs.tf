@@ -7,6 +7,8 @@ output "connection_budget" {
     utilization     = module.budget.utilization
     direct_required = module.budget.direct_required
     pooled_required = module.budget.pooled_required
+
+    worker_role_limit = module.budget.worker_role_limit
   }
 }
 
@@ -96,6 +98,16 @@ output "processes" {
         pool_size     = worker.pool_size
       }
     }
+    background = {
+      for name, pool in module.background : name => {
+        entry_point   = pool.entry_point
+        command       = pool.command
+        environment   = pool.environment
+        secret_env    = pool.secret_env_names
+        max_instances = pool.max_instances
+        pool_size     = pool.pool_size
+      }
+    }
   }
 }
 
@@ -128,6 +140,7 @@ output "control_plane_inputs" {
     queue_kms_key_arn          = module.messaging.kms_key_arn
     database_url_secret        = local.secret_ref["database-url"]
     database_direct_url_secret = lookup(local.secret_ref, "database-listen-url", null)
+    webhook_key_secret         = lookup(local.secret_ref, "webhook-key", null)
     database_tls_env           = local.tls_env[var.database_tls]
     vpc_cidr                   = module.network.vpc_cidr
     availability_zones         = var.availability_zones

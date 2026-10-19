@@ -1,3 +1,5 @@
+import { SHARD_SECRET_VARIABLE } from '@qelay-cloud/store-postgres';
+
 type Env = Readonly<Record<string, string | undefined>>;
 
 /** The variables whose values are, or carry, a credential. */
@@ -13,7 +15,10 @@ const USERINFO = /([a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi;
 /** The strings in `env` that must never appear in a log line: whole values, and URL passwords. */
 function secretsIn(env: Env): string[] {
   const secrets = new Set<string>();
-  for (const name of SECRET_VARIABLES) {
+  for (const name of [
+    ...SECRET_VARIABLES,
+    ...Object.keys(env).filter((n) => SHARD_SECRET_VARIABLE.test(n)),
+  ]) {
     const value = env[name];
     if (value === undefined || value === '') continue;
     secrets.add(value);

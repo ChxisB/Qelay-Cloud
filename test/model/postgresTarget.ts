@@ -56,6 +56,7 @@ export const POSTGRES_COMMANDS = [
   'heartbeat',
   'release',
   'complete',
+  'completeMany',
   'fail',
   'promote',
   'changePriority',
@@ -77,9 +78,12 @@ export const POSTGRES_COMMANDS = [
 
 /**
  * With real workers every claim is a worker's, so `crash` (the model forgetting a worker's leases)
- * has no counterpart: the process-kill case is `packages/sdk/test/worker.crash.test.ts`.
+ * has no counterpart: the process-kill case is `packages/sdk/test/worker.crash.test.ts`. `completeMany`
+ * writes for leases a worker holds, so it is left to the store target.
  */
-export const POSTGRES_WORKER_COMMANDS = POSTGRES_COMMANDS.filter((name) => name !== 'crash');
+export const POSTGRES_WORKER_COMMANDS = POSTGRES_COMMANDS.filter(
+  (name) => name !== 'crash' && name !== 'completeMany'
+);
 
 export async function closePostgresTarget(): Promise<void> {
   const open = schema;

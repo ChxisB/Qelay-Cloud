@@ -772,6 +772,12 @@ a demo. The numbers and the "not run" list are in [docs/limits.md](../limits.md)
   3,130-3,295 jobs/s with no tick. No job was lost or run twice. **Open decision for you:** let only a job's first ring repeat within a
   run (cheap, but a bell lost *during* a long run is then repaired a beat later), or leave it and rely on the 60 s Cloud Scheduler
   interval and a longer `reRingAfterMs`. Not changed here: it alters the tick contract (task 20), and the figures are local.
+  **Follow-up (review R10, 2026-10-19), still your decision:** the tick contract is unchanged by default. Three opt-in or
+  separable parts were added: `maxStaleRingsPerQueue` (a separate cap for re-rings, so first rings keep the full cap; a low
+  value delays the repair of many lost bells, to `cap` per pass), the producer's `ringCoverMs` (one bell per queue per window
+  instead of one per job; the worker's `claimAgain`, on by default, is what lets one bell drain a backlog), and nothing else
+  in the tick. The bells saved were counted on the local transports and Postgres only, never on a real queue (D9), and
+  the default of `ringCoverMs` and of the stale cap stays off until that load check is run.
 - **(b) A rate limit or a global concurrency limit serializes claims on one row.** 1,313-1,361 against 3,054-3,102 jobs/s on one hot
   queue, with a limit that never binds (`Lock:tuple`, about 27 waiters per poll). An exact limit needs it. Left as it is, so the limit stays
   exact; spread hot work over queues. **Open for you** only if a rate-limited queue must exceed about 1,300 claims per second.

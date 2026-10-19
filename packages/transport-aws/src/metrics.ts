@@ -16,9 +16,11 @@ export interface SqsMetrics {
   receiveErrors: number;
   received: number;
   largestReceive: number;
-  /** `DeleteMessage` calls: one per acknowledged bell. */
+  /** `DeleteMessageBatch` calls (up to ten bells each). */
   deletes: number;
-  /** Deletes that failed for another reason than a handle that was no longer valid. */
+  /** Bells whose delete was sent, whether or not it succeeded. */
+  deletedBells: number;
+  /** Bells whose delete failed for another reason than a handle that was no longer valid. */
   deleteErrors: number;
   /** `ChangeMessageVisibility` calls that extended a bell still being claimed. */
   heartbeats: number;
@@ -44,6 +46,7 @@ export function newMetrics(): SqsMetrics {
     received: 0,
     largestReceive: 0,
     deletes: 0,
+    deletedBells: 0,
     deleteErrors: 0,
     heartbeats: 0,
     nacks: 0,

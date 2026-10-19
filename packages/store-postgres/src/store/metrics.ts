@@ -12,8 +12,8 @@ const MINUTE_MS = 60_000;
  * Adds counts of `type` to the queue's minute bucket and lifetime total, inside the caller's
  * transaction, so a metric is never written for a change that rolled back. Adapted from Qelay's
  * `metricWrites.ts` (see docs/PORTING.md). Rows are touched in queue order, so two batches cannot
- * deadlock on each other's queues. Buckets older than the retention (`maxMetricBuckets` minutes) are
- * pruned; with 0 only the totals are kept. The totals carry the latest minute's count (`prev_*`)
+ * deadlock on each other's queues. With `maxMetricBuckets` 0 only the totals are kept; buckets past the
+ * retention are deleted by the tick (`metricRetention.ts`), not here. The totals carry the latest minute's count (`prev_*`)
  * the way upstream's do.
  *
  * Call it last in the transaction: the rows are shared by every writer of the queue, and a lock
@@ -40,10 +40,6 @@ export async function recordMetrics(
   );
   const minute = Math.floor(now / MINUTE_MS);
   const retention = ctx.maxMetricBuckets;
-  await tx`
-    DELETE FROM qcloud_metric_buckets
-    WHERE namespace = ${ctx.namespace} AND queue = ANY(${queues}) AND metric_type = ${type}
-      ${retention === 0 ? tx`` : tx`AND minute < ${minute - retention + 1}`}`;
   if (retention === 0) {
     await tx`
       INSERT INTO qcloud_metric_totals (namespace, queue, metric_type, total_count, prev_ts, prev_count)

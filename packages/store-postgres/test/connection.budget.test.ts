@@ -6,6 +6,8 @@ import {
   DEFAULT_POOL_SIZE,
   rdsMaxConnections,
   RESERVED_CONNECTIONS,
+  workerRoleLimit,
+  workerRoleLimitSql,
 } from '../src/connection/budget';
 import { ConnectionBudgetError } from '../src/errors';
 
@@ -76,5 +78,28 @@ describe('connection budget', () => {
     );
     expect(rdsMaxConnections(1)).toBe(112);
     expect(rdsMaxConnections(100_000)).toBe(5000);
+  });
+
+  test('the worker role may open what the workers and their listeners can, and not the control share', () => {
+    const result = budget({ workers: 10, listeners: 4, controlProcesses: 3 });
+    expect(workerRoleLimit(result)).toBe(10 * DEFAULT_POOL_SIZE + 4);
+    expect(workerRoleLimit(result) + 3 * DEFAULT_POOL_SIZE + RESERVED_CONNECTIONS).toBe(
+      result.direct
+    );
+  });
+
+  test('behind a pooler the worker role may open the pooler pool and the listeners', () => {
+    const result = budget({ workers: 200, listeners: 4, poolerPoolSize: 30 });
+    expect(workerRoleLimit(result, true)).toBe(30 + 4);
+  });
+
+  test('the statement quotes the role and refuses a limit that is not a whole number from 1', () => {
+    expect(workerRoleLimitSql('qcloud_worker', 24)).toBe(
+      'ALTER ROLE "qcloud_worker" CONNECTION LIMIT 24'
+    );
+    expect(workerRoleLimitSql('a"b', 1)).toBe('ALTER ROLE "a""b" CONNECTION LIMIT 1');
+    for (const limit of [0, -1, 1.5, Number.NaN]) {
+      expect(() => workerRoleLimitSql('w', limit)).toThrow(RangeError);
+    }
   });
 });
