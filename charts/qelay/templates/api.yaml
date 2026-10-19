@@ -1,0 +1,52 @@
+{{- define "qelay.apiEnv" -}}
+{{ include "qelay.env" (dict "root" . "poolSize" .Values.api.poolSize) }}
+- name: QCLOUD_API_OIDC_ISSUER
+  value: {{ required "oidc.issuer is required" .Values.oidc.issuer | quote }}
+- name: QCLOUD_API_OIDC_AUDIENCE
+  value: {{ required "oidc.audience is required" .Values.oidc.audience | quote }}
+- name: QCLOUD_API_OIDC_JWKS_URL
+  value: {{ required "oidc.jwksUrl is required" .Values.oidc.jwksUrl | quote }}
+{{- with .Values.oidc.roleClaim }}
+- name: QCLOUD_API_ROLE_CLAIM
+  value: {{ . | quote }}
+{{- end }}
+{{- with .Values.oidc.operatorRoles }}
+- name: QCLOUD_API_OPERATOR_ROLES
+  value: {{ . | quote }}
+{{- end }}
+{{- with .Values.oidc.viewerRoles }}
+- name: QCLOUD_API_VIEWER_ROLES
+  value: {{ . | quote }}
+{{- end }}
+{{- $cors := .Values.api.corsOrigins | default (ternary (printf "%s://%s" .Values.ingress.scheme .Values.ingress.panel.host) "" (and .Values.ingress.enabled (ne .Values.ingress.panel.host ""))) }}
+{{- with $cors }}
+- name: QCLOUD_API_CORS_ORIGINS
+  value: {{ . | quote }}
+{{- end }}
+{{- include "qelay.extraEnv" .Values.api.env }}
+{{- end }}
+---
+{{ include "qelay.deployment" (dict
+  "root" .
+  "component" "api"
+  "replicas" .Values.api.replicas
+  "image" (include "qelay.image" (dict "root" . "image" .Values.api.image))
+  "env" (include "qelay.apiEnv" .)
+  "port" 8080
+  "livePath" "/health"
+  "readyPath" "/health/ready"
+  "resources" .Values.api.resources) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "qelay.fullname" . }}-api
+  labels:
+    {{- include "qelay.labels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  selector:
+    {{- include "qelay.selector" (dict "root" . "component" "api") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

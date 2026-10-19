@@ -34,6 +34,7 @@ This is release **1.0.0, not yet published** (the package is `0.0.0` until the o
 | --- | --- |
 | Run it in five minutes, on your machine | [Quickstart: local](docs/quickstart-local.md) |
 | Run it on Google Cloud or AWS | [Quickstart: GCP](docs/quickstart-gcp.md), [Quickstart: AWS](docs/quickstart-aws.md) |
+| Run it on Kubernetes | [Quickstart: Kubernetes (Helm)](docs/quickstart-kubernetes.md) |
 | Understand how it works | [Concepts](docs/concepts.md), then [Architecture](docs/architecture.md) |
 | Move an app that uses Qelay | [Moving from Qelay](docs/migration.md), then [compat.md](docs/compat.md) |
 | Operate it | [Operations](docs/operations.md), [limits](docs/limits.md), [settings](docs/reference/configuration.md) |

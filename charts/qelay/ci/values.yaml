@@ -1,0 +1,8 @@
+# Every feature on, so `helm lint` and `helm template` in CI reach every template.
+database: { existingSecret: qelay-db, tls: unverified }
+oidc: { issuer: "https://idp.example.com", audience: qelay, jwksUrl: "https://idp.example.com/jwks" }
+panel: { oidc: { clientId: qelay-panel } }
+ingress: { enabled: true, className: nginx, tlsSecretName: qelay-tls, api: { host: api.example.com }, panel: { host: qelay.example.com } }
+webhooks: { keySecret: { name: qelay-webhook }, sender: { enabled: true } }
+workers:
+  - { name: orders, image: "ghcr.io/me/orders:1.0.0", replicas: 2, env: { LOG_LEVEL: info } }

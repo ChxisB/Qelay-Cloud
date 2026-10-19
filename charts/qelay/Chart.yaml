@@ -1,0 +1,10 @@
+apiVersion: v2
+name: qelay
+description: A Qelay-shaped job queue on Postgres - the Control API, the panel, the tick and your workers.
+type: application
+# The release workflow sets both from the tag (`helm package --version X --app-version X`); the image tags default to appVersion.
+version: 0.0.0
+appVersion: 0.0.0
+home: https://github.com/ChxisB/qelay
+sources:
+  - https://github.com/ChxisB/qelay
