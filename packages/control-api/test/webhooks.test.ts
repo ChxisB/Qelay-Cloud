@@ -8,6 +8,8 @@ const URL_WITH_TOKEN =
   'https://hooks.example.com/services/T000/B000/xoxb-private-path-token?k=query-token';
 const ENDPOINT = { url: URL_WITH_TOKEN, events: ['job.completed', 'job.failed'], secret: SECRET };
 
+const PREVIEW = { event: { event: 'job.failed', queue: 'emails', jobId: 'j-1', error: 'boom' } };
+
 describeDb('webhook routes', () => {
   let f: JobsFixture;
   let api: JobsApi;
@@ -61,7 +63,10 @@ describeDb('webhook routes', () => {
     for (const answer of bodies) {
       expect(answer.status).toBeLessThan(300);
       expect(JSON.stringify(answer.body)).not.toContain(SECRET);
-      expect(JSON.stringify(answer.body)).not.toMatch(/secret/iu);
+      // `previousSecretUntil` is a time, not a secret.
+      expect(JSON.stringify(answer.body).replace('previousSecretUntil', '')).not.toMatch(
+        /secret/iu
+      );
     }
   });
 
@@ -76,8 +81,8 @@ describeDb('webhook routes', () => {
       URL_WITH_TOKEN,
       'https://other.example.com/in',
     ]);
-    const unsigned = answer.body.data.webhooks[1];
-    expect(unsigned).toMatchObject({ signed: false, enabled: false });
+    // The store has a key, so a webhook made without a secret is signed all the same.
+    expect(answer.body.data.webhooks[1]).toMatchObject({ signed: true, enabled: false });
   });
 
   test('a viewer reads webhooks but sees only where each points, not the path a token may be in', async () => {
@@ -108,6 +113,7 @@ describeDb('webhook routes', () => {
       ['DELETE', `/webhooks/${id}`],
       ['POST', `/webhooks/${id}/test`],
       ['POST', `/webhooks/${id}/deliveries/1/retry`],
+      ['POST', '/webhooks/preview', PREVIEW],
     ];
     for (const [method, path, body] of attempts) {
       const answer = await api.asViewer(method, path, body);
@@ -247,7 +253,7 @@ describeDb('webhook routes', () => {
     expect((await api.call('GET', `/webhooks/${id}`)).status).toBe(404);
     expect((await api.call('GET', `/webhooks/${id}/deliveries`)).status).toBe(404);
     expect((await api.call('DELETE', `/webhooks/${id}`)).status).toBe(404);
-    const [{ n }] = await f.t.fresh.sql`SELECT count(*)::int AS n FROM qcloud_webhook_deliveries`;
+    const [{ n }] = await f.t.fresh.sql`SELECT count(*)::int AS n FROM qcloud_deliveries`;
     expect(n).toBe(0);
   });
 

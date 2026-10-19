@@ -1,10 +1,12 @@
 import type { PostgresStore } from '@qelay-cloud/store-postgres';
 import type { Telemetry } from './telemetry';
 import type { WebhookSenderConfig } from './webhookConfig';
+import type { Destinations } from './webhookDestinations';
 import type { PostFunction } from './webhookHttp';
-import { postOverSocket } from './webhookHttp';
-import type { Resolver } from './webhookSend';
+import { postOverSocket } from './webhookPool';
+import type { Resolver, SendDeps } from './webhookSend';
 import { sendDelivery, systemResolver } from './webhookSend';
+import { writeOnce } from './webhookWrite';
 
 /**
  * The webhook step of a tick pass: claim due deliveries, send them, record what came of each.
@@ -16,8 +18,9 @@ import { sendDelivery, systemResolver } from './webhookSend';
  * the claim's lease: a chunk's requests all end within `timeoutMs`, and the lease outlasts that, so
  * a delivery is never in two senders' hands unless one of them died.
  *
- * This is for operator-scale volume (a few hundred deliveries a minute). Fan-out beyond that wants
- * its own delivery queue run by the SDK, not the tick (see docs/webhooks.md).
+ * This is the tick's step: a pass of a few hundred deliveries a minute, one connection per delivery.
+ * Volume wants the sender as a process of its own (`webhookLoop.ts`, `qcloud-tick send`), which
+ * pools connections, caches names and keeps a breaker per destination (see docs/webhooks.md).
  */
 
 /** Counts only, like the rest of the tick's reports. */
@@ -28,6 +31,8 @@ export interface WebhookStepReport {
   readonly failed: number;
   /** Results the store no longer accepted: the claim lapsed and another attempt owns the delivery. */
   readonly stale: number;
+  /** Webhooks this step paused, their failed deliveries in a row having reached `disableAfter`. */
+  readonly paused: number;
   /** The sender could not talk to the store (claim or record failed). Receivers failing is not an error here. */
   readonly errors: number;
 }
@@ -38,6 +43,7 @@ export const NO_WEBHOOKS: WebhookStepReport = {
   retrying: 0,
   failed: 0,
   stale: 0,
+  paused: 0,
   errors: 0,
 };
 
@@ -48,6 +54,7 @@ export function addWebhooks(a: WebhookStepReport, b: WebhookStepReport): Webhook
     retrying: a.retrying + b.retrying,
     failed: a.failed + b.failed,
     stale: a.stale + b.stale,
+    paused: a.paused + b.paused,
     errors: a.errors + b.errors,
   };
 }
@@ -57,6 +64,8 @@ export interface WebhookSending {
   readonly config: WebhookSenderConfig;
   readonly resolve?: Resolver;
   readonly post?: PostFunction;
+  /** Per-destination concurrency and breaker (`qcloud-tick send` only). */
+  readonly destinations?: Destinations;
   /** Extra trusted CA (PEM) for https receivers behind a private CA. */
   readonly ca?: string;
   readonly now?: () => number;
@@ -67,6 +76,22 @@ export interface WebhookStepResult extends WebhookStepReport {
   readonly moreWork: boolean;
 }
 
+/** What `sendDelivery` is given: the settings, with the seams filled in. */
+export function sendDepsOf(sending: WebhookSending): SendDeps {
+  const { config } = sending;
+  return {
+    urlPolicy: config.urlPolicy,
+    resolve: sending.resolve ?? systemResolver,
+    post: sending.post ?? postOverSocket,
+    timeoutMs: config.timeoutMs,
+    captureBytes: config.responseBytes,
+    userAgent: config.userAgent,
+    now: sending.now ?? Date.now,
+    ...(sending.destinations === undefined ? {} : { destinations: sending.destinations }),
+    ...(sending.ca === undefined ? {} : { ca: sending.ca }),
+  };
+}
+
 /** Never throws: a store error is counted in `errors` and reported to telemetry. */
 export async function sendDueWebhooks(
   store: Pick<PostgresStore, 'webhooks'>,
@@ -74,18 +99,22 @@ export async function sendDueWebhooks(
   telemetry: Telemetry
 ): Promise<WebhookStepResult> {
   const { config } = sending;
-  const deps = {
-    urlPolicy: config.urlPolicy,
-    resolve: sending.resolve ?? systemResolver,
-    post: sending.post ?? postOverSocket,
-    timeoutMs: config.timeoutMs,
-    now: sending.now ?? Date.now,
-    ...(sending.ca === undefined ? {} : { ca: sending.ca }),
-  };
+  const deps = sendDepsOf(sending);
   const started = performance.now();
   let total = NO_WEBHOOKS;
   let remaining = config.batch;
   let moreWork = false;
+  // A namespace with the delivery writer on gets its deliveries made here too, so a tick alone is enough.
+  let writeErrors = 0;
+  for (;;) {
+    const pass = await writeOnce(store, telemetry);
+    writeErrors += pass.failed ? 1 : 0;
+    if (!pass.more) break;
+    if (performance.now() - started >= config.budgetMs) {
+      moreWork = true;
+      break;
+    }
+  }
   try {
     while (remaining > 0) {
       const take = Math.min(config.concurrency, remaining);
@@ -104,6 +133,7 @@ export async function sendDueWebhooks(
         retrying: summary.retrying,
         failed: summary.failed,
         stale: summary.stale,
+        paused: summary.paused,
         errors: 0,
       });
       // A short claim took everything that was due (or everything the rate limit allowed).
@@ -117,6 +147,7 @@ export async function sendDueWebhooks(
     telemetry.error('webhooks', error);
     total = addWebhooks(total, { ...NO_WEBHOOKS, errors: 1 });
   }
+  total = addWebhooks(total, { ...NO_WEBHOOKS, errors: writeErrors });
   telemetry.duration('webhooks', Math.round(performance.now() - started));
   return { ...total, moreWork };
 }

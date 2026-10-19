@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { describeDb } from '../../../test/support/db';
 import {
+  DEFAULT_WEBHOOK_KEEP_MS,
   EXPIRED_ERROR,
   WEBHOOK_DELIVERY_EXPIRY_MS,
-  WEBHOOK_DELIVERY_KEEP_MS,
 } from '../src/store/webhookRetention';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
@@ -61,7 +61,7 @@ describeDb('webhooks: retention', () => {
     });
   });
 
-  test('a finished delivery is kept for a week and then deleted', async () => {
+  test('a finished delivery in the default partition is kept two days and then deleted', async () => {
     const hook = await addHook(t);
     await journal(t, [event('pushed', 'q', 'a'), event('pushed', 'q', 'b')]);
     const claimed = await t.store.webhooks.claimDue(CLAIM);
@@ -69,7 +69,7 @@ describeDb('webhooks: retention', () => {
       [outcome(claimed[0]!, { ok: true }), outcome(claimed[1]!, { ok: false })],
       { ...POLICY, maxAttempts: 1 }
     );
-    t.clock.advance(WEBHOOK_DELIVERY_KEEP_MS - 1);
+    t.clock.advance(DEFAULT_WEBHOOK_KEEP_MS - 1);
     expect(await t.store.webhooks.prune(100)).toMatchObject({ deleted: 0 });
     expect((await t.store.webhooks.deliveries(hook.id))!.items).toHaveLength(2);
     t.clock.advance(1);
@@ -90,7 +90,7 @@ describeDb('webhooks: retention', () => {
     expect(await t.store.webhooks.prune(2)).toEqual({ expired: 2, deleted: 0, more: true });
     expect(await t.store.webhooks.prune(2)).toEqual({ expired: 2, deleted: 0, more: true });
     expect(await t.store.webhooks.prune(2)).toEqual({ expired: 1, deleted: 0, more: false });
-    t.clock.advance(WEBHOOK_DELIVERY_KEEP_MS + 1);
+    t.clock.advance(DEFAULT_WEBHOOK_KEEP_MS + 1);
     expect(await t.store.webhooks.prune(3)).toEqual({ expired: 0, deleted: 3, more: true });
     expect(await t.store.webhooks.prune(3)).toEqual({ expired: 0, deleted: 2, more: false });
     expect((await t.store.webhooks.deliveries(hook.id))!.items).toEqual([]);

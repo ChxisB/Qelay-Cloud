@@ -46,7 +46,9 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
     }
 
     containers {
-      image = var.image
+      image   = var.image
+      command = var.command
+      args    = var.args
 
       resources {
         limits = {

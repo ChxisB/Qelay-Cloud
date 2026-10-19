@@ -9,6 +9,7 @@ import type { Admitted, Plan } from './plan';
 import { planAdmission } from './plan';
 import type { PreparedJob } from './prepare';
 import { prepareJobs } from './prepare';
+import { coverRings } from './ringCover';
 import { ringFor } from './state';
 
 /**
@@ -42,7 +43,12 @@ export async function admitJobs(
   const existingById = await findById(tx, ctx.namespace, customIds(prepared));
   const plan = await planAndWrite(ctx, tx, prepared, now, existingById);
   await ctx.recorder.record(tx, plan.events, now);
-  return plan.admitted.map((admitted) => result(ctx, admitted, now));
+  return coverRings(
+    ctx,
+    tx,
+    plan.admitted.map((admitted) => result(ctx, admitted, now)),
+    now
+  );
 }
 
 /** The custom ids of `prepared`, which admission looks up (and locks) as rows. */

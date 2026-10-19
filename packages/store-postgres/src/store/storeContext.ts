@@ -11,7 +11,9 @@ import type { EventRecorder } from './events';
 import { flowTerminalHook } from './flowTerminal';
 import { journalRecorder } from './journal';
 import { requestedLeaseMs } from './leaseRules';
+import { MAX_PAYLOAD_DEPTH, MAX_PAYLOAD_NODES } from './payloadShape';
 import { MAX_BATCH, MAX_PAYLOAD_BYTES } from './prepare';
+import { requestedRingCoverMs } from './ringCover';
 import type { StoreSettingsOptions } from './settings';
 import { resolveSettings } from './settings';
 
@@ -26,12 +28,25 @@ export interface PostgresStoreOptions extends StoreSettingsOptions {
    * Default 0: only claimable jobs are rung.
    */
   readonly ringWindowMs?: number;
+  /**
+   * Enqueue rings a queue at most once per this many ms while it has a claimable job that was rung
+   * inside the window: the other new jobs are recorded as rung and get no bell. A worker claims a
+   * batch and claims again while the queue has more, so the one bell wakes it; the tick's re-ring
+   * finds what it missed. It saves a publish and a `markRung` write per job under a standing
+   * backlog. Use it when every consumer is this package's worker (an older worker claims once per
+   * bell and would wait for the re-ring). Default 0: every claimable job is rung.
+   */
+  readonly ringCoverMs?: number;
   readonly codec?: Codec;
   /** Overrides the UUIDv7 generator. Tests and the model harness inject one to replay ids. */
   readonly ids?: IdGenerator;
   /** Receives the events of each operation inside its transaction. Default: the journal (`store.events`). */
   readonly recorder?: EventRecorder;
   readonly maxPayloadBytes?: number;
+  /** Values and object keys one payload or result may hold once decoded. Default 20,000. */
+  readonly maxPayloadNodes?: number;
+  /** Deepest nesting of a payload or result. Default 64. */
+  readonly maxPayloadDepth?: number;
   /** How long a lease lasts from a claim or a heartbeat. A job's own timeouts can shorten it. Default 30,000. */
   readonly leaseMs?: number;
   /**
@@ -72,9 +87,12 @@ export function createStoreContext(options: PostgresStoreOptions): StoreContext 
     nextId: ids ? () => ids.next() : (now) => uuid.next(now),
     recorder: options.recorder ?? journalRecorder({ namespace: options.namespace, codec }),
     ringWindowMs: Math.max(0, options.ringWindowMs ?? 0),
+    ringCoverMs: requestedRingCoverMs(options.ringCoverMs),
     limits: {
       maxBatch: MAX_BATCH,
       maxPayloadBytes: options.maxPayloadBytes ?? MAX_PAYLOAD_BYTES,
+      maxPayloadNodes: options.maxPayloadNodes ?? MAX_PAYLOAD_NODES,
+      maxPayloadDepth: options.maxPayloadDepth ?? MAX_PAYLOAD_DEPTH,
     },
     leaseMs: requestedLeaseMs(options.leaseMs, DEFAULT_LEASE_MS),
     backoff: {

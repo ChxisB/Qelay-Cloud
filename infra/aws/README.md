@@ -34,16 +34,17 @@ reserve for an explicit go-ahead (decision D9). What was and was not run is list
 | Module | Resources |
 | --- | --- |
 | network | `aws_vpc`, `aws_subnet` (private per zone; public per NAT zone), `aws_internet_gateway`, `aws_nat_gateway` and `aws_eip`, route tables, `aws_vpc_endpoint` (S3 gateway; SQS and Secrets Manager interface), `aws_security_group` x2 and their rules, `aws_default_security_group` with no rules |
-| database | `aws_db_instance` (private, encrypted, backups, deletion protection, `prevent_destroy`), `aws_db_parameter_group`, `aws_db_subnet_group`, `aws_security_group`, `random_password`; with `rds_proxy`: `aws_db_proxy` and its target group, target, role, secret and security group |
+| database | `aws_db_instance` (private, encrypted, backups, deletion protection, `prevent_destroy`) and `aws_db_parameter_group`; with `database_cluster`, `aws_rds_cluster` and `aws_rds_cluster_parameter_group` in their place; `aws_db_subnet_group`, `aws_security_group`, `random_password`; with `rds_proxy`: `aws_db_proxy` and its target group, target, role, secret and security group |
 | messaging | `aws_sqs_queue` x2 per queue, `aws_sqs_queue_redrive_allow_policy`, `aws_kms_key` and alias (unless `queue_kms_key_arn` is given) |
-| secrets | `aws_secretsmanager_secret` and `_version` for the database URL (and the direct URL with a proxy) |
+| secrets | `aws_secretsmanager_secret` and `_version` for the database URL (and the direct URL with a proxy, and the webhook key with `webhooks`, a `random_id`) |
 | iam | `aws_iam_role` x5, `aws_iam_role_policy` x7, `aws_sqs_queue_policy` on every queue and dead-letter queue |
 | workers | `aws_ecs_service`, `aws_ecs_task_definition`, `aws_cloudwatch_log_group`, `aws_appautoscaling_target` per service; scaling policies and alarms for a service with `autoscaling`; Fargate Spot for a service with `spot` |
 | tick | `aws_ecs_task_definition`, `aws_cloudwatch_log_group` |
+| background | only with `tick_loop` or `webhook_sender`: the workers module again, once each, for the tick image (`aws_ecs_service`, `aws_ecs_task_definition`, `aws_cloudwatch_log_group`, `aws_appautoscaling_target` at one count) on the tick's roles |
 | scheduler | `aws_scheduler_schedule` |
 | monitoring | `aws_cloudwatch_metric_alarm`, `aws_cloudwatch_log_metric_filter` |
 
-With the CI values this is 91 resources to add. `aws_ecs_cluster` and its capacity providers (`FARGATE` and `FARGATE_SPOT`, no charge) are in the example itself.
+With the CI values this is 102 resources to add (91 without the webhook key, the loop and the sender). `aws_ecs_cluster` and its capacity providers (`FARGATE` and `FARGATE_SPOT`, no charge) are in the example itself.
 
 ## Quick start
 
@@ -88,10 +89,15 @@ With the CI values this is 91 resources to add. `aws_ecs_cluster` and its capaci
 | `control_processes`, `control_pool_size` | 4, 2 | Processes beyond the services that hold a pool: two ticks that may overlap and two Control API instances (task 43). |
 | `database_instance_class` | `db.t4g.small` | The cost floor. A burstable class (`db.t*`) runs in Unlimited mode, so a CPU that stays busy is billed for surplus credits: the `database-cpu-credits` alarm says when. |
 | `database_multi_az` | false | A synchronous standby, at about double the instance cost. |
+| `database_session_timeouts` | `{ statement_ms = 30000, lock_ms = 5000, idle_in_transaction_ms = 30000 }` | Server-wide `statement_timeout`, `lock_timeout` and `idle_in_transaction_session_timeout`, in milliseconds, 0 = off. The migrator lifts the statement timeout for its own transaction, so a slow index build is bounded only by its own deadline. Whether the cloud accepts all three flags was not run (`terraform plan` only). |
+| `database_cluster` | null | `{ instance_class, storage_type, iops }`: a Multi-AZ DB cluster (a writer and two readable standbys) in place of the instance. No default for any field, no storage autoscaling, and exclusive with `rds_proxy` and `database_multi_az`. See [Multi-AZ DB cluster](#multi-az-db-cluster). |
 | `database_storage_gb`, `database_max_storage_gb`, `database_backup_retention_days` | 20, 100, 7 | Storage, its autoscaling ceiling, and point-in-time recovery's window. |
 | `max_connections` | 100 | Set on the parameter group (applies at the next reboot) and checked against the budget. |
 | `database_deletion_protection` | true | See [Teardown](#teardown). |
 | `database_tls`, `database_ca_pem`, `database_ca_file` | `ca-pem`, `""`, `/etc/ssl/certs/rds-global-bundle.pem` | How processes verify the database, the region's CA bundle (PEM text, at most 16,000 characters) and the file a `ca-file` image carries. See [TLS](#tls-to-the-database). |
+| `webhooks` | false | Generates `QCLOUD_WEBHOOK_KEY` into Secrets Manager (secret `webhook-key`). The tick, the loop, the sender and the control plane's API read it; no worker does. |
+| `tick_loop` | null | `{ instances = 1, pool_size = 2, cpu = 512, memory = 1024, env = {} }`: an always-on ECS service that runs `qcloud-tick loop`. Null: no loop. |
+| `webhook_sender` | null | `{ instances = 2, pool_size = 2, cpu, memory, env }`: an ECS service that runs `qcloud-tick send`. Needs `webhooks`. A fixed count: nothing scales it on a backlog. |
 | `rds_proxy` | null | An RDS Proxy in transaction mode. See [The connection budget](#the-connection-budget). |
 | `vpc_cidr` | `10.20.0.0/16` | Each zone's private subnet is a sixteenth of it. |
 | `egress`, `nat_per_az`, `interface_endpoints` | `nat`, false, computed | See [Cost drivers](#cost-drivers). |
@@ -107,7 +113,7 @@ Outputs: `connection_budget`, `database_address`, `database_proxy_endpoint`, `qu
 `dead_letter_` equivalents, `queue_kms_key_arn`, `tick_target` (the schedule, cluster, task family, subnets and security
 group), `worker_services`, `role_arns`, `processes` (each process's plain environment and the names of its secret
 variables), `secret_names`, `alarm_arns` and `control_plane_inputs`: what `infra/aws/control-plane` takes, identifiers and
-secret ARNs, never a value (the account, region, name and namespace; the network: VPC, private subnets, the tasks group,
+secret ARNs, never a value (the webhook key's secret among them; the account, region, name and namespace; the network: VPC, private subnets, the tasks group,
 CIDR, zones, the internet gateway and the egress mode; the cluster; the queue and dead-letter queue ARNs and their key;
 the database secrets and the TLS environment; the rollout trigger; and the connection budget's control-process figures).
 It carries no queue URL and no CA file path: the control plane resolves queues by name and receives the CA by value.
@@ -151,8 +157,14 @@ gets the instance's own address in `QCLOUD_DATABASE_LISTEN_URL`. The budget then
 What transaction pooling disables, from spike 05: named prepared statements (the driver is told `prepare: false`),
 session-level advisory locks (the SDK takes only transaction-level ones), `LISTEN` on the pooled connection, and settings
 a startup parameter would carry (`search_path`, `statement_timeout`): those belong on the database role with
-`ALTER ROLE ... SET`, which this configuration does not run, and the defaults need none. How often pinning occurs under
+`ALTER ROLE ... SET`, which this configuration does not run. It sets the three timeouts server-wide in the parameter group instead
+(`database_session_timeouts`), and the defaults need nothing more. How often pinning occurs under
 this workload is **unmeasured**.
+
+**Capping the workers.** The `connection_budget` output has `worker_role_limit`, the worker share of the budget. Nothing here
+creates a role or runs SQL (every process shares one database user), so the cap is an operator step: create a role for the
+workers with `CONNECTION LIMIT` set to that value and point their connection string at it. The statements are in
+[operations](../../docs/operations.md#connection-budget).
 
 The RDS `max_connections` parameter is static: a change is applied at the next reboot of the instance, not at the apply.
 The value RDS accepts depends on the instance's memory; an unsupported value fails at apply, not at plan.
@@ -175,7 +187,7 @@ actions that take none. Every statement below is asserted by `bun run check:terr
 | | `WriteLogs` | `logs:CreateLogStream`, `PutLogEvents` | the workers' log groups | ECS writes the container's output. |
 | | `ReadSecrets` | `secretsmanager:GetSecretValue` | the database secrets, `<name>-??????` | ECS reads them at task start. The suffix is Secrets Manager's six random characters. |
 | | `DecryptSecrets` | `kms:Decrypt` | `secrets_kms_key_arn` | Only with a customer-managed key; `ViaService = secretsmanager`. |
-| `<name>-tick-execution` | the same four | | the tick's log group and the database URL only | The tick does not read the direct URL. |
+| `<name>-tick-execution` | the same four | | the tick's log group (and those of the loop and the sender), the database URL, and the webhook key with `webhooks` | The tick does not read the direct URL. The loop and the sender run as the tick's roles. |
 | `<name>-scheduler` | `RunTheTick` | `ecs:RunTask` | `task-definition/<name>-tick:*` | Start the tick. Condition: `ecs:cluster` is this cluster. |
 | | `PassTheTicksRoles` | `iam:PassRole` | the tick's task and execution roles | `RunTask` passes them. Condition: `iam:PassedToService = ecs-tasks.amazonaws.com`. |
 
@@ -189,6 +201,8 @@ does not reach a bell. It leaves the management actions (create, tag, purge, del
 Terraform and an operator can still manage the queues. A dead-letter queue's policy refuses plaintext and says nothing else.
 Whether SQS's own redrive into a dead-letter queue is unaffected by these denies, and whether it works with a
 customer-managed key on the dead-letter queue, has **not been verified against SQS**.
+
+The webhook key is read by the tick's execution role and by the control plane's API execution role, and by no worker role: a job's code cannot read the key that seals webhook secrets. It is a Terraform `random_id`, so it is in the state, like the database password. Back the state up: a lost key leaves every stored webhook secret unreadable until each is rotated.
 
 Deliberately absent:
 
@@ -347,14 +361,38 @@ asks for queue statistics also needs a `monitoring` endpoint, and an image from 
 ## The tick's schedule
 
 The tick is a one-shot Fargate task that EventBridge Scheduler starts: at the default `rate(1 minute)` that is about 43,200
-task launches a month, each billed for at least a minute. When the workers already run the tick in process (`TickLoop` in
-the worker's host, with `QCLOUD_TICK_INTERVAL_MS`; the SDK does not start it, so the worker image must), the scheduled tick
+task launches a month, each billed for at least a minute. When the loop runs (`tick_loop = {}`, an ECS service of the tick image that runs `qcloud-tick loop`, or a `TickLoop` in
+the worker's host), the scheduled tick
 is the safety net and can be slower: `scheduler_schedule = "rate(5 minutes)"` is a fifth of the launches.
 
-What a slower rate costs: with no worker running the loop, delayed jobs past the SQS window, retries, cron entries and
+What a slower rate costs: with no loop running, delayed jobs past the SQS window, retries, cron entries and
 lease recovery wait up to N minutes and not one. Without an in-process tick, leave it at a minute. The `tick-stalled`
 alarm follows the rate (three missed periods, five minutes at the least). Only `rate(1 minute)` and `rate(N minutes)` are
 accepted; the plan refuses a cron expression or seconds.
+
+## The loop and the sender
+
+`tick_loop` and `webhook_sender` each add an ECS service of the tick image (`tick_command` is its entry point), a fixed
+count, no scaling policy and no public address. They run as the tick's roles, so the workers' roles see neither the key
+nor their log groups. Each holds a pool of its own that the budget counts (`instances x pool_size`), and they log in with
+the same database user as the workers, so they are counted in `worker_role_limit` too. The loop elects one leader with a
+lease: two instances give failover and still tick once. There is no alarm for a missing task of either: a loop that
+stops goes unnoticed while the schedule still ticks (the `TickSucceeded` alarm watches both), and the composite "workers
+idle with backlog" alarm is not fed by them on purpose.
+
+## Multi-AZ DB cluster
+
+`database_cluster = { instance_class, storage_type, iops }` replaces the instance with an `aws_rds_cluster` (a writer and
+two readable standbys in three zones, semi-synchronous). AWS documents up to twice as fast a commit as a Multi-AZ instance
+with one standby and a failover typically under 35 seconds. Processes connect to the writer endpoint. The storage is the
+size `database_storage_gb` and does not autoscale, and `rds_proxy` and `database_multi_az` are refused beside it. A
+database already created as an instance is moved to `aws_db_instance.main[0]` by a `moved` block and is untouched. Going
+from an instance to a cluster is a new database, not an edit: dump and restore it.
+
+Nothing here could check a cluster against an account. These are unverified: the instance class, storage type and IOPS
+for your region and engine version (so none has a default); the CloudWatch dimension of the cluster's metrics (the alarms
+use `DBClusterIdentifier`, and if the metrics sit under the member instances the alarms report no data instead of
+firing); and whether an RDS Proxy can sit in front of a cluster (the module does not try).
 
 ## Spot workers
 
@@ -393,7 +431,7 @@ bun run check:terraform
 ```
 
 Runs `terraform fmt -check`, `init -backend=false`, `validate`, and a plan of `example/` with `ci.tfvars.example` and each
-variation below, with 820 assertions on them for AWS (then the same for `infra/gcp` and both control planes, see their
+variation below, with 860 assertions on them for AWS (then the same for `infra/gcp` and both control planes, see their
 READMEs). The assertions are the policy scan: no policy scanner (`tflint`, `trivy`, `checkov`) was available, and none is run.
 
 - **Identities and policies:** every statement of every role and queue policy as listed above, no wildcard action, `*` only
@@ -405,11 +443,12 @@ READMEs). The assertions are the policy scan: no policy scanner (`tflint`, `triv
 - **Processes:** each one's environment, that a connection string appears only as a secret, the tick's command and
   schedule, rollover limits, and the services' scaling.
 - **Budget:** against `budget()` in TypeScript for 10, 50 and 200 workers, with and without listeners, and behind the proxy.
+- **Background and cluster:** the loop and the sender's command, count, roles and secrets, that no worker role reads the webhook key, and a plan with `database_cluster` (a cluster and no instance, its parameter group, the cluster dimension on the alarms).
 - **Variations:** an existing queue key (whose grants are then readable), a proxy, plaintext through the proxy, a CA
   file in the image (`ca-file`), `unverified`, `egress = "none"`, a hashed queue name.
 - **Refusals:** a fleet over `max_connections`, plaintext without a proxy, a subnet too small, a queue name the transport
   would encode, scaling on a queue that is not listed, a malformed account id, no route out with too few endpoints, a
-  retention SQS would refuse, no CA bundle, and one too big for a task definition.
+  retention SQS would refuse, no CA bundle, one too big for a task definition, a cluster beside a proxy or `database_multi_az`, and a sender without `webhooks`.
 
 It is hermetic: every `AWS_*` variable is dropped, the metadata service is switched off, and the provider takes placeholder
 keys (`offline_plan`), so a developer's real credentials are never used and nothing reaches an account. Without `terraform`
@@ -444,5 +483,9 @@ account, and each is a step of the first apply:
     `stop_timeout_seconds`, and how often Spot capacity is missing in your region and size.
 13. **The credit alarm.** That `CPUSurplusCreditBalance` is emitted for the class and that the alarm does not flap.
 14. **A tick rate other than a minute,** and the alarm period that follows it.
+
+15. **The loop and the sender.** That an ECS service starts the tick image with the entry point and `loop` or `send`, reaches the database and SQS under the tick's roles, and holds its count.
+16. **The Multi-AZ cluster.** That the provider and RDS accept the cluster with the class, storage and IOPS given, that the parameter group applies, what the cluster's CloudWatch metrics are named, and how a failover looks to the writer endpoint's clients.
+17. **The webhook key's secret.** That the tick's execution role and the API's execution role read it at start, and that a worker's is refused.
 
 The task's Result in `.claude/.planning/v1.0.0/42-infra-aws.md` records what was run instead.

@@ -1,11 +1,8 @@
 import type { Message, SQSClient } from '@aws-sdk/client-sqs';
-import {
-  ChangeMessageVisibilityCommand,
-  DeleteMessageCommand,
-  ReceiveMessageCommand,
-} from '@aws-sdk/client-sqs';
+import { ChangeMessageVisibilityCommand, ReceiveMessageCommand } from '@aws-sdk/client-sqs';
 import type { Delivery } from '@qelay-cloud/core';
 import { decodeBell } from './bell';
+import { DeleteBatcher } from './deleteBatch';
 import { isStaleHandle } from './errors';
 import type { SqsMetrics } from './metrics';
 import { toError } from './options';
@@ -53,7 +50,8 @@ interface Held {
  * - A bell that arrives with no capacity waits, hidden, in a local queue and is delivered when
  *   capacity opens. It is never nacked for being busy: a nack burns a receive, and a busy fleet
  *   would push its own bells into the dead-letter queue.
- * - The handler acks after its claim attempt (a delete by receipt handle). Until a bell is settled
+ * - The handler acks after its claim attempt (a delete by receipt handle, sent with the others of
+ *   the queue in a `DeleteMessageBatch`, see `DeleteBatcher`). Until a bell is settled
  *   its visibility timeout is extended every third of it; a settled bell is never extended, because
  *   a late extension would undo the retry time a nack just set.
  * - A handler that returns or throws without settling gets its bell nacked at once.
@@ -64,12 +62,14 @@ export class QueueReceiver {
   readonly #abort = new AbortController();
   readonly #waiting: Held[] = [];
   readonly #running = new Set<Promise<void>>();
+  readonly #deletes: DeleteBatcher;
   #wake: (() => void) | null = null;
   #closing: Promise<void> | null = null;
   #loop: Promise<void> | null = null;
 
   constructor(options: ReceiverOptions) {
     this.#options = options;
+    this.#deletes = new DeleteBatcher(options);
   }
 
   start(): void {
@@ -199,23 +199,13 @@ export class QueueReceiver {
   }
 
   #dispatch(held: Held): void {
-    const { namespace, queue, handler, metrics, client, urls, queueName } = this.#options;
+    const { namespace, queue, handler } = this.#options;
     const count = Number(held.message.Attributes?.ApproximateReceiveCount);
     const delivery: Delivery = {
       bell: decodeBell(held.message.Body, { namespace, queue }),
       attempt: Number.isInteger(count) && count > 0 ? count : null,
       ack: async () => {
-        if (!this.#settle(held)) return;
-        metrics.deletes += 1;
-        try {
-          const url = await urls.url(queueName);
-          await client.send(
-            new DeleteMessageCommand({ QueueUrl: url, ReceiptHandle: held.message.ReceiptHandle })
-          );
-        } catch (error) {
-          // A bell whose delete failed is rung again after the visibility timeout and claims nothing.
-          this.#countFailure(error, 'deleteErrors');
-        }
+        if (this.#settle(held)) this.#deletes.add(held.message.ReceiptHandle!);
       },
       nack: async (retryInMs = 0) => {
         if (!this.#settle(held)) return;
@@ -259,18 +249,18 @@ export class QueueReceiver {
         })
       );
     } catch (error) {
-      this.#countFailure(error, 'visibilityErrors');
+      this.#countFailure(error);
     }
   }
 
   /** A stale receipt handle is counted and nothing more; anything else is also reported. */
-  #countFailure(error: unknown, counter: 'deleteErrors' | 'visibilityErrors'): void {
+  #countFailure(error: unknown): void {
     const { metrics } = this.#options;
     if (isStaleHandle(error)) {
       metrics.staleHandles += 1;
       return;
     }
-    metrics[counter] += 1;
+    metrics.visibilityErrors += 1;
     this.#options.onError(toError(error));
   }
 
@@ -292,5 +282,6 @@ export class QueueReceiver {
     });
     await Promise.race([finished, timeout]);
     clearTimeout(timer);
+    await this.#deletes.drain();
   }
 }

@@ -80,6 +80,29 @@ export function budget(input: BudgetInput): Budget {
   };
 }
 
+/**
+ * The `CONNECTION LIMIT` for the database role the workers log in as: the share of the budget that
+ * the worker fleet may take (the workers' pools and their LISTEN connections; behind a pooler, the
+ * pooler's server pool and the LISTEN connections). A scale-out mistake (a wrong autoscaler setting,
+ * a manual scale, a raised desired count) then fails the extra workers with `53300` instead of using
+ * the connections the Control API and the tick need. It only protects them if they log in as another
+ * role.
+ */
+export function workerRoleLimit(result: Budget, pooled = false): number {
+  if (pooled) return result.pooled - result.reserved;
+  return result.kinds
+    .filter((kind) => kind.name !== 'control')
+    .reduce((sum, kind) => sum + kind.count * (kind.pool + kind.listen), 0);
+}
+
+/** The one statement that sets it; run it as an administrator, once, when the role is created. */
+export function workerRoleLimitSql(role: string, limit: number): string {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new RangeError(`A connection limit is a whole number from 1, not ${limit}.`);
+  }
+  return `ALTER ROLE "${role.replaceAll('"', '""')}" CONNECTION LIMIT ${limit}`;
+}
+
 export interface BudgetCheck extends BudgetInput {
   /** The database's `max_connections`. */
   readonly maxConnections: number;

@@ -1431,8 +1431,11 @@ paths:
         deployment runs in development mode): a refusal is 400 with the rule as `error.code` (`invalid_url`,
         `scheme_not_allowed`, `credentials_not_allowed`, `host_not_allowed`). The name is not resolved here; the sender
         checks what it resolves to at every attempt. A `secret` (16 to 256 characters) signs each delivery
-        (`docs/webhooks.md`) and needs the deployment's `QCLOUD_WEBHOOK_KEY` (409 `webhook_key_missing` without it);
-        it is never returned. At most 100 webhooks (409 `webhook_limit`).
+        (`docs/webhooks.md`) and needs the deployment's `QCLOUD_WEBHOOK_KEY` (409 `webhook_key_missing` without it).
+        With the key and no `secret` given, one is generated and returned once as `data.secret`; a secret you gave is
+        never returned. Without the key the webhook is unsigned. At most 100 webhooks (409 `webhook_limit`). A `filter` or `shape` needs the delivery
+        writer switched on (`qcloud-tick webhook-writer on`); without it the call is 400 `unsupported_option` for
+        `writer`.
       operationId: createWebhook
       requestBody:
         required: true
@@ -1444,9 +1447,35 @@ paths:
           description: Registered.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/WebhookEnvelope' }
+              schema: { $ref: '#/components/schemas/WebhookIssuedEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/preview:
+    post:
+      tags: [webhooks]
+      summary: Try a filter and a shape on an event
+      description: |
+        Evaluates a webhook's `filter` and `shape` against one made-up event and answers what would be sent. Nothing
+        is saved, queued or sent. A filter or shape that is not valid is 400 `unsupported_option` naming which
+        (`filter` or `shape`) and the first fault.
+      operationId: previewWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookPreviewRequest' }
+      responses:
+        '200':
+          description: What the filter and shape make of the event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookPreviewEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
@@ -1491,7 +1520,10 @@ paths:
     put:
       tags: [webhooks]
       summary: Enable or disable a webhook
-      description: A disabled webhook gets no new deliveries. Those already queued are still sent.
+      description: |
+        A webhook disabled by hand gets no new deliveries; those already queued are still sent. Enabling a webhook
+        that was paused after repeated failures (`disabledReason`) clears the pause and the failure streak, and
+        sends the deliveries held meanwhile.
       operationId: setWebhookEnabled
       parameters:
         - { $ref: '#/components/parameters/WebhookId' }
@@ -1513,6 +1545,42 @@ paths:
               schema: { $ref: '#/components/schemas/WebhookEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/{id}/rotate-secret:
+    post:
+      tags: [webhooks]
+      summary: Rotate a webhook's signing secret
+      description: |
+        Gives the webhook a new signing secret: the `secret` in the body (16 to 256 characters), or a generated one
+        returned once as `data.secret`. The old secret keeps signing beside the new one for 24 hours (the
+        signature header carries both, comma-separated), so the receiver can switch over without a failed delivery;
+        rotating again in that time drops the older one. Needs the deployment's `QCLOUD_WEBHOOK_KEY` (409
+        `webhook_key_missing` without it). The body may be left out.
+      operationId: rotateWebhookSecret
+      parameters:
+        - { $ref: '#/components/parameters/WebhookId' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                secret: { type: string, nullable: true, minLength: 16, maxLength: 256, description: 'The new secret; omit to have one generated.' }
+      responses:
+        '200':
+          description: The webhook after the change, and the generated secret if there is one.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookIssuedEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
@@ -1549,7 +1617,7 @@ paths:
         Newest first, `limit` (default 50, at most 200) at a time. `next` is the `before` of the following page and null on
         the last one. A delivery carries its status, the attempts made and, per attempt, the receiver's status and a short
         reason in words. It never carries the address, the secret, a response body or a resolved IP. Finished
-        deliveries are kept 7 days.
+        deliveries are kept 2 days by default.
       operationId: listWebhookDeliveries
       parameters:
         - { $ref: '#/components/parameters/WebhookId' }
@@ -2206,7 +2274,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     PayloadTooLarge:
-      description: The body is over the size limit of the route (`payload_too_large`).
+      description: The body, or a job payload in it, is over the size limit of the route, or holds more values or nests deeper than the store keeps (`payload_too_large`; `details` has `maxBytes`, or `kind`, `limit`), with the job's `index`.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -3408,19 +3476,26 @@ components:
         removed: { type: boolean }
     Webhook:
       type: object
-      required: [id, url, urlRedacted, events, queue, signed, enabled, createdAt, lastTriggered, successCount, failureCount]
+      required: [id, url, urlRedacted, events, queue, filter, shape, signed, enabled, createdAt, lastTriggered, successCount, failureCount, consecutiveFailures, alertLevel, disabledReason, disabledAt, previousSecretUntil]
       properties:
         id: { type: string }
         url: { type: string, description: 'The address; for a `viewer` only its origin (`https://host/`), with `urlRedacted` true.' }
         urlRedacted: { type: boolean }
         events: { type: array, items: { $ref: '#/components/schemas/WebhookEvent' } }
         queue: { type: string, nullable: true, description: 'Only events of this queue are sent; null for every queue.' }
+        filter: { type: object, nullable: true, additionalProperties: true, description: 'Only events it lets through are sent (`docs/webhooks.md`); null sends every event of `events`.' }
+        shape: { type: object, nullable: true, additionalProperties: true, description: 'The body template; null sends the default body.' }
         signed: { type: boolean, description: 'Whether deliveries carry a signature. The secret itself is never returned.' }
         enabled: { type: boolean }
         createdAt: { type: integer }
         lastTriggered: { type: integer, nullable: true, description: 'When a delivery last succeeded.' }
         successCount: { type: integer }
         failureCount: { type: integer, description: 'Deliveries that used every attempt without success.' }
+        consecutiveFailures: { type: integer, description: 'Failed deliveries in a row; a delivered one resets it.' }
+        alertLevel: { type: integer, minimum: 0, maximum: 4, description: 'How far the streak has come toward the pause: 1 to 4 at 50, 70, 90 and 100% of `QCLOUD_WEBHOOK_DISABLE_AFTER`. 0 when below 50% or the pause is off.' }
+        disabledReason: { type: string, nullable: true, description: 'Set when the webhook was paused after repeated failures (`enabled` is then false); null otherwise, also for one disabled by hand.' }
+        disabledAt: { type: integer, nullable: true }
+        previousSecretUntil: { type: integer, nullable: true, description: 'While a rotated-out secret still signs beside the new one: when it stops.' }
     WebhookEvent:
       type: string
       enum: [job.pushed, job.started, job.completed, job.failed, job.progress]
@@ -3434,6 +3509,43 @@ components:
         queue: { type: string, nullable: true, maxLength: 256 }
         secret: { type: string, nullable: true, minLength: 16, maxLength: 256, description: 'Signs each delivery. Write-only.' }
         enabled: { type: boolean, default: true }
+        filter: { type: object, nullable: true, additionalProperties: true, description: 'Which events are sent; the grammar is in `docs/webhooks.md`. Needs the delivery writer on.' }
+        shape: { type: object, nullable: true, additionalProperties: true, description: 'The body template; the grammar is in `docs/webhooks.md`. Needs the delivery writer on.' }
+    WebhookPreviewRequest:
+      type: object
+      required: [event]
+      additionalProperties: false
+      properties:
+        filter: { type: object, nullable: true, additionalProperties: true }
+        shape: { type: object, nullable: true, additionalProperties: true }
+        event:
+          type: object
+          required: [event, queue, jobId]
+          additionalProperties: false
+          properties:
+            event: { $ref: '#/components/schemas/WebhookEvent' }
+            queue: { type: string, minLength: 1, maxLength: 256 }
+            jobId: { type: string, minLength: 1, maxLength: 256 }
+            occurredAt: { type: integer, minimum: 0, description: 'Epoch milliseconds; the time of the call when omitted.' }
+            state: { type: string, nullable: true, maxLength: 64 }
+            error: { type: string, nullable: true, maxLength: 4096 }
+            progress: { type: number, nullable: true }
+    WebhookPreviewEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [preview]
+          properties:
+            preview:
+              type: object
+              required: [matches, body, error]
+              properties:
+                matches: { type: boolean, description: 'Whether the filter lets the event through.' }
+                body: { type: string, nullable: true, description: 'The bytes that would be sent (without the default body''s `id`); null when the filter excludes the event or the shaped body is too large.' }
+                error: { type: string, nullable: true, description: 'Why there is no body, when the filter let the event through.' }
     WebhookEnvelope:
       type: object
       required: [ok, data]
@@ -3444,6 +3556,17 @@ components:
           required: [webhook]
           properties:
             webhook: { $ref: '#/components/schemas/Webhook' }
+    WebhookIssuedEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [webhook]
+          properties:
+            webhook: { $ref: '#/components/schemas/Webhook' }
+            secret: { type: string, description: 'The signing secret the store generated: present only when none was given, and shown only in this response.' }
     WebhooksList:
       type: object
       required: [ok, data]
@@ -3465,10 +3588,11 @@ components:
       required: [attempt, at, durationMs, statusCode, error]
       properties:
         attempt: { type: integer }
+        response: { type: string, description: 'The first bytes of a failed answer''s body (at most 1,024 characters), when the sender captures them (`QCLOUD_WEBHOOK_RESPONSE_BYTES`). Absent for a success, and when capture is off.' }
         at: { type: integer, description: 'When the attempt started.' }
         durationMs: { type: integer }
         statusCode: { type: integer, nullable: true, description: 'The receiver''s status; null when none came back.' }
-        error: { type: string, nullable: true, description: 'A short reason in words; never a response body or an address.' }
+        error: { type: string, nullable: true, description: 'A short reason in words; never an address.' }
     WebhookDelivery:
       type: object
       required: [id, webhookId, event, queue, jobId, occurredAt, status, attempts, nextAttemptAt, lastStatusCode, lastError, history, createdAt, finishedAt]

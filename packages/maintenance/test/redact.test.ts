@@ -20,6 +20,11 @@ describe('redactor', () => {
     expect(redact('password p@ss-w0rd rejected')).toBe('password *** rejected');
   });
 
+  test("removes a shard's URL, whatever the shard is called", () => {
+    const url = 'postgres://u:shard-b-pass@db-b.internal/qcloud';
+    expect(redactor({ QCLOUD_SHARD_B2_DATABASE_URL: url })(`down: ${url}`)).toBe('down: ***');
+  });
+
   test('removes the listen URL and the shared secret', () => {
     expect(redact(env.QCLOUD_DATABASE_LISTEN_URL)).toBe('***');
     expect(redact(`got ${env.QCLOUD_TICK_SHARED_SECRET}`)).toBe('got ***');

@@ -1,5 +1,5 @@
 import { Duration, PubSub } from '@google-cloud/pubsub';
-import type { Topic } from '@google-cloud/pubsub';
+import type { PublishOptions, Topic } from '@google-cloud/pubsub';
 import type {
   DeadLetter,
   DeadLetterPeek,
@@ -19,7 +19,7 @@ import { GRPC_ONLY } from './grpcOnly';
 import { MonitoringReader, noStats } from './monitoring';
 import { queueNames, environmentNames } from './names';
 import type { ErrorSource, PubSubTransportOptions } from './options';
-import { DEFAULTS, toError } from './options';
+import { DEFAULTS, projectOf, toError } from './options';
 import { MAX_RING_BATCH, publishBells, publishSettings } from './publisher';
 import { QueueReceiver } from './receiver';
 
@@ -30,6 +30,7 @@ const PEEK_TIMEOUT_MS = 2_000;
 /**
  * `DeliveryTransport` on Google Cloud Pub/Sub: one topic per environment, one subscription per
  * Qelay queue that filters on the bell's route attribute, so a queue's workers see only its bells.
+ * A queue named in `hotQueues` has its own topic instead (`names.ts`).
  * Pub/Sub cannot delay a message, so `ring` refuses any delay (`delay-too-long`) and the tick rings
  * the job when it is due. Everything the broker gets wrong (an unreachable service, a missing
  * subscription, a revoked permission) comes back as a result, a report to `onError` or a stream that
@@ -49,7 +50,10 @@ export class PubSubTransport implements DeliveryTransport, DeadLetterPeek {
   readonly #options: PubSubTransportOptions;
   readonly #pubsub: PubSub;
   readonly #ownsClient: boolean;
-  readonly #topic: Topic;
+  readonly #topicOptions: PublishOptions;
+  /** The environment's topic and each hot queue's own, by name, built when first used. */
+  readonly #topics = new Map<string, Topic>();
+  readonly #hot: ReadonlySet<string>;
   readonly #receivers = new Set<QueueReceiver>();
   readonly #monitoring: MonitoringReader | null;
   #deadLetterSource: Promise<DeadLetterSource> | null = null;
@@ -58,7 +62,10 @@ export class PubSubTransport implements DeliveryTransport, DeadLetterPeek {
   constructor(options: PubSubTransportOptions) {
     this.#options = options;
     // Throws `TransportError` for a namespace that cannot be a resource name: a configuration mistake.
-    const { topic } = environmentNames(options.namespace);
+    environmentNames(options.namespace);
+    this.#hot = new Set(options.hotQueues ?? []);
+    // A queue that cannot be a topic name is a configuration mistake: say so here, not on the first ring.
+    for (const queue of this.#hot) queueNames(options.namespace, queue, true);
     if (
       options.client === undefined &&
       options.emulatorHost === undefined &&
@@ -78,19 +85,30 @@ export class PubSubTransport implements DeliveryTransport, DeadLetterPeek {
           ? {}
           : { apiEndpoint: options.emulatorHost, emulatorMode: true }),
       });
-    this.#topic = this.#pubsub.topic(
-      topic,
-      publishSettings(options.ringRetryBudgetMs ?? DEFAULTS.ringRetryBudgetMs)
-    );
+    this.#topicOptions = publishSettings(options.ringRetryBudgetMs ?? DEFAULTS.ringRetryBudgetMs);
     this.#monitoring = this.#buildMonitoring();
   }
 
   async ring(items: readonly RingItem[]): Promise<RingResult[]> {
     if (items.length === 0) return [];
     if (this.#closed) return items.map(() => ({ ok: false, reason: 'unreachable' }));
-    return publishBells(this.#topic, this.#options.namespace, items, (error) =>
-      this.#report(error, 'ring')
+    return publishBells(
+      (queue) => this.#topicOf(queue),
+      this.#options.namespace,
+      items,
+      (error) => this.#report(error, 'ring')
     );
+  }
+
+  /** Where a queue's bells go: its own topic when it is hot, the environment's otherwise. */
+  #topicOf(queue: string): Topic {
+    const { topic } = queueNames(this.#options.namespace, queue, this.#hot.has(queue));
+    let found = this.#topics.get(topic);
+    if (found === undefined) {
+      found = this.#pubsub.topic(topic, this.#topicOptions);
+      this.#topics.set(topic, found);
+    }
+    return found;
   }
 
   subscribe(
@@ -228,12 +246,4 @@ export class PubSubTransport implements DeliveryTransport, DeadLetterPeek {
       // A logger that throws must not take the worker loop down with it.
     }
   }
-}
-
-/** The client's project: the one it was built with, or else the one Application Default Credentials resolve to. */
-async function projectOf(pubsub: PubSub): Promise<string> {
-  const known = pubsub.projectId;
-  // The client keeps a `{{projectId}}` placeholder until it has resolved one.
-  if (known && !known.startsWith('{{')) return known;
-  return pubsub.auth.getProjectId();
 }

@@ -70,6 +70,12 @@ variable "topic_name" {
   type        = string
 }
 
+variable "hot_topic_names" {
+  description = "Hot queue => the queue's own topic: the API publishes to these too, and is told the list (QCLOUD_GCP_HOT_QUEUES)."
+  type        = map(string)
+  default     = {}
+}
+
 variable "dead_letter_subscription_names" {
   description = "Queue => dead-letter subscription id. The API may pull from these to peek, and from no other subscription."
   type        = map(string)
@@ -82,6 +88,15 @@ variable "database_url_secret" {
     secret_id = string
     version   = string
   })
+}
+
+variable "webhook_key_secret" {
+  description = "The secret that holds QCLOUD_WEBHOOK_KEY, the key webhook secrets are sealed with. Null: the API cannot give a webhook a secret (webhook_key_missing)."
+  type = object({
+    secret_id = string
+    version   = string
+  })
+  default = null
 }
 
 variable "database_ca_secret" {
@@ -220,6 +235,35 @@ variable "exposure" {
   validation {
     condition     = contains(["public", "private"], var.exposure)
     error_message = "exposure must be \"public\" or \"private\"."
+  }
+}
+
+variable "edge" {
+  description = <<-EOT
+    An external HTTPS load balancer with a Cloud Armor rate limit in front of both services (F16). Null (the default):
+    nothing is added and the Cloud Run URLs are the public address. Set it and the Cloud Run services accept traffic from the
+    load balancer only (ingress INTERNAL_LOAD_BALANCER), so the run.app URLs no longer bypass it, and the API and the panel
+    are named by these host names (CORS, the panel's API base URL and the redirect URIs all follow). The DNS records are
+    yours: point both names at the `edge.ip_address` output, and the Google-managed certificate is issued once they resolve.
+    `rate_limit_per_minute` is requests per client address, API and panel together; over it Cloud Armor answers 429. Clients
+    behind one shared address share the count, so size it above the busiest. The in-process limiter stays on: it is per
+    instance and per principal, this is per address across every instance. The load balancer, the policy and its rule bill
+    separately (see Google's Cloud Load Balancing and Cloud Armor pricing). Only HTTPS is served: nothing listens on port 80.
+  EOT
+  type = object({
+    api_hostname          = string
+    panel_hostname        = string
+    rate_limit_per_minute = optional(number, 1200)
+  })
+  default = null
+
+  validation {
+    condition     = var.edge == null ? true : alltrue([for host in [var.edge.api_hostname, var.edge.panel_hostname] : can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", host))]) && var.edge.api_hostname != var.edge.panel_hostname
+    error_message = "edge.api_hostname and edge.panel_hostname are two different lowercase DNS names."
+  }
+  validation {
+    condition     = var.edge == null ? true : var.edge.rate_limit_per_minute >= 1 && floor(var.edge.rate_limit_per_minute) == var.edge.rate_limit_per_minute
+    error_message = "edge.rate_limit_per_minute is a whole number from 1."
   }
 }
 

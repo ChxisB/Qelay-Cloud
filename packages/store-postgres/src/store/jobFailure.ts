@@ -1,5 +1,6 @@
 import { UnsupportedOptionError } from '@qelay-cloud/core';
 import type { StoreContext } from './context';
+import { identifier } from './prepare';
 import type { AttemptRecord, DlqBlob, FailureReason } from './retryState';
 import { decodeRetryState, MAX_ATTEMPT_RECORDS } from './retryState';
 
@@ -84,7 +85,10 @@ export async function jobFailures(
   return ctx.db.run('jobFailures', async (sql) => {
     const rows = await sql.unsafe<FailureRow[]>(JOBS_FAILURE, [
       ctx.namespace,
-      sql.array([...ids], 'TEXT'),
+      sql.array(
+        ids.map((id) => identifier('ids[]', id)),
+        'TEXT'
+      ),
     ]);
     const found = new Map<string, JobFailure>();
     for (const row of rows) {

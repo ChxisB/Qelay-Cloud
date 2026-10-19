@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto';
 import { AUDIT_STATEMENTS } from './ddl/audit';
 import { AUXILIARY_STATEMENTS } from './ddl/auxiliary';
+import { DELIVERY_PARTITION_STATEMENTS } from './ddl/deliveryPartitions';
 import { EVENT_STATEMENTS } from './ddl/events';
 import { FLOW_ROOT_STATEMENTS, FLOW_STATEMENTS } from './ddl/flows';
 import { JOBS_STATEMENTS } from './ddl/jobs';
 import { PROGRESS_STATEMENTS } from './ddl/progress';
 import { TICK_STATEMENTS } from './ddl/tick';
 import { TICK_STATE_STATEMENTS } from './ddl/tickState';
+import { TUNING_STATEMENTS } from './ddl/tuning';
+import { WEBHOOK_PAUSE_STATEMENTS } from './ddl/webhookPause';
 import { WEBHOOK_STATEMENTS } from './ddl/webhooks';
+import { WEBHOOK_WRITER_STATEMENTS } from './ddl/webhookWriter';
 import { WORKFLOW_DEFINITION_STATEMENTS } from './ddl/workflowDefinitions';
 import { WORKFLOW_LIVE_STATEMENTS } from './ddl/workflowLive';
 import { WORKFLOW_STATEMENTS } from './ddl/workflows';
@@ -47,6 +51,10 @@ export const MIGRATIONS: readonly Migration[] = [
     statements: WORKFLOW_DEFINITION_STATEMENTS,
   },
   { version: 11, name: 'workflow live index', statements: WORKFLOW_LIVE_STATEMENTS },
+  { version: 12, name: 'hot table tuning', statements: TUNING_STATEMENTS },
+  { version: 13, name: 'webhook delivery partitions', statements: DELIVERY_PARTITION_STATEMENTS },
+  { version: 14, name: 'webhook delivery writer', statements: WEBHOOK_WRITER_STATEMENTS },
+  { version: 15, name: 'webhook pause and rotation', statements: WEBHOOK_PAUSE_STATEMENTS },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

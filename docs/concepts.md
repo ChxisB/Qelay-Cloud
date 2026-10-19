@@ -74,7 +74,7 @@ Two things run it, and you choose:
 | Where the tick runs | How often | What it means for you |
 | --- | --- | --- |
 | **Cloud Scheduler or EventBridge Scheduler** calls the tick service | once a minute | Always there, and enough for correctness. A delayed job, a retry's backoff and a cron entry are late by up to a minute (about 30 s on average). Never early. |
-| **Inside an always-on worker** (`TickLoop`), as well | every few seconds (5 s by default; at 500 ms the measured mean lateness is 270-292 ms) | Seconds-level delays and backoff. One worker leads through a **lease row** read against the database's clock, not a session lock, so it is safe behind a transaction pooler. A crashed leader is replaced within about three intervals. |
+| **Inside an always-on worker** (`TickLoop`, or the `qcloud-tick loop` process, one beat a second), as well | every few seconds (5 s by default; at 500 ms the measured mean lateness is 270-292 ms) | Seconds-level delays and backoff. One worker leads through a **lease row** read against the database's clock, not a session lock, so it is safe behind a transaction pooler. A crashed leader is replaced within about three intervals. |
 
 The scheduler stays in both cases: it is the cron source and the safety net if every worker is down. The in-process tick
 never replaces it. A scale-to-zero worker that only wakes on a bell gets the one-minute behaviour. The table of measured

@@ -29,7 +29,7 @@ const REPORT: RunReport = {
   cronFired: 4,
   expired: 5,
   ring: { due: 6, rung: 6, deferred: 0, rejected: 0, unreachable: 0, unmarked: 0, skipped: 0 },
-  webhooks: { claimed: 0, delivered: 0, retrying: 0, failed: 0, stale: 0, errors: 0 },
+  webhooks: { claimed: 0, delivered: 0, retrying: 0, failed: 0, stale: 0, paused: 0, errors: 0 },
   workflows: { due: 0, recovered: 0, errors: 0 },
   moreWork: false,
   durationMs: 7,

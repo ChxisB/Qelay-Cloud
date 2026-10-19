@@ -13,6 +13,12 @@ variable "topic_name" {
   type        = string
 }
 
+variable "hot_topic_names" {
+  description = "Hot queue name => the queue's own topic, which the workers and the tick also publish to."
+  type        = map(string)
+  default     = {}
+}
+
 variable "subscription_names" {
   description = "Queue name => subscription id. The workers may pull from these and from no other."
   type        = map(string)

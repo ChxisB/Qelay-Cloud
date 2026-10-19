@@ -2,7 +2,7 @@ import fc from 'fast-check';
 import type { CommandName, ModelCommand } from './command';
 import { ConcurrentTicksCommand, UpsertCronCommand } from './commands-cron';
 import type { LeaseOp } from './commands-jobs';
-import { ClaimCommand, EnqueueCommand, LeaseCommand } from './commands-jobs';
+import { ClaimCommand, CompleteManyCommand, EnqueueCommand, LeaseCommand } from './commands-jobs';
 import {
   AdvanceClockCommand,
   ConcurrencyLimitCommand,
@@ -78,6 +78,9 @@ const GENERATORS: Record<Exclude<CommandName, 'zombie'>, fc.Arbitrary<ModelComma
   heartbeat: leaseOp('heartbeat', ['heartbeat']),
   release: leaseOp('release', ['release']),
   complete: leaseOp('complete', ['complete']),
+  completeMany: fc
+    .tuple(fc.array(pick, { minLength: 1, maxLength: 4 }), fc.option(pick, { nil: null, freq: 3 }))
+    .map(([picks, stale]) => new CompleteManyCommand(picks, stale)),
   fail: leaseOp('fail', ['fail', 'fail-unrecoverable']),
   advanceClock: fc
     .constantFrom(1, 1_000, TICK_INTERVAL_MS + 1, LOCK_TTL_MS + 1)

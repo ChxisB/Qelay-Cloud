@@ -118,6 +118,21 @@ describeDb('tick: the composed pass', () => {
       expect(Object.keys(report.stepMs ?? {}).sort()).toEqual(['recover', 'ringQuery']);
     });
 
+    test('skipUpkeep leaves out the retention steps and keeps the rest', async () => {
+      const [due] = await enqueueN(t.store, 1, { delay: 100 });
+      t.clock.advance(100);
+      const report = await tick({ skipUpkeep: true });
+      expect(report).toMatchObject({ promoted: 1, moreWork: false });
+      expect(report.rings.map((ring) => ring.bell.jobId)).toEqual([due!]);
+      expect(Object.keys(report.stepMs ?? {}).sort()).toEqual([
+        'crons',
+        'expire',
+        'promote',
+        'recover',
+        'ringQuery',
+      ]);
+    });
+
     test('the cap on rings per queue is not more work', async () => {
       await enqueueN(t.store, 10);
       const report = await tick({ maxRingsPerQueue: 3 });

@@ -21,6 +21,8 @@ export interface ProcessExpectation {
   readonly region: string;
   readonly pooled: boolean;
   readonly controlPool: number;
+  /** The webhook key exists: the tick (and the loop and sender that run as it) read it. */
+  readonly webhooks?: boolean;
   readonly caFile?: string;
   readonly caPem?: string;
   readonly tlsMode?: 'unverified' | 'off';
@@ -31,7 +33,7 @@ export function checkServices(
   checks: Checks,
   services: Readonly<Record<string, ServiceExpectation>>
 ): void {
-  const found = ofType(plan, 'aws_ecs_service');
+  const found = ofType(plan, 'aws_ecs_service').filter((c) => c.address.startsWith('module.workers['));
   checks.ok('one ECS service per worker service', found.length === Object.keys(services).length);
   for (const [name, want] of Object.entries(services)) {
     const service = found.find((c) => c.address === `module.workers["${name}"].aws_ecs_service.this`);
@@ -113,8 +115,9 @@ export function checkProcesses(
     ...(want.caPem === undefined ? {} : { QCLOUD_DATABASE_TLS_CA: want.caPem }),
     ...(want.tlsMode === undefined ? {} : { QCLOUD_DATABASE_TLS: want.tlsMode }),
   };
+  const tickSecrets = want.webhooks === true ? ['QCLOUD_DATABASE_URL', 'QCLOUD_WEBHOOK_KEY'] : ['QCLOUD_DATABASE_URL'];
   const processes: Array<[string, Record<string, unknown>, readonly string[]]> = [
-    ['tick', out.tick, ['QCLOUD_DATABASE_URL']],
+    ['tick', out.tick, tickSecrets],
     ...Object.entries(out.workers).map(
       ([name, worker]) =>
         [

@@ -11,14 +11,16 @@ namespace      = "ci"
 network              = "qcloud-ci-vpc"
 subnetwork           = "qcloud-ci-workers"
 subnet_cidr          = "10.10.0.0/24"
-data_plane_instances = 15
+data_plane_instances = 18
 topic_name           = "qcloud.ci.bells"
+hot_topic_names      = { emails = "qcloud.ci.hot.emails" }
 dead_letter_subscription_names = {
   default = "qcloud.ci.dlq.default"
   emails  = "qcloud.ci.dlq.emails"
 }
 database_url_secret = { secret_id = "qcloud-ci-database-url", version = "1" }
 database_ca_secret  = { secret_id = "qcloud-ci-database-ca", version = "1" }
+webhook_key_secret  = { secret_id = "qcloud-ci-webhook-key", version = "1" }
 
 api_image   = "europe-west2-docker.pkg.dev/qcloud-ci/qcloud/api:ci"
 panel_image = "europe-west2-docker.pkg.dev/qcloud-ci/qcloud/panel:ci"

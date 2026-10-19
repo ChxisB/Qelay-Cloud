@@ -22,6 +22,7 @@ export type { Database, DatabaseOptions } from './connection/connect';
 export { openDatabase } from './connection/connect';
 export type { DatabaseEnvOptions } from './connection/env';
 export { databaseOptionsFromEnv } from './connection/env';
+export { databaseOptionsForNamespace, SHARD_SECRET_VARIABLE, ShardMap } from './connection/shards';
 export type {
   ConnectionOptions,
   FleetPlan,
@@ -41,6 +42,7 @@ export {
   GroupFullError,
   MigrationError,
   NotImplementedError,
+  PayloadTooComplexError,
   PayloadTooLargeError,
   SchemaDriftError,
   SchemaVersionError,
@@ -124,6 +126,7 @@ export type { RecoveryReport } from './store/recovery';
 export { DEFAULT_RECOVERY_LIMIT } from './store/recovery';
 export type { AttemptRecord, DlqBlob, FailureReason, RetryState } from './store/retryState';
 export { MAX_CLAIM } from './store/claim';
+export { MAX_PAYLOAD_DEPTH, MAX_PAYLOAD_NODES } from './store/payloadShape';
 export { DEFAULT_JOB_NAME, MAX_BATCH, MAX_PAYLOAD_BYTES } from './store/prepare';
 export type {
   AuditApi,
@@ -143,14 +146,10 @@ export { MAX_EXECUTION_BLOB_BYTES } from './store/workflowRows';
 export type { WebhookEnvSettings } from './store/webhookEnv';
 export { webhookSettingsFromEnv } from './store/webhookEnv';
 export type { WebhookRetention } from './store/webhookRetention';
-export { WEBHOOK_DELIVERY_EXPIRY_MS, WEBHOOK_DELIVERY_KEEP_MS } from './store/webhookRetention';
+export { DEFAULT_WEBHOOK_KEEP_MS, WEBHOOK_DELIVERY_EXPIRY_MS } from './store/webhookRetention';
 export { RATE_WINDOW_MS } from './store/webhookClaim';
-export {
-  DEFAULT_DELIVERY_PAGE,
-  MAX_DELIVERY_PAGE,
-  MAX_SECRET_CHARS,
-  MIN_SECRET_CHARS,
-} from './store/webhooks';
+export { DEFAULT_DELIVERY_PAGE, MAX_DELIVERY_PAGE } from './store/webhookHistory';
+export { MAX_SECRET_CHARS, MIN_SECRET_CHARS } from './store/webhooks';
 export type {
   AttemptOutcome,
   ClaimedDelivery,
@@ -160,9 +159,14 @@ export type {
   DeliveryRecord,
   RecordSummary,
   RetryResult,
+  WebhookIssued,
   WebhookRecord,
   WebhookSpec,
+  WriteOptions,
+  WriterState,
+  WriteResult,
 } from './store/webhookTypes';
+export { DEFAULT_WRITE_PAGE } from './store/webhookWriter';
 export { DEFAULT_MAX_JOB_LOGS, MAX_JOB_LOGS, MAX_LOG_MESSAGE_CHARS } from './store/logs';
 export type { StoreSettingsOptions } from './store/settings';
 export type { NamespaceTotals, Throughput, ThroughputPoint } from './store/throughput';

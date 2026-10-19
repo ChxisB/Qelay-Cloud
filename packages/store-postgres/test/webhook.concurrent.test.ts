@@ -88,7 +88,7 @@ describeDb('webhooks: concurrent senders and writers', () => {
     const rows = await rawDeliveries(t);
     expect(rows.filter((row) => row.webhook_id === steady.id)).toHaveLength(pushes);
     const strays = await t.fresh.sql`
-      SELECT count(*)::int AS n FROM qcloud_webhook_deliveries d
+      SELECT count(*)::int AS n FROM qcloud_deliveries d
       WHERE NOT EXISTS (SELECT 1 FROM qcloud_webhooks w WHERE w.id = d.webhook_id)`;
     expect(strays[0]!.n).toBe(0);
   });

@@ -1,4 +1,4 @@
-import { OperationDeadlineError, StoreError } from '@qelay-cloud/core';
+import { OperationDeadlineError, StoreError, StoreOverloadedError } from '@qelay-cloud/core';
 import type { SQL } from 'bun';
 
 /**
@@ -19,6 +19,11 @@ export interface ResilientPoolOptions {
   readonly open: () => SQL;
   /** Upper bound on one operation (one statement, or one whole transaction). */
   readonly deadlineMs: number;
+  /**
+   * Operations that may be in flight at once (running or waiting for a connection). One more is
+   * refused with `StoreOverloadedError`, untouched. Default: no limit.
+   */
+  readonly maxInFlight?: number;
   /** Grace for `close()` of a retired pool, in seconds. Default 1. */
   readonly closeTimeoutSeconds?: number;
 }
@@ -27,6 +32,7 @@ export class ResilientPool {
   readonly #options: ResilientPoolOptions;
   #sql: SQL;
   #closed = false;
+  #inFlight = 0;
   /** Pools retired because an operation hit its deadline. */
   retirements = 0;
   /** Closes of retired pools still in flight; settles when each has returned. */
@@ -38,8 +44,8 @@ export class ResilientPool {
   }
 
   /**
-   * Runs `work` against the current pool, or throws `OperationDeadlineError`. `operation` names the
-   * call in that error.
+   * Runs `work` against the current pool, or throws `OperationDeadlineError` (outcome unknown) or
+   * `StoreOverloadedError` (nothing sent). `operation` names the call in the error.
    */
   async run<T>(
     operation: string,
@@ -47,7 +53,10 @@ export class ResilientPool {
     deadlineMs = this.#options.deadlineMs
   ): Promise<T> {
     if (this.#closed) throw new StoreError(`${operation}: the connection pool is closed`);
+    const limit = this.#options.maxInFlight ?? Infinity;
+    if (this.#inFlight >= limit) throw new StoreOverloadedError(operation, limit);
     const pool = this.#sql;
+    this.#inFlight++;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const running = work(pool);
     // If the deadline wins, the stuck operation may reject later, when its pool is closed.
@@ -64,6 +73,7 @@ export class ResilientPool {
       if (error instanceof OperationDeadlineError) this.#retire(pool);
       throw error;
     } finally {
+      this.#inFlight--;
       clearTimeout(timer);
     }
   }

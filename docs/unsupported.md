@@ -10,15 +10,15 @@ not exist on the class. **Nothing is ignored silently.** [Moving from Qelay](mig
 
 | Part of the API | Supported | Differs | New | Not supported |
 | --- | ---: | ---: | ---: | ---: |
-| [Constructor and connection options](compat.md#constructor-and-connection-options) | 1 | 0 | 6 | 5 |
+| [Constructor and connection options](compat.md#constructor-and-connection-options) | 1 | 0 | 7 | 5 |
 | [`Queue` methods](compat.md#queue-methods) | 10 | 27 | 0 | 21 |
 | [Job](compat.md#job) | 4 | 3 | 1 | 1 |
 | [Job options](compat.md#job-options) | 2 | 0 | 0 | 5 |
-| [`Worker`](compat.md#worker) | 11 | 11 | 5 | 16 |
+| [`Worker`](compat.md#worker) | 11 | 11 | 7 | 16 |
 | [`QueueEvents`](compat.md#queueevents) | 3 | 9 | 8 | 3 |
 | [`FlowProducer`](compat.md#flowproducer) | 2 | 4 | 0 | 1 |
 | [Workflow engine](compat.md#workflow-engine) | 11 | 12 | 4 | 3 |
-| **All** | 44 | 66 | 24 | 55 |
+| **All** | 44 | 66 | 27 | 55 |
 
 Supported: same name, arguments and result. Differs: same name, and compat.md states the difference. New: exists here
 and not upstream. Not supported: listed below.
@@ -32,7 +32,7 @@ Table: [compat.md](compat.md#constructor-and-connection-options).
 | `connection` | Upstream selects a TCP or shared connection with it. Use `databaseUrl` or `database`. |
 | `host`, `port` | The Qelay TCP server does not exist here. |
 | `embedded`, `dataPath` | Embedded mode is a SQLite-in-process engine. There is none. |
-| `autoBatch` | No client-side batching: `addBulk` is one transaction. |
+| `autoBatch` | No client-side batching by default: `addBulk` is one transaction. Qelay-Cloud's own `groupCommit` queue option (off by default) lets concurrent `add` calls share one. |
 | `prefixKey` | Namespacing is `namespace`; the tables are `qcloud_*`. |
 
 ## `Queue` methods

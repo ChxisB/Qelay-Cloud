@@ -26,7 +26,10 @@ const STALE_HANDLE = new Set([
   'InvalidParameterValueException',
 ]);
 
+export function isStaleCode(code: string | undefined): boolean {
+  return code !== undefined && STALE_HANDLE.has(code);
+}
+
 export function isStaleHandle(error: unknown): boolean {
-  const name = (error as AwsError | null)?.name;
-  return name !== undefined && STALE_HANDLE.has(name);
+  return isStaleCode((error as AwsError | null)?.name);
 }

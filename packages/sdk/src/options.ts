@@ -1,6 +1,6 @@
 import type { DeliveryTransport, JobOptions } from '@qelay-cloud/core';
 import { UnsupportedOptionError } from '@qelay-cloud/core';
-import type { ConnectionOptions, PostgresStore } from '@qelay-cloud/store-postgres';
+import type { ConnectionOptions, PostgresStore, ShardMap } from '@qelay-cloud/store-postgres';
 
 /** Receives what the SDK swallows on purpose, such as a ring that failed after the job was admitted. */
 export interface Logger {
@@ -53,16 +53,36 @@ export interface Tracing {
  * `autoBatch` and `prefixKey` are refused (see `rejectLegacyOptions`).
  */
 export interface QueueOptions {
-  /** `postgres://user:password@host:port/database`. Give this or `database`, or a `store`. */
+  /** `postgres://user:password@host:port/database`. Give this or `database`, or `shards` or a `store`. */
   readonly databaseUrl?: string;
   /** Discrete connection options: pooler mode, `listenUrl`, `socketPath`, timeouts, TLS. */
   readonly database?: ConnectionOptions;
   /** The doorbell. The caller owns it: `queue.close()` does not close it. */
   readonly transport: DeliveryTransport;
+  /**
+   * In place of `databaseUrl` and `database`: the database that holds `namespace` is looked up here,
+   * and a namespace the map does not list is refused. Every producer, worker and listener of a
+   * namespace must be given the same map.
+   */
+  readonly shards?: ShardMap;
   /** The tenant of every row. Queues and workers that share a namespace see each other's jobs. Default `default`. */
   readonly namespace?: string;
   /** Merged under the options of every `add`. */
   readonly defaultJobOptions?: JobOptions;
+  /**
+   * Off by default. When on, `add` calls made while another add is being stored share one
+   * transaction (up to `maxJobs`, default 100), which cuts commits per job for a producer that adds
+   * concurrently. A caller that awaits each add one at a time is unchanged. See `AddBatcher`.
+   */
+  readonly groupCommit?: boolean | { readonly maxJobs?: number };
+  /**
+   * Off by default (0). A positive number of ms: `add` rings a queue at most once per window while
+   * the queue has a claimable job rung inside it; the other new jobs get no bell and are found by the
+   * worker's next claim or the tick's re-ring. It saves a publish and a write per job under a
+   * standing backlog. Turn it on only when every consumer is this package's worker: one from before
+   * `claim again after a full claim` claims once per bell and would wait for the re-ring.
+   */
+  readonly ringCoverMs?: number;
   /** An open store to use instead of opening one. The caller owns it: `queue.close()` leaves it open. */
   readonly store?: PostgresStore;
   readonly logger?: Logger;
@@ -82,7 +102,7 @@ const LEGACY: Readonly<Record<string, string>> = {
   connection: 'there is no Qelay server to connect to: pass databaseUrl or database',
   embedded: 'there is no embedded mode: pass databaseUrl or database',
   dataPath: 'there is no embedded mode: pass databaseUrl or database',
-  autoBatch: 'adds are not batched across calls: use addBulk',
+  autoBatch: 'adds are not batched across calls: use addBulk, or the groupCommit option',
   prefixKey: 'queues are separated by namespace: pass namespace',
 };
 

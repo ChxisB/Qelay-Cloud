@@ -8,6 +8,7 @@ export type ErrorCode =
   | 'TRANSPORT_ERROR'
   | 'STORE_ERROR'
   | 'OPERATION_DEADLINE'
+  | 'STORE_OVERLOADED'
   | 'OUTCOME_UNKNOWN'
   | 'ILLEGAL_TRANSITION'
   | 'FLOW_PROTECTED'
@@ -80,6 +81,21 @@ export class OperationDeadlineError extends QcloudError {
     readonly deadlineMs: number
   ) {
     super(`${operation} exceeded its ${deadlineMs} ms deadline; the outcome is unknown`);
+  }
+}
+
+/**
+ * The process already has as many store operations in flight as it allows, so this one was refused
+ * before anything was sent: nothing changed, and it is safe to retry after a pause. It is the
+ * fail-fast edge of a bounded queue, so a stalled database cannot pile up unbounded work.
+ */
+export class StoreOverloadedError extends QcloudError {
+  readonly code = 'STORE_OVERLOADED';
+  constructor(
+    readonly operation: string,
+    readonly limit: number
+  ) {
+    super(`${operation} refused: this process already has ${limit} store operations in flight`);
   }
 }
 

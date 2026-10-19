@@ -62,6 +62,22 @@ export class ExecutionTooLargeError extends StoreError {
   }
 }
 
+/**
+ * A payload with more values than the store decodes safely, or nested deeper than it allows (`kind`).
+ * `index` is the job's position in the call. Nothing was admitted.
+ */
+export class PayloadTooComplexError extends StoreError {
+  constructor(
+    readonly kind: 'nodes' | 'depth',
+    readonly limit: number,
+    readonly index: number
+  ) {
+    super(
+      `job ${index} has a payload ${kind === 'nodes' ? `of more than ${limit} values` : `nested deeper than ${limit}`}. Nothing was admitted.`
+    );
+  }
+}
+
 /** An encoded payload over the size limit. `index` is the job's position in the call. Nothing was admitted. */
 export class PayloadTooLargeError extends StoreError {
   constructor(

@@ -20,6 +20,8 @@ export interface Fixture {
   readonly queueArns: readonly string[];
   readonly deadLetterArns: readonly string[];
   readonly databaseSecret: string;
+  /** The key that seals webhook signing secrets: the API reads it, the panel and the migration do not. */
+  readonly webhookKeySecret: string;
   readonly repositories: readonly string[];
   readonly apiImage: string;
   readonly panelImage: string;
@@ -150,8 +152,10 @@ export function checkServices(plan: Plan, checks: Checks, fx: Fixture, v: Variat
   checks.ok('the API holds no listen URL: its streams poll', !env.has('QCLOUD_DATABASE_LISTEN_URL'));
   const apiSecrets = secretsOf(api);
   checks.ok(
-    'the database URL is a secret reference to the data plane secret',
-    apiSecrets.get('QCLOUD_DATABASE_URL') === fx.databaseSecret && apiSecrets.size === 1,
+    'the database URL and the webhook key are secret references to the data plane secrets',
+    apiSecrets.get('QCLOUD_DATABASE_URL') === fx.databaseSecret &&
+      apiSecrets.get('QCLOUD_WEBHOOK_KEY') === fx.webhookKeySecret &&
+      apiSecrets.size === 2,
     JSON.stringify([...apiSecrets])
   );
   // The heartbeat, the stream lifetime and the stop window.

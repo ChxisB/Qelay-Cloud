@@ -175,3 +175,50 @@ export class LeaseCommand extends ModelCommand {
     return `${this.name}(${this.op} lease#${this.pick}${ring})`;
   }
 }
+
+/**
+ * Several held leases (and, sometimes, one nobody should hold any more) finish in one
+ * `completeMany`. Each is judged as a single `complete` of it would be: done when current, refused otherwise.
+ */
+export class CompleteManyCommand extends ModelCommand {
+  readonly name = 'completeMany' as const;
+
+  constructor(
+    private readonly picks: readonly number[],
+    private readonly stale: number | null
+  ) {
+    super();
+  }
+
+  protected async apply(world: World): Promise<void> {
+    const { held, spent } = world.model;
+    const leases = new Set(
+      this.picks.flatMap((pick) => (held.length > 0 ? [held[pick % held.length]!] : []))
+    );
+    if (this.stale !== null && spent.length > 0) leases.add(spent[this.stale % spent.length]!);
+    if (leases.size === 0) return;
+    const batch = [...leases];
+    const now = world.now();
+    const current = batch.map((lease) => world.model.isCurrent(lease, now));
+    const outcomes = await world.store.completeMany(
+      batch.map((lease) => ({ lease: world.token(lease), result: { lease: lease.no } }))
+    );
+    batch.forEach((lease, index) => {
+      const outcome = outcomes[index];
+      if (outcome === undefined || outcome instanceof Error) {
+        return world.violate(
+          'MODEL.outcome',
+          `completeMany of ${lease.jobId} returned ${String(outcome)}`
+        );
+      }
+      const what = `completeMany of ${lease.jobId} by ${lease.worker} (lease ${lease.no})`;
+      verifyOutcome(world, what, outcome.ok, current[index]!, true);
+      if (outcome.ok && current[index]) world.model.complete(lease, now);
+      world.model.release(lease);
+    });
+  }
+
+  toString(): string {
+    return `completeMany(leases#${this.picks.join(',')}${this.stale === null ? '' : ` zombie#${this.stale}`})`;
+  }
+}

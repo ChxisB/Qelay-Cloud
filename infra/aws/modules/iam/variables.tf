@@ -82,6 +82,12 @@ variable "tick_log_group" {
   type = string
 }
 
+variable "tick_extra_log_groups" {
+  description = "The log groups of the always-on loop and the webhook sender, which run as the tick's roles: its execution role may write to these too."
+  type        = list(string)
+  default     = []
+}
+
 variable "tick_family" {
   description = "The tick task definition's family: the scheduler may run this family and no other."
   type        = string

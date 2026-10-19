@@ -67,6 +67,12 @@ describe('webhook settings from the environment', () => {
         QCLOUD_WEBHOOK_MAX_ATTEMPTS: '5',
         QCLOUD_WEBHOOK_BASE_DELAY_MS: '2000',
         QCLOUD_WEBHOOK_MAX_DELAY_MS: '600000',
+        QCLOUD_WEBHOOK_KEEPALIVE_MS: '5000',
+        QCLOUD_WEBHOOK_DNS_TTL_MS: '0',
+        QCLOUD_WEBHOOK_PER_DESTINATION: '2',
+        QCLOUD_WEBHOOK_BREAKER_FAILURES: '0',
+        QCLOUD_WEBHOOK_BREAKER_COOLDOWN_MS: '9000',
+        QCLOUD_WEBHOOK_IDLE_MS: '100',
       })
     ).toEqual({
       batch: 20,
@@ -78,6 +84,12 @@ describe('webhook settings from the environment', () => {
       maxAttempts: 5,
       baseDelayMs: 2_000,
       maxDelayMs: 600_000,
+      keepAliveMs: 5_000,
+      dnsTtlMs: 0,
+      perDestination: 2,
+      breakerFailures: 0,
+      breakerCooldownMs: 9_000,
+      idleMs: 100,
     });
     expect(webhookOptionsFromEnv({ QCLOUD_WEBHOOK_BATCH: '' })).toEqual({});
   });
@@ -102,6 +114,12 @@ describe('resolveWebhookConfig', () => {
       leaseMs: 30_000,
       ratePerMinute: 60,
       retry: { maxAttempts: 8, baseDelayMs: 30_000, maxDelayMs: 3_600_000 },
+      keepAliveMs: 15_000,
+      dnsTtlMs: 30_000,
+      perDestination: 4,
+      breakerFailures: 5,
+      breakerCooldownMs: 30_000,
+      idleMs: 500,
     });
     expect(config.urlPolicy).toBe(STRICT_URL_POLICY);
   });
@@ -126,12 +144,56 @@ describe('resolveWebhookConfig', () => {
   });
 
   test('a zero or negative value is refused by name', () => {
-    for (const name of ['concurrency', 'budgetMs', 'timeoutMs', 'ratePerMinute'] as const) {
+    for (const name of [
+      'concurrency',
+      'budgetMs',
+      'timeoutMs',
+      'ratePerMinute',
+      'perDestination',
+      'breakerCooldownMs',
+      'idleMs',
+    ] as const) {
       expect(() => resolveWebhookConfig({ [name]: 0 }, STRICT_URL_POLICY)).toThrow(
         new RegExp(name, 'u')
       );
     }
     expect(() => resolveWebhookConfig({ batch: -1 }, STRICT_URL_POLICY)).toThrow(/batch/u);
+  });
+
+  test('keep-alive, the name cache and the breaker can each be turned off with 0', () => {
+    const config = resolveWebhookConfig(
+      { keepAliveMs: 0, dnsTtlMs: 0, breakerFailures: 0 },
+      STRICT_URL_POLICY
+    )!;
+    expect(config).toMatchObject({ keepAliveMs: 0, dnsTtlMs: 0, breakerFailures: 0 });
+    expect(() => resolveWebhookConfig({ keepAliveMs: -1 }, STRICT_URL_POLICY)).toThrow(
+      /keepAliveMs/u
+    );
+  });
+
+  test('a failed answer is kept to 1 KB by default, none when private addresses are allowed', () => {
+    expect(resolveWebhookConfig({}, STRICT_URL_POLICY)!.responseBytes).toBe(1_024);
+    const open = { allowHttp: true, allowPrivate: true };
+    expect(resolveWebhookConfig({}, open)!.responseBytes).toBe(0);
+    expect(resolveWebhookConfig({ responseBytes: 512 }, open)!.responseBytes).toBe(512);
+    expect(() => resolveWebhookConfig({ responseBytes: 5_000 }, STRICT_URL_POLICY)).toThrow(
+      /responseBytes/u
+    );
+  });
+
+  test('the User-Agent comes from the environment and must be plain text', () => {
+    const options = webhookOptionsFromEnv({
+      QCLOUD_WEBHOOK_USER_AGENT: 'acme/1',
+      QCLOUD_WEBHOOK_RESPONSE_BYTES: '256',
+    });
+    expect(resolveWebhookConfig(options, STRICT_URL_POLICY)).toMatchObject({
+      userAgent: 'acme/1',
+      responseBytes: 256,
+    });
+    expect(resolveWebhookConfig({}, STRICT_URL_POLICY)!.userAgent).toBe('qelay-cloud-webhooks/1');
+    expect(() => resolveWebhookConfig({ userAgent: 'a\r\nX: 1' }, STRICT_URL_POLICY)).toThrow(
+      /userAgent/u
+    );
   });
 
   test('an attempt budget below 1 is refused', () => {

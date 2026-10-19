@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { UnsupportedOptionError } from '@qelay-cloud/core';
 import { describeDb } from '../../../test/support/db';
-import { PayloadTooLargeError } from '../src/errors';
+import { PayloadTooComplexError, PayloadTooLargeError } from '../src/errors';
 import type { TestStore } from './storeHelpers';
 import { openTestStore, rewind } from './storeHelpers';
 
@@ -104,6 +104,28 @@ describeDb('enqueue: input and payload limits', () => {
       expect(error).toBeInstanceOf(PayloadTooLargeError);
       expect(error).toMatchObject({ size, limit: size - 1, index: 1 });
       expect(await rows()).toHaveLength(1);
+    });
+
+    test('a payload with too many values or too deep is refused whatever its size, and nothing is admitted', async () => {
+      const small = t.another({ maxPayloadNodes: 5, maxPayloadDepth: 3 });
+      const many = await small
+        .enqueue([
+          { queue: 'q', data: 1 },
+          { queue: 'q', data: [1, 2, 3, 4, 5, 6] },
+        ])
+        .catch((caught) => caught);
+      expect(many).toBeInstanceOf(PayloadTooComplexError);
+      expect(many).toMatchObject({ kind: 'nodes', limit: 5, index: 1 });
+      const deep = await small.enqueue([{ queue: 'q', data: [[[[1]]]] }]).catch((caught) => caught);
+      expect(deep).toMatchObject({ kind: 'depth', limit: 3, index: 0 });
+      expect(await rows()).toHaveLength(0);
+      expect(await t.store.enqueue([{ queue: 'q', data: Array(19_000).fill(null) }])).toHaveLength(
+        1
+      );
+      const million = await t.store
+        .enqueue([{ queue: 'q', data: Array(1_000_000).fill(null) }])
+        .catch((caught) => caught);
+      expect(million).toBeInstanceOf(PayloadTooComplexError);
     });
 
     test('the default limit is 1 MiB', async () => {

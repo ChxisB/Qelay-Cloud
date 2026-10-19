@@ -23,6 +23,7 @@ locals {
   direct_required     = local.worker_connections + local.control_connections + var.reserved_connections
   pooled_required     = var.pooler_server_pool_size + local.listen_connections + var.reserved_connections
   required            = var.pooled ? local.pooled_required : local.direct_required
+  worker_role_limit   = var.pooled ? var.pooler_server_pool_size + local.listen_connections : local.worker_connections
   utilization         = local.required / var.max_connections
 }
 

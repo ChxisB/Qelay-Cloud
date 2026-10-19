@@ -83,6 +83,11 @@ export class JobRun {
     return this.#state === 'running' || this.#state === 'writing';
   }
 
+  /** True once its outcome was written: false for a lost lease, a release or a write that did not land. */
+  get wrote(): boolean {
+    return this.#state === 'ended';
+  }
+
   /** Tells a processor that the worker is closing. Its job is released, not failed, if it throws. */
   abortForShutdown(): void {
     if (this.#state !== 'running') return;
@@ -157,9 +162,7 @@ export class JobRun {
       );
       if (settled) hooks.failed(job, error);
     } else if (
-      await this.#settle('complete', () =>
-        this.config.rt.store.complete(this.claimed.lease, result)
-      )
+      await this.#settle('complete', () => this.config.rt.complete(this.claimed.lease, result))
     ) {
       handle.event('completed');
       hooks.completed(job, result);
@@ -181,7 +184,10 @@ export class JobRun {
     let cause: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
+        const started = performance.now();
         const outcome = await write();
+        if (operation === 'complete')
+          rt.observe('qcloud.worker.complete_ms', performance.now() - started);
         if (outcome.ok) {
           hooks.rung(ringAfterCommit(rt, outcome.rings));
           return true;

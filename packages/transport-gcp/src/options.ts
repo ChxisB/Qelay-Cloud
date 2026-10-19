@@ -28,6 +28,13 @@ export interface PubSubTransportOptions {
    * environment without it is refused, so a variable that leaks into a deployment cannot hide there.
    */
   readonly emulatorHost?: string;
+  /**
+   * Queues that have their own topic and an unfiltered subscription (`ensureQueue(..., { hot: true })`,
+   * or Terraform's `hot = true`), for a queue busy enough that the shared topic's filters would cost
+   * it. Every process of a deployment, publishers and workers alike, must be given the same list.
+   * Default: none, every queue on the environment's topic.
+   */
+  readonly hotQueues?: readonly string[];
   /** A client to use instead of building one, for shared credentials or a test. The transport does not close it. */
   readonly client?: PubSub;
   /** How long `ring` keeps retrying a transient failure before it reports `unreachable`. Default 10,000. */
@@ -74,4 +81,12 @@ export const DEFAULTS = {
 
 export function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
+}
+
+/** The client's project: the one it was built with, or else the one Application Default Credentials resolve to. */
+export async function projectOf(pubsub: PubSub): Promise<string> {
+  const known = pubsub.projectId;
+  // The client keeps a `{{projectId}}` placeholder until it has resolved one.
+  if (known && !known.startsWith('{{')) return known;
+  return pubsub.auth.getProjectId();
 }

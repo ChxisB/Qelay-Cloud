@@ -1,5 +1,7 @@
 # One topic per environment, one filtered subscription per queue, and a dead-letter topic with a filtered
-# subscription per queue. The names, the filter and the settings are the ones
+# subscription per queue. A queue marked `hot` gets its own topic and an unfiltered subscription instead:
+# its bells are not checked against every other queue's filter and it does not count towards the shared
+# topic's 10,000 subscriptions. The names, the filter and the settings are the ones
 # packages/transport-gcp/src/{names,provision}.ts use: the transport never creates a resource, so a
 # resource this file does not make, or makes differently, is an error a worker reports.
 #
@@ -9,6 +11,7 @@
 # is derived from the namespace and the queue and not offered as an input.
 
 locals {
+  hot_queues           = toset([for name, queue in var.queues : name if queue.hot])
   topic_id             = "qcloud.${var.namespace}.bells"
   dead_letter_topic    = "qcloud.${var.namespace}.bells-dlq"
   retention            = "${var.message_retention_days * 86400}s"
@@ -17,6 +20,16 @@ locals {
 
 resource "google_pubsub_topic" "bells" {
   name   = local.topic_id
+  labels = var.labels
+}
+
+# A hot queue's own topic: the transport's `queueNames(namespace, queue, true).topic`. Every process must be
+# told the same list (QCLOUD_GCP_HOT_QUEUES). Moving a queue between the shared topic and its own replaces
+# its subscription (a subscription cannot change topic): what it held is rung again by the tick.
+resource "google_pubsub_topic" "hot" {
+  for_each = local.hot_queues
+
+  name   = "qcloud.${var.namespace}.hot.${each.key}"
   labels = var.labels
 }
 
@@ -29,9 +42,9 @@ resource "google_pubsub_subscription" "queue" {
   for_each = var.queues
 
   name   = "qcloud.${var.namespace}.sub.${each.key}"
-  topic  = google_pubsub_topic.bells.id
+  topic  = each.value.hot ? google_pubsub_topic.hot[each.key].id : google_pubsub_topic.bells.id
   labels = var.labels
-  filter = "attributes.route = \"${var.namespace}.${each.key}\""
+  filter = each.value.hot ? null : "attributes.route = \"${var.namespace}.${each.key}\""
 
   ack_deadline_seconds         = each.value.ack_deadline_seconds
   message_retention_duration   = local.retention

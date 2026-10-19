@@ -52,6 +52,8 @@ export class TickLoop {
   #stopped = true;
   #leading = false;
   #next = 0;
+  /** When this process last ran the upkeep steps, 0 for never. Per process, not shared by the lease. */
+  #upkeptAt = 0;
   #stats = { beats: 0, led: 0, followed: 0, failed: 0 };
 
   constructor(deps: TickDeps, options: TickLoopOptions = {}) {
@@ -136,11 +138,18 @@ export class TickLoop {
       }
       this.#stats.led += 1;
       // One beat never runs past its interval: what is left waits for the next one.
+      const now = performance.now();
+      const { upkeepEveryMs } = this.config;
+      const skipUpkeep =
+        upkeepEveryMs > 0 && this.#upkeptAt !== 0 && now - this.#upkeptAt < upkeepEveryMs;
       const config = {
         ...this.config,
         maxRunMs: Math.min(this.config.maxRunMs, this.config.intervalMs),
+        budget: skipUpkeep ? { ...this.config.budget, skipUpkeep } : this.config.budget,
       };
-      return await runTicks(this.#deps, config);
+      const report = await runTicks(this.#deps, config);
+      if (!skipUpkeep) this.#upkeptAt = now;
+      return report;
     } catch (error) {
       this.#stats.failed += 1;
       telemetry.error('loop', error);

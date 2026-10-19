@@ -1,5 +1,6 @@
 import type { Codec, JobState } from '@qelay-cloud/core';
 import { UnsupportedOptionError } from '@qelay-cloud/core';
+import type { Queryable } from '../time';
 import type { StoreContext } from './context';
 import type { EventRecorder, StoreEvent } from './events';
 
@@ -27,7 +28,7 @@ export interface EventCursor {
 export const JOURNAL_START: EventCursor = { commitSeq: 0, eventId: 0 };
 
 /** A cursor at the end of a commit: the commit is consumed whole, whatever ids its events have. */
-const WHOLE_COMMIT = Number.MAX_SAFE_INTEGER;
+export const WHOLE_COMMIT = Number.MAX_SAFE_INTEGER;
 
 export const DEFAULT_EVENT_PAGE = 1000;
 export const MAX_EVENT_PAGE = 5000;
@@ -174,7 +175,17 @@ export async function eventBaseline(ctx: StoreContext): Promise<EventCursor> {
  * changed; the jobs are the truth, so a reader that sees `gap` reloads from them and goes on from
  * the cursor it is given.
  */
-export async function readEvents(
+export function readEvents(
+  ctx: StoreContext,
+  cursor: EventCursor,
+  options: { readonly limit?: number; readonly queue?: string } = {}
+): Promise<EventPage> {
+  return ctx.db.run('readEvents', (sql) => readEventsOn(sql, ctx, cursor, options));
+}
+
+/** `readEvents` on a connection the caller holds: the delivery writer reads inside the transaction that advances its cursor. */
+export async function readEventsOn(
+  sql: Queryable,
   ctx: StoreContext,
   cursor: EventCursor,
   options: { readonly limit?: number; readonly queue?: string } = {}
@@ -185,45 +196,42 @@ export async function readEvents(
     throw new UnsupportedOptionError('limit', `must be an integer from 1 to ${MAX_EVENT_PAGE}`);
   }
   const queue = options.queue ?? null;
-  return ctx.db.run('readEvents', async (sql) => {
-    // Events first, then the watermarks: a prune that commits between the two shows in the second
-    // read, so a page that is missing deleted events is never reported whole.
-    const rows = await sql<EventRow[]>`
-      SELECT event.id, event.queue, event.event_type, event.job_id, event.occurred_at,
-             event.payload, journal.commit_seq
-      FROM qcloud_event_commits AS journal
-      JOIN qcloud_events AS event
-        ON event.namespace = journal.namespace AND event.transaction_id = journal.transaction_id
-      WHERE journal.namespace = ${ctx.namespace}
-        AND journal.commit_seq IS NOT NULL
-        AND journal.commit_seq >= ${from.commitSeq}
-        AND (journal.commit_seq, event.id) > (${from.commitSeq}, ${from.eventId})
-        AND (${queue}::text IS NULL OR event.queue = ${queue})
-      ORDER BY journal.commit_seq, event.id
-      LIMIT ${limit + 1}`;
-    const [mark] = await sql<
-      Array<{ pruned: number | string | bigint | null; through: number | string | bigint | null }>
-    >`
-      SELECT max(pruned_commit_seq) AS pruned, max(pruned_through) AS through
-      FROM qcloud_event_prune_watermarks
-      WHERE namespace = ${ctx.namespace} AND commit_seq IS NOT NULL
-        AND (${queue}::text IS NULL OR queue = ${queue})`;
-    const pruned = numeric(mark?.pruned);
-    // Deleted events lie at or before `pruned`. A reader past that commit read them or never will
-    // need them; one inside it can only tell by the event ids, which are `through` and below.
-    const gap =
-      pruned > from.commitSeq ||
-      (pruned === from.commitSeq && numeric(mark?.through) > from.eventId);
-    if (gap) {
-      return {
-        events: [],
-        cursor: { commitSeq: pruned, eventId: WHOLE_COMMIT },
-        more: true,
-        gap: true,
-      };
-    }
-    const events = rows.slice(0, limit).map((row) => toEvent(ctx, row));
-    const last = events.at(-1);
-    return { events, cursor: last ? at(last) : from, more: rows.length > limit, gap: false };
-  });
+  // Events first, then the watermarks: a prune that commits between the two shows in the second
+  // read, so a page that is missing deleted events is never reported whole.
+  const rows = await sql<EventRow[]>`
+    SELECT event.id, event.queue, event.event_type, event.job_id, event.occurred_at,
+           event.payload, journal.commit_seq
+    FROM qcloud_event_commits AS journal
+    JOIN qcloud_events AS event
+      ON event.namespace = journal.namespace AND event.transaction_id = journal.transaction_id
+    WHERE journal.namespace = ${ctx.namespace}
+      AND journal.commit_seq IS NOT NULL
+      AND journal.commit_seq >= ${from.commitSeq}
+      AND (journal.commit_seq, event.id) > (${from.commitSeq}, ${from.eventId})
+      AND (${queue}::text IS NULL OR event.queue = ${queue})
+    ORDER BY journal.commit_seq, event.id
+    LIMIT ${limit + 1}`;
+  const [mark] = await sql<
+    Array<{ pruned: number | string | bigint | null; through: number | string | bigint | null }>
+  >`
+    SELECT max(pruned_commit_seq) AS pruned, max(pruned_through) AS through
+    FROM qcloud_event_prune_watermarks
+    WHERE namespace = ${ctx.namespace} AND commit_seq IS NOT NULL
+      AND (${queue}::text IS NULL OR queue = ${queue})`;
+  const pruned = numeric(mark?.pruned);
+  // Deleted events lie at or before `pruned`. A reader past that commit read them or never will
+  // need them; one inside it can only tell by the event ids, which are `through` and below.
+  const gap =
+    pruned > from.commitSeq || (pruned === from.commitSeq && numeric(mark?.through) > from.eventId);
+  if (gap) {
+    return {
+      events: [],
+      cursor: { commitSeq: pruned, eventId: WHOLE_COMMIT },
+      more: true,
+      gap: true,
+    };
+  }
+  const events = rows.slice(0, limit).map((row) => toEvent(ctx, row));
+  const last = events.at(-1);
+  return { events, cursor: last ? at(last) : from, more: rows.length > limit, gap: false };
 }

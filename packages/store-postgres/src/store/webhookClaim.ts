@@ -27,6 +27,8 @@ interface HookRow {
   readonly id: string;
   readonly url: string;
   readonly secret_sealed: string | null;
+  readonly secret_previous_sealed: string | null;
+  readonly secret_previous_until: number | string | bigint | null;
   readonly allowance: number | string;
 }
 
@@ -42,9 +44,11 @@ interface DueRow {
   readonly attempts: number;
   readonly next_attempt_at: number | string | bigint;
   readonly history: unknown;
+  readonly body: string | null;
 }
 
 interface Claimed {
+  readonly now: number;
   readonly hooks: ReadonlyMap<string, HookRow>;
   readonly rows: readonly DueRow[];
   readonly attempts: ReadonlyMap<string, number>;
@@ -77,13 +81,13 @@ export async function claimDueDeliveries(
       const windowStart = now - (now % RATE_WINDOW_MS);
       // Webhooks with something due, least recently served first, so a busy one does not hide the rest.
       const hooks = await tx<HookRow[]>`
-        SELECT w.id, w.url, w.secret_sealed,
+        SELECT w.id, w.url, w.secret_sealed, w.secret_previous_sealed, w.secret_previous_until,
                ${rate}::int - CASE WHEN w.rate_window_start = ${windowStart}
                                    THEN w.rate_window_count ELSE 0 END AS allowance
         FROM qcloud_webhooks w
         WHERE w.namespace = ${ctx.namespace} AND w.enabled
           AND EXISTS (
-            SELECT 1 FROM qcloud_webhook_deliveries d
+            SELECT 1 FROM qcloud_deliveries d
             WHERE d.namespace = ${ctx.namespace} AND d.webhook_id = w.id
               AND d.status IN ('pending', 'sending') AND d.next_attempt_at <= ${now})
         ORDER BY w.last_triggered NULLS FIRST, w.id
@@ -93,7 +97,7 @@ export async function claimDueDeliveries(
       if (open.length === 0) return null;
       const found = await tx<DueRow[]>`
         SELECT d.id, d.webhook_id, d.event_id, d.event_name, d.queue, d.job_id, d.occurred_at,
-               d.status, d.attempts, d.next_attempt_at, d.history
+               d.status, d.attempts, d.next_attempt_at, d.history, d.body
         FROM unnest(${tx.array(
           open.map((hook) => hook.id),
           'TEXT'
@@ -102,7 +106,7 @@ export async function claimDueDeliveries(
           'INTEGER'
         )}) AS h(id, allowance)
         CROSS JOIN LATERAL (
-          SELECT x.* FROM qcloud_webhook_deliveries x
+          SELECT x.* FROM qcloud_deliveries x
           WHERE x.namespace = ${ctx.namespace} AND x.webhook_id = h.id
             AND x.status IN ('pending', 'sending') AND x.next_attempt_at <= ${now}
           ORDER BY x.next_attempt_at, x.id
@@ -126,7 +130,7 @@ export async function claimDueDeliveries(
         )
       );
       await tx`
-        UPDATE qcloud_webhook_deliveries d
+        UPDATE qcloud_deliveries d
         SET status = 'sending', attempts = d.attempts + 1, next_attempt_at = ${now + leaseMs},
             history = c.history::jsonb
         FROM unnest(${tx.array(
@@ -148,7 +152,10 @@ export async function claimDueDeliveries(
         )}) AS c(id, n)
         WHERE w.namespace = ${ctx.namespace} AND w.id = c.id`;
 
-      const eventIds = rows.flatMap((row) => (row.event_id === null ? [] : [Number(row.event_id)]));
+      // A shaped delivery carries its own body: its event's detail is not read.
+      const eventIds = rows.flatMap((row) =>
+        row.event_id === null || row.body !== null ? [] : [Number(row.event_id)]
+      );
       const events =
         eventIds.length === 0
           ? []
@@ -169,6 +176,7 @@ export async function claimDueDeliveries(
         }
       }
       return {
+        now,
         hooks: new Map(open.map((hook) => [hook.id, hook])),
         rows,
         attempts: new Map(rows.map((row) => [String(row.id), row.attempts + 1])),
@@ -179,17 +187,26 @@ export async function claimDueDeliveries(
   if (claimed === null) return [];
 
   // Opening a secret is CPU work, not a reason to hold the claim's transaction open.
-  const secrets = new Map<string, { secret: string | null; unreadable: boolean }>();
+  const secrets = new Map<
+    string,
+    { secret: string | null; previous: string | null; unreadable: boolean }
+  >();
+  const open = (sealed: string, id: string): Promise<string | null> =>
+    ctx.webhookKey === null
+      ? Promise.resolve(null)
+      : openSecret(sealed, ctx.webhookKey, secretContext(ctx.namespace, id));
   for (const [id, hook] of claimed.hooks) {
     if (hook.secret_sealed === null) {
-      secrets.set(id, { secret: null, unreadable: false });
+      secrets.set(id, { secret: null, previous: null, unreadable: false });
       continue;
     }
-    const opened =
-      ctx.webhookKey === null
-        ? null
-        : await openSecret(hook.secret_sealed, ctx.webhookKey, secretContext(ctx.namespace, id));
-    secrets.set(id, { secret: opened, unreadable: opened === null });
+    const opened = await open(hook.secret_sealed, id);
+    // A secret past its grace is not used, and one that does not open is left out: the new one still signs.
+    const previous =
+      hook.secret_previous_sealed !== null && Number(hook.secret_previous_until) > claimed.now
+        ? await open(hook.secret_previous_sealed, id)
+        : null;
+    secrets.set(id, { secret: opened, previous, unreadable: opened === null });
   }
   return claimed.rows.map((row): ClaimedDelivery => {
     const detail = row.event_id === null ? undefined : claimed.journal.get(String(row.event_id));
@@ -206,7 +223,9 @@ export async function claimDueDeliveries(
       state: detail?.state ?? null,
       error: detail?.error ?? null,
       progress: detail?.progress ?? null,
+      body: row.body,
       secret: secret.secret,
+      previousSecret: secret.previous,
       secretUnreadable: secret.unreadable,
     };
   });

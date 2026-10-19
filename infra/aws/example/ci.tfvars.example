@@ -35,6 +35,11 @@ worker_services = {
 
 max_connections = 100
 
+# Webhooks: the key, the always-on tick, and two senders.
+webhooks       = true
+tick_loop      = {}
+webhook_sender = { instances = 2 }
+
 # A stand-in for the region's CA bundle: the plan only checks that it is handed to every process.
 database_ca_pem = <<-EOT
   -----BEGIN CERTIFICATE-----

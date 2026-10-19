@@ -51,6 +51,20 @@ variable "multi_az" {
   default     = false
 }
 
+variable "cluster" {
+  description = <<-EOT
+    A Multi-AZ DB cluster (one writer and two readable standbys in three zones) in place of the single instance. Null:
+    the instance, with multi_az for one standby. The size is allocated_storage_gb, with no storage autoscaling; the port is fixed; no proxy. `instance_class`,
+    `storage_type` and `iops` have no default: take them from the supported list for your region and engine version.
+  EOT
+  type = object({
+    instance_class = string
+    storage_type   = string
+    iops           = number
+  })
+  default = null
+}
+
 variable "max_connections" {
   description = "max_connections, set in the parameter group. It is a static parameter: a change applies at the next reboot, not at the apply."
   type        = number
@@ -152,4 +166,19 @@ variable "account_id" {
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+variable "session_timeouts" {
+  description = "Server-wide session limits in milliseconds, 0 = off. statement_ms bounds a statement the client gave up on (the SDK's own deadline retires the pool but cannot stop the server); lock_ms makes a statement that cannot get a lock give up instead of queueing everyone behind it; idle_in_transaction_ms ends a session that opened a transaction and went away. The migrator lifts statement_ms for itself, so a slow index build is bounded by its own deadline only. Behind a pooler these cannot be startup parameters, which is why they are set here, on the server."
+  type = object({
+    statement_ms           = optional(number, 30000)
+    lock_ms                = optional(number, 5000)
+    idle_in_transaction_ms = optional(number, 30000)
+  })
+  default = {}
+
+  validation {
+    condition     = alltrue([for v in values(var.session_timeouts) : v >= 0 && floor(v) == v])
+    error_message = "session_timeouts values must be non-negative whole milliseconds (0 turns one off)."
+  }
 }

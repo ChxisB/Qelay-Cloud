@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { StoreError, UnsupportedOptionError } from '@qelay-cloud/core';
 import { describeDb } from '../../../test/support/db';
-import { PayloadTooLargeError } from '../src/errors';
+import { PayloadTooComplexError, PayloadTooLargeError } from '../src/errors';
 import { claimOne, readJob, recording, resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { enqueueN, openTestStore, START } from './storeHelpers';
@@ -89,6 +89,14 @@ describeDb('control: update data, change delay, update progress', () => {
       );
       expect(await t.store.getJob(id)).toMatchObject({ data: 0 });
       expect(await readJob(t, id)).toMatchObject({ version: '0' });
+    });
+
+    test('data with more values than the store decodes is refused and the job keeps its data', async () => {
+      const id = await one();
+      await expect(
+        t.another({ maxPayloadNodes: 3 }).control.updateData(id, [1, 2, 3, 4])
+      ).rejects.toBeInstanceOf(PayloadTooComplexError);
+      expect(await t.store.getJob(id)).toMatchObject({ data: 0 });
     });
 
     test('data the codec cannot encode is a StoreError and the job keeps its data', async () => {

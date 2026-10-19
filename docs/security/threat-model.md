@@ -40,7 +40,7 @@ The brokers hold **bells**, which carry no payload and no job id, so reading one
 4. **Scheduler to tick.** The tick endpoint accepts a Google-style OIDC identity token (RS256) for one configured audience and an
    allow-list of service-account emails, or, for development, a shared secret of at least 24 characters. It is not a public endpoint.
 5. **Tick to webhook target.** Outbound HTTPS to an address the operator registered. The sender resolves the name itself,
-   refuses non-public addresses, pins the connection to the resolved address and does not follow redirects. Only the status line of the answer is read (at most 16 KiB), within a 10 s bound.
+   refuses non-public addresses, pins the connection to the resolved address and does not follow redirects (`qcloud-tick send` may keep a connection or a name's addresses for a short time, and still checks every address on every use). Only the status line of the answer is read (at most 16 KiB), within a 10 s bound.
 6. **Operator to cloud.** Terraform and the cloud console. Out of this system's control; the repo only decides what it asks for.
 
 ## Abuse cases
@@ -53,14 +53,16 @@ The brokers hold **bells**, which carry no payload and no job id, so reading one
 | A4 | Call the tick endpoint without being the scheduler | Identity audience and e-mail allow-list; constant-time comparison for the static form | `packages/maintenance/test/auth.test.ts` |
 | A5 | Send an oversized or hostile body | 413 before the handler, 415 for non-JSON, 400 for bad UTF-8, 1 MiB cap on the encoded payload and on a result | `security.pass.test.ts`, [limits](../limits.md) |
 | A6 | Inject SQL through a queue name, a job name or a filter | Values are parameters; the few dynamic identifiers are constants or the schema name, passed as a startup parameter | [review, input handling](review-v1.0.0.md#input-handling) |
-| A7 | Plant a payload that harms the decoder (prototype pollution, extension types, a huge declared length) | `__proto__` survives as an own key; only the known extensions decode; declared lengths past the data fail at once. **Not bounded: a payload that decodes much larger than its bytes (F-2, open)** | [review, input handling and F-2](review-v1.0.0.md#findings) |
+| A7 | Plant a payload that harms the decoder (prototype pollution, extension types, a huge declared length) | `__proto__` survives as an own key; only the known extensions decode; declared lengths past the data fail at once. **Bounded per payload (20,000 values, 64 levels) but not per list page (F-2, narrowed)** | [review, input handling and F-2](review-v1.0.0.md#findings) |
 | A8 | Point a webhook at an internal address, a metadata service, or a name that resolves to one later (DNS rebinding), or redirect to one | Public addresses only, checked at connect time on the pinned address; no redirects; only the status line is read, 10 s for the exchange | [webhooks](../webhooks.md), [review, webhooks](review-v1.0.0.md#webhooks) |
-| A9 | Steal a webhook secret from the API or the logs | Sealed at rest, shown once when set, never returned by the API; no secret, token, payload or connection string in any log line | `test/observability/logs.test.ts`, `security.pass.test.ts` |
+| A9 | Steal a webhook secret from the API or the logs | Sealed at rest, never returned by the API (the one exception: a secret the service generated is in the create or rotate response, once); a rotated-out secret is dropped after 24 hours; no secret, token, payload or connection string in any log line | `test/observability/logs.test.ts`, `security.pass.test.ts` |
 | A10 | Exhaust the API with streams, long lists or write floods | Per-principal and per-instance SSE caps, page-size caps, write rate limit | `security.pass.test.ts`, `events.limits.test.ts` |
 | A11 | Read another tenant's jobs | Every query carries the namespace | Many suites; see the review. **Not a hard boundary.** |
 | A12 | Reach the database from the internet | Private IP only (Cloud SQL), `publicly_accessible = false` (RDS); TLS only | `check:terraform` |
 | A13 | Lose the database through a mistaken `terraform destroy` | `prevent_destroy` and deletion protection on, backups and point-in-time recovery on | `check:terraform`, [restore runbook](../runbooks/restore-from-backup.md) |
 | A14 | A worker with a stolen credential | Out of scope for this system: the credential is the database. Rotate it ([runbook](../runbooks/rotate-database-secret.md)) | game day, local only |
+| A15 | Save a webhook filter or shape that runs code, reads a job's data or result, or makes a huge body | A filter and a shape are JSON data evaluated by two fixed functions in core: no code, no network, and the only inputs are seven fields of the journal event, which holds no job data. Bounded in terms, depth, text and template size; a body past 64 KiB is not sent; the stored body is what is signed | `webhookFilter.test.ts`, `webhookShape.test.ts`, `webhook.writer.test.ts`, `webhooks.test.ts` |
+| A16 | A hostile receiver uses the delivery history to read an internal service, or to plant text for whoever reads it | Only a public address is connected to, so the answer is a public receiver's own words; with private addresses allowed (dev mode) nothing is kept unless asked. At most 1 KB (4 KB cap) of a failed answer, as text with control characters removed, NUL stripped, an encoded body not kept; it is data in a JSON field and the panel shows it as text | `webhook.capture.test.ts`, `webhook.record.test.ts` |
 
 ## What this model does not claim
 
@@ -70,7 +72,8 @@ The brokers hold **bells**, which carry no payload and no job id, so reading one
   needs the operators not to see a field must encrypt it before it enqueues.
 - **Namespaces are not a tenant boundary** (below).
 - **`public` exposure puts the application's token check alone in front of the internet.** No web application firewall and no
-  edge rate limit is deployed by the Terraform; the API's own limits are per process.
+  edge rate limit is deployed unless you set the opt-in `edge` (GCP, Cloud Armor) or `edge_rate_limit_per_minute` (AWS, WAF);
+  the API's own limits are per process.
 
 ## Namespaces
 

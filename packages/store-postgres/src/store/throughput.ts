@@ -59,11 +59,18 @@ export async function throughput(
     throw new UnsupportedOptionError('until', 'must be a timestamp in milliseconds');
   }
   return ctx.db.run('throughput', async (sql) => {
-    const until = range.until ?? (await ctx.db.time.now(sql));
-    const last = Math.floor(until / MINUTE_MS);
+    const now = await ctx.db.time.now(sql);
+    const last = Math.floor((range.until ?? now) / MINUTE_MS);
     const first = last - minutes + 1;
+    // The tick deletes buckets past the retention; one it has not reached yet is not shown.
+    const oldest = Math.floor(now / MINUTE_MS) - ctx.maxMetricBuckets + 1;
     const [buckets, totals] = await Promise.all([
-      sql.unsafe<BucketRow[]>(THROUGHPUT_BUCKETS, [ctx.namespace, name, first, last]),
+      sql.unsafe<BucketRow[]>(THROUGHPUT_BUCKETS, [
+        ctx.namespace,
+        name,
+        Math.max(first, oldest),
+        last,
+      ]),
       sql.unsafe<
         Array<{ metric_type: 'completed' | 'failed'; total_count: number | string | bigint }>
       >(THROUGHPUT_TOTALS, [ctx.namespace, name]),

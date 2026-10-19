@@ -14,6 +14,23 @@ What Qelay-Cloud tells you about itself, what it leaves for you to wire, and whe
   report line per run; the SDK hands warnings to the `logger` you pass.
 - **The panel**: queues, jobs, the transport page (age of the oldest bell, from the cloud's own metric) and the tick.
 
+### The alerts against a usual list
+
+Compared with the alert rules a single-server queue ships (dead letters, no workers, backlog, worker slots, stuck jobs, failure
+rate, stale backup). Names are in the [runbook index](runbooks/README.md#from-an-alert-to-its-runbook).
+
+| Usual rule | Here | Gap |
+| --- | --- | --- |
+| Dead letters above a count | Dead-letter bells (depth and age), and the optional jobs failing for good | None |
+| No workers | No worker running while bells wait (GCP), no running tasks and workers idle with backlog (AWS) | None |
+| Backlog above a count | Age of the oldest waiting bell | Deliberate: a burst that drains in seconds is healthy, and age is the symptom a user feels. A count alert is one more policy and variable if you want it |
+| Worker slots above 95% used | None | The SDK does not report how many of a worker's slots are busy. The autoscalers follow backlog instead |
+| Stuck jobs | None as an alert; the tick recovers lost leases and `qcloud.tick.recovered` counts them | The shipped tick exports no gauges, so there is nothing to alert on. See the lease loss storm runbook |
+| Failure rate above 5% | Jobs failing for good, optional, a count and not a rate | A rate needs completed and failed together; `qcloud.tick.jobs.*_total` has both, but only through a library tick |
+| Stale backup | None | Neither Cloud SQL nor RDS publishes a backup-age metric that could be checked here. Look at the backup list after any change to retention |
+
+None of these thresholds has met a real cloud.
+
 ## Logs
 
 | Source | Shape |
@@ -29,6 +46,10 @@ payload and secret through the API and the SDK):
 
 - A log line never carries a job's `data`, a result, a token, a password or a connection string. A job is named by id and
   queue, not by content.
+- No metric is tagged with a queue name, a job name or an id. Every tag is from a small fixed set (`reason`, `operation`, `at`,
+  `result`, `step`, `error.type`), so the number of series does not grow with the number of queues, and no cap is needed. A
+  per-queue series would need one first (a bound on the queues named, and an `omitted` gauge for the rest), because a
+  deployment can hold thousands of queues and a metrics backend bills and slows by series.
 - A route is logged as its pattern (`/jobs/:id`), so an id in a path is not a field to search by; use `requestId`, which the
   caller can set with `x-request-id` (8 to 64 characters of `A-Za-z0-9._-`) and which is returned on every response.
 - Error text is logged, since it is what you debug with. If a handler puts a secret in its own error message, it is in your log:
@@ -47,6 +68,10 @@ Metrics reach you only through a sink you pass. `Queue` and `Worker` take `metri
 | `qcloud.worker.claims` | counter | `result`: `jobs` or `empty` | A claim call, and whether it got jobs |
 | `qcloud.worker.claimed` | counter | | Jobs taken |
 | `qcloud.worker.claim_ms` | histogram, ms | | The database round trip of a claim |
+| `qcloud.add.ms` | histogram, ms | | The database round trip of an add, `addBulk` or one group commit (the store write only, not the ring) |
+| `qcloud.add.group_size` | histogram | | Jobs in one group commit (only with `groupCommit`) |
+| `qcloud.worker.complete_group_size` | histogram | | Jobs in one `completeMany` write (only with the worker's `groupComplete`) |
+| `qcloud.worker.complete_ms` | histogram, ms | | The database round trip of a complete write that got an answer (a write that threw is counted in `settle_failed`, not timed) |
 | `qcloud.worker.claim_failed` | counter | | A claim that threw (the worker backs off and tries again) |
 | `qcloud.worker.claim_rechecked` | counter | | A bell found nothing to claim while jobs were waiting (locked or not yet visible), so the claim was tried once more |
 | `qcloud.worker.malformed_bell` | counter | | A delivery that is not a bell of ours; it is handed back and the broker's redrive policy sends it to the dead-letter queue, where it is never replayed |
@@ -70,7 +95,7 @@ Metrics reach you only through a sink you pass. `Queue` and `Worker` take `metri
 | `qcloud.tick.ok` | gauge, 0 or 1 | The last pass finished its work (every bell rung and recorded, store reachable) |
 | `qcloud.tick.recovered`, `promoted`, `cron_fired`, `expired` | gauge | What the last pass did |
 | `qcloud.tick.rings.due`, `.rung`, `.deferred`, `.rejected`, `.unreachable`, `.unmarked`, `.skipped` | gauge | The ring step of the last pass |
-| `qcloud.tick.webhooks.*`, `qcloud.tick.workflows.*` | gauge | The webhook sender and the workflow sweep |
+| `qcloud.tick.webhooks.*`, `qcloud.tick.workflows.*` | gauge | The webhook sender and the workflow sweep. `webhooks.written` is the delivery rows the writer made in a pass; `webhooks.writer_gaps` is 1 when retention pruned events the writer had not read; `webhooks.paused` is the webhooks a pass paused after repeated failed deliveries |
 | `qcloud.tick.more_work` | gauge, 0 or 1 | A step hit its batch size: another pass would find more |
 | `qcloud.tick.jobs.completed_total`, `qcloud.tick.jobs.failed_total` | gauge | Lifetime counts; a rising `failed_total` is the dead-letter queue growing |
 

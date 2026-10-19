@@ -251,6 +251,14 @@ describeDb('complete: results the store cannot keep', () => {
     expect(await t.store.complete(job.lease, 'small')).toMatchObject({ ok: true });
   });
 
+  test('a result with more values than the store decodes is a StoreError and the job stays active', async () => {
+    const job = await claimOne(t);
+    await expect(
+      t.another({ maxPayloadNodes: 3 }).complete(job.lease, [1, 2, 3, 4])
+    ).rejects.toBeInstanceOf(StoreError);
+    expect((await readJob(t, job.id))!.state).toBe('active');
+  });
+
   test('a result the codec cannot encode is a StoreError and the job stays active', async () => {
     const job = await claimOne(t);
     const circular: Record<string, unknown> = {};

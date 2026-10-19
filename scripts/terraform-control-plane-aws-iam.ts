@@ -84,11 +84,11 @@ export function checkIdentities(plan: Plan, checks: Checks, fx: Fixture, v: IamV
 
   // --- the three start-up roles -----------------------------------------------------------------------------------------
   const logArn = (group: string) => `arn:aws:logs:${fx.region}:${fx.account}:log-group:/qcloud/${fx.name}/${group}:*`;
-  for (const [who, secrets] of [['api', [fx.databaseSecret]], ['panel', []], ['migrate', [v.migrateSecret]]] as const) {
+  for (const [who, secrets] of [['api', [fx.databaseSecret, fx.webhookKeySecret]], ['panel', []], ['migrate', [v.migrateSecret]]] as const) {
     const got = statements(`aws_iam_role_policy.execution["${who}"]`);
     const by = (id: string) => sid(got, id);
     checks.ok(`${who}: writes its own log group and no other`, same(list(by('WriteLogs')?.Resource), [logArn(who)]) && same(list(by('WriteLogs')?.Action), ['logs:CreateLogStream', 'logs:PutLogEvents']), list(by('WriteLogs')?.Resource).join());
-    checks.ok(`${who}: reads ${secrets.length === 0 ? 'no secret' : 'the one secret it uses'}`, secrets.length === 0 ? by('ReadSecrets') === undefined : same(list(by('ReadSecrets')?.Resource), secrets) && same(list(by('ReadSecrets')?.Action), ['secretsmanager:GetSecretValue']), list(by('ReadSecrets')?.Resource).join());
+    checks.ok(`${who}: reads ${secrets.length === 0 ? 'no secret' : 'only the secrets it uses'}`, secrets.length === 0 ? by('ReadSecrets') === undefined : same(list(by('ReadSecrets')?.Resource), secrets) && same(list(by('ReadSecrets')?.Action), ['secretsmanager:GetSecretValue']), list(by('ReadSecrets')?.Resource).join());
     checks.ok(`${who}: pulls from the named repositories only`, v.ecr ? same(list(by('PullImage')?.Resource), fx.repositories) : by('PullImage') === undefined);
     checks.ok(`${who}: decrypts through Secrets Manager only, and only when there is a key and a secret`, v.secretsKey === undefined || secrets.length === 0 ? by('DecryptSecrets') === undefined : same(list(by('DecryptSecrets')?.Resource), [v.secretsKey]) && get(by('DecryptSecrets'), 'Condition', 'StringEquals', 'kms:ViaService') === `secretsmanager.${fx.region}.amazonaws.com`);
     checks.ok(`${who}: nothing but start-up`, (got ?? []).length > 0 && (got ?? []).every((s) => START_UP.includes(s.Sid ?? '')));

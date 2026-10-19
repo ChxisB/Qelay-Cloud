@@ -45,5 +45,6 @@ export function openTransport(
   return new PubSubTransport({
     namespace,
     ...(settings.projectId === undefined ? {} : { projectId: settings.projectId }),
+    ...(settings.hotQueues.length === 0 ? {} : { hotQueues: settings.hotQueues }),
   });
 }

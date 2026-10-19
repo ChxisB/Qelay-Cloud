@@ -18,7 +18,12 @@ describeDb('webhook sender: deliveries through the tick', () => {
   let t: TestStore;
   let transport: RecordingTransport;
   beforeAll(async () => {
-    t = await openTestStore({ webhookKey: KEY, ringWindowMs: 3_600_000, poolSize: 8 });
+    t = await openTestStore({
+      webhookKey: KEY,
+      ringWindowMs: 3_600_000,
+      poolSize: 8,
+      random: () => 0.5,
+    });
   });
   afterAll(async () => {
     await t.drop();
@@ -144,6 +149,7 @@ describeDb('webhook sender: deliveries through the tick', () => {
       retrying: 0,
       failed: 0,
       stale: 0,
+      paused: 0,
       errors: 0,
     });
     expect((await rawDeliveries(t))[0]).toMatchObject({ status: 'pending', attempts: 0 });

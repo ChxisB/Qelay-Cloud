@@ -13,7 +13,7 @@ async function readings(ctx: OpsContext, fresh: boolean) {
   const store = ctx.jobs?.store;
   const deadline = READINESS_DEADLINE_MS;
   let latencyMs: number | null = null;
-  const [databaseOk, tick, schema, usage, workers, scan] = await Promise.all([
+  const [databaseOk, tick, schema, usage, workers, scan, webhooks] = await Promise.all([
     settled(async () => {
       const started = performance.now();
       await readiness.database();
@@ -25,8 +25,9 @@ async function readings(ctx: OpsContext, fresh: boolean) {
     store ? settled(() => store.deployment.connections(), deadline) : null,
     store ? settled(() => store.workers.list(), deadline) : null,
     store ? settled(() => scanDoorbells(ctx, fresh), deadline) : null,
+    store ? settled(() => store.webhooks.list(), deadline) : null,
   ]);
-  return { databaseOk, latencyMs, tick, schema, usage, workers, scan };
+  return { databaseOk, latencyMs, tick, schema, usage, workers, scan, webhooks };
 }
 
 /** `GET /deployment`: version, schema, database, connections, tick, workers and the warnings from them. */
@@ -112,7 +113,17 @@ async function build(ctx: OpsContext, fresh: boolean): Promise<DeploymentRespons
       total: read.workers === null ? null : read.workers.length,
       active: read.workers === null ? null : read.workers.filter((worker) => worker.active).length,
     },
-    warnings: deploymentWarnings(parts),
+    warnings: deploymentWarnings({
+      ...parts,
+      webhooks:
+        read.webhooks === null
+          ? null
+          : {
+              failing: read.webhooks.filter((h) => h.disabledReason === null && h.alertLevel > 0)
+                .length,
+              paused: read.webhooks.filter((h) => h.disabledReason !== null).length,
+            },
+    }),
     timestamp: clock.now(),
   };
 }

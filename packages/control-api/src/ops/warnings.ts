@@ -8,7 +8,10 @@ export const CONNECTIONS_CRITICAL_RATIO = 0.95;
 type Parts = Pick<
   DeploymentResponse,
   'devToken' | 'schema' | 'database' | 'transport' | 'connections' | 'tick' | 'doorbells'
->;
+> & {
+  /** Webhooks failing (alert level 1 to 3) and paused, or null when they could not be read. */
+  readonly webhooks: { readonly failing: number; readonly paused: number } | null;
+};
 
 /**
  * What an operator should look at first, from the readings alone. Each warning has a stable `code`.
@@ -94,6 +97,20 @@ export function deploymentWarnings(parts: Parts): DeploymentWarning[] {
       'doorbells_overdue',
       doorbells.oldestNotRungAgeMs >= tick.staleAfterMs ? 'critical' : 'warning',
       `Claimable jobs have waited ${spoken(doorbells.oldestNotRungAgeMs)} for a doorbell: the tick is behind.`
+    );
+  }
+  if (parts.webhooks !== null && parts.webhooks.paused > 0) {
+    add(
+      'webhook_paused',
+      'warning',
+      `${parts.webhooks.paused} webhook(s) were paused after repeated failed deliveries. Fix the receiver, then enable them again; deliveries made meanwhile are held for a day.`
+    );
+  }
+  if (parts.webhooks !== null && parts.webhooks.failing > 0) {
+    add(
+      'webhook_failing',
+      'warning',
+      `${parts.webhooks.failing} webhook(s) have many failed deliveries in a row and will be paused if it continues.`
     );
   }
   if (parts.devToken) {

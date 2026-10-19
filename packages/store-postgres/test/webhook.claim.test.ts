@@ -20,7 +20,7 @@ import {
 describeDb('webhooks: claiming deliveries', () => {
   let t: TestStore;
   beforeAll(async () => {
-    t = await openTestStore({ webhookKey: KEY });
+    t = await openTestStore({ webhookKey: KEY, random: () => 0.5 });
   });
   afterAll(async () => {
     await t.drop();
@@ -70,7 +70,7 @@ describeDb('webhooks: claiming deliveries', () => {
     const [second] = await t.store.webhooks.claimDue(CLAIM);
     expect(second).toMatchObject({ deliveryId: first!.deliveryId, attempt: 2 });
     const late = await t.store.webhooks.record([outcome(first!, { ok: true })], POLICY);
-    expect(late).toEqual({ delivered: 0, retrying: 0, failed: 0, stale: 1 });
+    expect(late).toEqual({ delivered: 0, retrying: 0, failed: 0, stale: 1, paused: 0 });
     expect(await t.store.webhooks.record([outcome(second!, { ok: true })], POLICY)).toMatchObject({
       delivered: 1,
     });
@@ -149,8 +149,8 @@ describeDb('webhooks: claiming deliveries', () => {
     ]);
   });
 
-  test('an unsigned webhook carries no secret and is not flagged', async () => {
-    await addHook(t);
+  test('an unsigned webhook (made by a store with no key) carries no secret and is not flagged', async () => {
+    await addHook({ store: t.another({ webhookKey: undefined as never }) });
     await journal(t, [event('pushed')]);
     expect(await t.store.webhooks.claimDue(CLAIM)).toMatchObject([
       { secret: null, secretUnreadable: false },

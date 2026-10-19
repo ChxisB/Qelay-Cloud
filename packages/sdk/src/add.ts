@@ -45,21 +45,45 @@ async function admit<T, R>(
   merged: readonly JobOptions[],
   jobs: readonly NewJob[]
 ): Promise<Array<Job<T, R>>> {
+  const results = await admitEach<T, R>(rt, items, merged, jobs);
+  return results.map((result) => {
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
+  });
+}
+
+/**
+ * Stores the jobs, rings, and settles each one on its own: a job whose custom id belongs to another
+ * queue is refused alone, the others are still stored (`admit` throws the first refusal, which is
+ * `addBulk`'s contract). A throw here means the store failed and the batch is not known to be stored.
+ */
+export async function admitEach<T, R>(
+  rt: Runtime,
+  items: ReadonlyArray<BulkJob<T>>,
+  merged: readonly JobOptions[],
+  jobs: readonly NewJob[]
+): Promise<Array<PromiseSettledResult<Job<T, R>>>> {
+  const started = performance.now();
   const admitted = await rt.store.enqueue(jobs);
+  rt.observe('qcloud.add.ms', performance.now() - started);
   const now = Date.now();
   await ringAfterCommit(
     rt,
     admitted.flatMap((job) => (job.ring === null ? [] : [job.ring]))
   );
   const existing = await readExisting(rt, admitted);
-  return admitted.map((job, index) => {
+  return admitted.map((job, index): PromiseSettledResult<Job<T, R>> => {
     const item = items[index]!;
     if (!job.created) {
       const details = existing.get(job.id);
-      if (details !== undefined) return fromDetails<T, R>(rt, details, true);
+      if (details !== undefined) {
+        return details.queue === rt.name
+          ? { status: 'fulfilled', value: fromDetails<T, R>(rt, details, true) }
+          : { status: 'rejected', reason: otherQueue(details) };
+      }
     }
     const opts = merged[index]!;
-    return createJob<T, R>(rt, {
+    const value = createJob<T, R>(rt, {
       id: job.id,
       name: item.name,
       data: item.data,
@@ -70,29 +94,30 @@ async function admit<T, R>(
       progress: 0,
       duplicated: !job.created,
     });
+    return { status: 'fulfilled', value };
   });
 }
 
-/**
- * The jobs a duplicate resolved to. A custom id is unique per namespace, so a duplicate can be a
- * job of another queue: that is an error, not a job to hand back as this queue's.
- */
+/** The jobs a duplicate resolved to, by id. */
 async function readExisting(
   rt: Runtime,
   admitted: readonly EnqueuedJob[]
 ): Promise<Map<string, JobDetails>> {
   const ids = admitted.filter((job) => !job.created).map((job) => job.id);
   const found = await rt.store.control.detailsMany([...new Set(ids)]);
-  for (const details of found) {
-    if (details.queue !== rt.name) {
-      throw new UnsupportedOptionError(
-        'jobId',
-        `"${details.id}" is the id of a job in queue "${details.queue}": job ids are unique per ` +
-          'namespace, so it cannot be used here (docs/compat.md). Other jobs of this call were added'
-      );
-    }
-  }
   return new Map(found.map((details) => [details.id, details]));
+}
+
+/**
+ * A custom id is unique per namespace, so a duplicate can be a job of another queue: that is an
+ * error, not a job to hand back as this queue's.
+ */
+function otherQueue(details: JobDetails): UnsupportedOptionError {
+  return new UnsupportedOptionError(
+    'jobId',
+    `"${details.id}" is the id of a job in queue "${details.queue}": job ids are unique per ` +
+      'namespace, so it cannot be used here (docs/compat.md). Other jobs of this call were added'
+  );
 }
 
 export async function addJob<T, R = unknown>(

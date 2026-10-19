@@ -14,12 +14,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { checkAwsApiAlarm } from './terraform-control-plane-alerts';
-import { checkIngress } from './terraform-control-plane-aws-ingress';
+import { checkEdgeRateLimit, checkIngress } from './terraform-control-plane-aws-ingress';
 import { checkIdentities } from './terraform-control-plane-aws-iam';
 import type { Fixture, Variation } from './terraform-control-plane-aws-services';
 import { checkEcsServices, checkServices } from './terraform-control-plane-aws-services';
 import type { Plan } from './terraform-plan-model';
-import { Checks, get } from './terraform-plan-model';
+import { Checks, get, ofType } from './terraform-plan-model';
 
 const ROOT = resolve(import.meta.dir, '..');
 const CONTROL = join(ROOT, 'infra/aws/control-plane');
@@ -47,6 +47,7 @@ const FIXTURE: Fixture = {
   queueArns: ['default', 'emails'].map((q) => `arn:aws:sqs:${REGION}:${ACCOUNT}:qcloud-ci__${q}`),
   deadLetterArns: ['default', 'emails'].map((q) => `arn:aws:sqs:${REGION}:${ACCOUNT}:qcloud-ci__${q}__dlq`),
   databaseSecret: `arn:aws:secretsmanager:${REGION}:${ACCOUNT}:secret:qcloud-ci/database-url-AbCdEf`,
+  webhookKeySecret: `arn:aws:secretsmanager:${REGION}:${ACCOUNT}:secret:qcloud-ci/webhook-key-AbCdEf`,
   repositories: [`arn:aws:ecr:${REGION}:${ACCOUNT}:repository/qcloud-api`, `arn:aws:ecr:${REGION}:${ACCOUNT}:repository/qcloud-panel`],
   apiImage: `${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/qcloud-api:ci`,
   panelImage: `${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/qcloud-panel:ci`,
@@ -170,6 +171,11 @@ try {
   variation('not-ecr', ['image_repository_arns=[]'], BASE, EXPOSURE, { ...IAM, ecr: false });
   variation('one-api-task', ['api_instances=1'], { ...BASE, apiInstances: 1 }, EXPOSURE, IAM);
   variation('longer-idle', ['alb_idle_timeout_seconds=300'], BASE, { ...EXPOSURE, idleSeconds: 300 }, IAM);
+  const edge = here('edge-rate-limit', 'edge_rate_limit_per_minute=1200');
+  checks.ok('an edge rate limit plans', edge.plan !== null, edge.diagnostics);
+  if (edge.plan !== null) checkEdgeRateLimit(edge.plan, checks, 1200);
+  checks.ok('no WAF unless asked for', base.plan !== null && ofType(base.plan, 'aws_wafv2_web_acl').length === 0);
+  checks.ok('a rate limit under 10 is refused', here('edge-too-low', 'edge_rate_limit_per_minute=5').plan === null);
   variation(
     'pooled-with-direct',
     ['pooled=true', `database_direct_url_secret=${DIRECT}`],

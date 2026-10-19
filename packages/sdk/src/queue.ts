@@ -232,9 +232,11 @@ export class Queue<T = unknown> extends QueueReads<T> {
 
   /**
    * Closes the connection pool when this queue opened it (a `store` passed in stays open: it is
-   * the caller's) and never the transport. Idempotent. Pending calls finish or reject.
+   * the caller's) and never the transport. Idempotent. Pending calls finish or reject; adds waiting in a
+   * `groupCommit` are stored first.
    */
-  close(options?: { readonly timeout?: number }): Promise<void> {
+  async close(options?: { readonly timeout?: number }): Promise<void> {
+    await this.adds?.drain();
     return this.rt.close(options);
   }
 

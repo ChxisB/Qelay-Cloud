@@ -38,12 +38,24 @@ export interface TickOptions {
   readonly ringWindowMs?: number;
   /** Most rings per queue in one pass, so a backlog does not become one bell per job on every tick. Default 100. */
   readonly maxRingsPerQueue?: number;
+  /**
+   * Most re-rings per queue in one pass, of jobs that already had a bell. Default: `maxRingsPerQueue`.
+   * Lower it (1 to 10) once every consumer claims again while a queue has more, so a standing backlog
+   * is not re-rung `maxRingsPerQueue` times per interval.
+   */
+  readonly maxStaleRingsPerQueue?: number;
   /** Most items per step of one pass. Default 200. */
   readonly maxItems?: number;
   /** Wall-clock budget of one pass. The steps after it are skipped. Default 5,000. */
   readonly maxPassMs?: number;
   /** Wall-clock budget of one invocation: passes repeat while there is more work. Default 20,000. */
   readonly maxRunMs?: number;
+  /**
+   * For a loop that beats often: the retention steps (DLQ, workers, webhook deliveries, events,
+   * completions, metric buckets) run once per this many ms, and the beats in between do the rest.
+   * 0 runs them on every beat, as a scheduler-called tick does. Default 0.
+   */
+  readonly upkeepEveryMs?: number;
 }
 
 /** A tick's settings after validation: what `runTick` and `runTicks` take. */
@@ -58,6 +70,7 @@ export interface TickConfig {
    * gap the window does not cover. `intervalMs` plus the worst lateness when the window is 0.
    */
   readonly delayPrecisionMs: number;
+  readonly upkeepEveryMs: number;
   readonly budget: TickBudget;
 }
 
@@ -121,6 +134,16 @@ export function resolveTickConfig(
       DEFAULT_MAX_RINGS_PER_QUEUE,
       1
     ),
+    ...(options.maxStaleRingsPerQueue === undefined
+      ? {}
+      : {
+          maxStaleRingsPerQueue: integer(
+            'maxStaleRingsPerQueue',
+            options.maxStaleRingsPerQueue,
+            DEFAULT_MAX_RINGS_PER_QUEUE,
+            1
+          ),
+        }),
     maxItems: integer('maxItems', options.maxItems, DEFAULT_MAX_ITEMS, 1),
     reRingAfterMs,
     ringGraceMs: integer('ringGraceMs', options.ringGraceMs, DEFAULT_RING_GRACE_MS, 0),
@@ -131,6 +154,7 @@ export function resolveTickConfig(
     maxRunMs: integer('maxRunMs', options.maxRunMs, DEFAULT_MAX_RUN_MS, 0),
     windowMs,
     delayPrecisionMs: Math.max(0, floor - windowMs),
+    upkeepEveryMs: integer('upkeepEveryMs', options.upkeepEveryMs, 0, 0),
     budget,
   };
 }

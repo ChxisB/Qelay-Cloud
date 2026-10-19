@@ -19,7 +19,7 @@ locals {
 
   # Each execution role: its log group, the secrets ECS reads for it, and the repositories it may pull from.
   execution = {
-    api     = { log_group = local.log_groups.api, secrets = [var.database_url_secret] }
+    api     = { log_group = local.log_groups.api, secrets = compact([var.database_url_secret, var.webhook_key_secret]) }
     panel   = { log_group = local.log_groups.panel, secrets = [] }
     migrate = { log_group = local.log_groups.migrate, secrets = [local.migrate_url_secret] }
   }

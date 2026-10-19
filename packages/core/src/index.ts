@@ -11,6 +11,8 @@ export type * from './transport';
 export { canPeekDeadLetters, deadLetterOldestAgeMs } from './transport';
 export * from './webhook';
 export * from './webhookCrypto';
+export * from './webhookFilter';
+export * from './webhookShape';
 export * from './webhookUrl';
 export * from './workflowGraph';
 export * from './workflowJob';

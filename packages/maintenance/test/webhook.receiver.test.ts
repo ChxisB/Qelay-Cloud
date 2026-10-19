@@ -29,6 +29,7 @@ describeDb('webhooks end to end: a job to a receiver', () => {
   beforeAll(async () => {
     t = await openTestStore({
       webhookKey: KEY,
+      random: () => 0.5,
       ringWindowMs: 3_600_000,
       poolSize: 6,
       recorder: journalRecorder({ namespace: 'test', codec: createMsgpackCodec() }),
@@ -119,12 +120,20 @@ describeDb('webhooks end to end: a job to a receiver', () => {
     expect(await check({ now: t.clock.now() + 300_001 })).toBe(false);
   });
 
-  test('an unsigned webhook is delivered without a signature header', async () => {
-    await addHook(t, { url: url(), events: ['job.pushed'] });
+  test('a webhook given no secret is signed with the one generated for it', async () => {
+    const hook = await addHook(t, { url: url(), events: ['job.pushed'] });
     await claimOne(t, {}, 'q');
     await tick().run();
-    expect(received).toHaveLength(1);
-    expect(received[0]!.headers.has(WEBHOOK_HEADERS.signature)).toBe(false);
+    const [entry] = received;
+    expect(
+      await verifyWebhookSignature({
+        secret: hook.secret!,
+        timestamp: entry!.headers.get(WEBHOOK_HEADERS.timestamp)!,
+        body: entry!.body,
+        signature: entry!.headers.get(WEBHOOK_HEADERS.signature)!,
+        now: t.clock.now(),
+      })
+    ).toBe(true);
   });
 
   test('a receiver that fails twice and then answers gets one delivery, retried with the same id', async () => {

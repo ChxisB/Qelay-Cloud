@@ -31,12 +31,13 @@ variable "namespace" {
 }
 
 variable "queues" {
-  description = "The queues that get a doorbell path (see the messaging module). A queue not listed here has none."
+  description = "The queues that get a doorbell path (see the messaging module). A queue not listed here has none. `hot = true` gives a queue its own topic and an unfiltered subscription (QCLOUD_GCP_HOT_QUEUES is set for every process)."
   type = map(object({
     ack_deadline_seconds  = optional(number, 30)
     max_delivery_attempts = optional(number, 5)
     min_backoff_seconds   = optional(number, 1)
     max_backoff_seconds   = optional(number, 10)
+    hot                   = optional(bool, false)
   }))
   default = { default = {} }
 }
@@ -93,6 +94,38 @@ variable "database_tier" {
   default     = "db-custom-1-3840"
 }
 
+variable "database_edition" {
+  description = "ENTERPRISE (default) or ENTERPRISE_PLUS. Enterprise Plus needs a db-perf-optimization tier (database_tier) and is what managed connection pooling runs on. The review's starting point was Enterprise Plus, regional high availability and about 16 vCPUs, to be measured (F17) before it is trusted."
+  type        = string
+  default     = "ENTERPRISE"
+
+  validation {
+    condition     = contains(["ENTERPRISE", "ENTERPRISE_PLUS"], var.database_edition)
+    error_message = "database_edition must be ENTERPRISE or ENTERPRISE_PLUS."
+  }
+}
+
+variable "database_managed_pooling" {
+  description = "Cloud SQL's managed connection pooling, in transaction mode, on the instance's private IP at port 6432 (needs database_edition = ENTERPRISE_PLUS). Processes then connect through it exactly as with `pooler`, and the budget counts Google's default of 50 server connections. Exclusive with `pooler`. Check Google's list of unsupported features first; the repo uses no session-level locks and no prepared statements behind a pooler."
+  type        = bool
+  default     = false
+}
+
+variable "database_session_timeouts" {
+  description = "Server-wide session limits in milliseconds, 0 = off. statement_ms bounds a statement the client gave up on (the SDK's own deadline retires the pool but cannot stop the server); lock_ms makes a statement that cannot get a lock give up instead of queueing everyone behind it; idle_in_transaction_ms ends a session that opened a transaction and went away. The migrator lifts statement_ms for itself, so a slow index build is bounded by its own deadline only. Behind a pooler these cannot be startup parameters, which is why they are set here, on the server."
+  type = object({
+    statement_ms           = optional(number, 30000)
+    lock_ms                = optional(number, 5000)
+    idle_in_transaction_ms = optional(number, 30000)
+  })
+  default = {}
+
+  validation {
+    condition     = alltrue([for v in values(var.database_session_timeouts) : v >= 0 && floor(v) == v])
+    error_message = "database_session_timeouts values must be non-negative whole milliseconds (0 turns one off)."
+  }
+}
+
 variable "database_high_availability" {
   description = "A regional standby in another zone, at about double the instance cost. Off: a zonal failure restores from the latest backup."
   type        = bool
@@ -146,6 +179,46 @@ variable "pooler" {
     server_pool_size = optional(number, 20)
   })
   default = null
+}
+
+variable "webhooks" {
+  description = "Webhooks: generates QCLOUD_WEBHOOK_KEY (the key webhook secrets are sealed with) as a secret and gives it to the tick, the loop, the sender and the control plane's API, and to no worker. The key lives in the Terraform state like the database password; losing it makes every stored webhook secret unreadable until each is rotated, so back the state up."
+  type        = bool
+  default     = false
+}
+
+variable "tick_loop" {
+  description = "The always-on tick: a worker pool that runs `qcloud-tick loop` (a beat every second, the retention steps every 30 s, the lease choosing one leader), next to the scheduler, which stays as the safety net and the cron source. Null: no loop, and a delayed job is released up to a scheduler minute late (docs/limits.md). `instances` is fixed (min = max); 2 gives failover, since only the lease holder ticks."
+  type = object({
+    instances = optional(number, 1)
+    pool_size = optional(number, 2)
+    cpu       = optional(string, "1")
+    memory    = optional(string, "512Mi")
+    env       = optional(map(string), {})
+  })
+  default = null
+
+  validation {
+    condition     = var.tick_loop == null ? true : (var.tick_loop.instances >= 1 && floor(var.tick_loop.instances) == var.tick_loop.instances)
+    error_message = "tick_loop.instances must be a whole number, 1 or more."
+  }
+}
+
+variable "webhook_sender" {
+  description = "The webhook sender as its own worker pool (`qcloud-tick send`), apart from job workers, so a slow receiver cannot slow a job. Needs `webhooks`. `instances` is fixed: nothing here scales it on delivery backlog (no gauge exists for it); raise it by hand. Null: the tick sends a few deliveries at a time, which is the floor."
+  type = object({
+    instances = optional(number, 2)
+    pool_size = optional(number, 2)
+    cpu       = optional(string, "1")
+    memory    = optional(string, "512Mi")
+    env       = optional(map(string), {})
+  })
+  default = null
+
+  validation {
+    condition     = var.webhook_sender == null ? true : (var.webhook_sender.instances >= 1 && floor(var.webhook_sender.instances) == var.webhook_sender.instances)
+    error_message = "webhook_sender.instances must be a whole number, 1 or more."
+  }
 }
 
 variable "subnet_cidr" {

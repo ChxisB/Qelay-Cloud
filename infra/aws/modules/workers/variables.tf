@@ -18,6 +18,12 @@ variable "command" {
   default     = null
 }
 
+variable "entry_point" {
+  description = "Overrides the image's entrypoint. Null runs the image as built. The loop and the sender run the tick image, whose entrypoint is set when the image is the Control API's."
+  type        = list(string)
+  default     = null
+}
+
 variable "cluster_arn" {
   type = string
 }

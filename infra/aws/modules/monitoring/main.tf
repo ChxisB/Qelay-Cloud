@@ -79,7 +79,7 @@ resource "aws_cloudwatch_metric_alarm" "database_connections" {
   alarm_description   = "Connections are above ${var.connection_alarm_ratio * 100}% of max_connections (${var.max_connections}): the budget in the README no longer holds, or something leaks. ${local.runbook["connection-exhaustion"]}"
   namespace           = "AWS/RDS"
   metric_name         = "DatabaseConnections"
-  dimensions          = { DBInstanceIdentifier = var.database_identifier }
+  dimensions          = { (var.database_dimension) = var.database_identifier }
   statistic           = "Maximum"
   period              = 60
   evaluation_periods  = 5
@@ -95,7 +95,7 @@ resource "aws_cloudwatch_metric_alarm" "database_storage" {
   alarm_description   = "Less than 10% of the ${var.database_storage_gb} GiB is free. Storage autoscaling (if on) is about to act; if it is off, grow the volume. ${local.runbook["database-storage-full"]}"
   namespace           = "AWS/RDS"
   metric_name         = "FreeStorageSpace"
-  dimensions          = { DBInstanceIdentifier = var.database_identifier }
+  dimensions          = { (var.database_dimension) = var.database_identifier }
   statistic           = "Minimum"
   period              = 300
   evaluation_periods  = 2
@@ -111,7 +111,7 @@ resource "aws_cloudwatch_metric_alarm" "database_cpu" {
   alarm_description   = "Database CPU has been above 80% for 15 minutes. ${local.runbook["slow-claims"]}"
   namespace           = "AWS/RDS"
   metric_name         = "CPUUtilization"
-  dimensions          = { DBInstanceIdentifier = var.database_identifier }
+  dimensions          = { (var.database_dimension) = var.database_identifier }
   statistic           = "Average"
   period              = 300
   evaluation_periods  = 3
@@ -131,7 +131,7 @@ resource "aws_cloudwatch_metric_alarm" "database_cpu_credits" {
   alarm_description   = "The burstable database ${var.database_instance_class} has spent its CPU credits and is running on surplus credits, which are billed. Steady load needs a larger or a non-burstable class. ${local.runbook["slow-claims"]}"
   namespace           = "AWS/RDS"
   metric_name         = "CPUSurplusCreditBalance"
-  dimensions          = { DBInstanceIdentifier = var.database_identifier }
+  dimensions          = { (var.database_dimension) = var.database_identifier }
   statistic           = "Maximum"
   period              = 300
   evaluation_periods  = 3

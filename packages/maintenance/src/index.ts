@@ -30,18 +30,29 @@ export { runTick, runTicks } from './tick';
 export type { WebhookSenderConfig, WebhookSenderOptions } from './webhookConfig';
 export {
   DEFAULT_WEBHOOK_BATCH,
+  DEFAULT_WEBHOOK_BREAKER_COOLDOWN_MS,
+  DEFAULT_WEBHOOK_BREAKER_FAILURES,
   DEFAULT_WEBHOOK_BUDGET_MS,
   DEFAULT_WEBHOOK_CONCURRENCY,
+  DEFAULT_WEBHOOK_DNS_TTL_MS,
+  DEFAULT_WEBHOOK_IDLE_MS,
+  DEFAULT_WEBHOOK_KEEPALIVE_MS,
   DEFAULT_WEBHOOK_LEASE_MS,
+  DEFAULT_WEBHOOK_PER_DESTINATION,
   DEFAULT_WEBHOOK_RATE_PER_MINUTE,
   DEFAULT_WEBHOOK_TIMEOUT_MS,
   resolveWebhookConfig,
   webhookOptionsFromEnv,
 } from './webhookConfig';
 export type { PostFailure, PostFunction, PostRequest, PostResult } from './webhookHttp';
-export { postOverSocket } from './webhookHttp';
+export type { DestinationLimits, Entry, Refusal } from './webhookDestinations';
+export { Destinations } from './webhookDestinations';
+export type { PooledSending } from './webhookLoop';
+export { pooledSending, runWebhookLoop } from './webhookLoop';
+export type { SocketPool, SocketPoolOptions } from './webhookPool';
+export { createSocketPool, postOverSocket } from './webhookPool';
 export type { Resolver, SendDeps } from './webhookSend';
-export { sendDelivery, systemResolver } from './webhookSend';
+export { cachedResolver, sendDelivery, systemResolver } from './webhookSend';
 export type { WebhookSending, WebhookStepReport, WebhookStepResult } from './webhookSender';
 export { sendDueWebhooks } from './webhookSender';
 export type {

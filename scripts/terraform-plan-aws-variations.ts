@@ -1,10 +1,13 @@
 /** The variations of the AWS data plane's plan that scale the fleet and that must be refused (task 42). */
-import { budget } from '../packages/store-postgres/src/connection/budget';
+import { budget, workerRoleLimit } from '../packages/store-postgres/src/connection/budget';
 import { checkServices } from './terraform-plan-aws-services';
 import type { Checks, Plan } from './terraform-plan-model';
 import { attr, get, ofType } from './terraform-plan-model';
 
 export type Planner = (label: string, ...overrides: string[]) => { plan: Plan | null; diagnostics: string };
+
+/** The loop and the sender hold pools of their own: the budget variations take them out to count the workers alone. */
+const NO_BACKGROUND = ['tick_loop=null', 'webhook_sender=null'];
 
 export const budgetOf = (p: Plan | null) => get(p?.output_changes.connection_budget, 'after');
 
@@ -16,7 +19,8 @@ export function checkScaling(plan: Planner, checks: Checks): void {
       const scaled = plan(
         `scale-${workers}-${listen}`,
         `worker_services={worker={max_instances=${workers},listen_connections=${listen}}}`,
-        'max_connections=1000'
+        'max_connections=1000',
+        ...NO_BACKGROUND
       );
       const out = budgetOf(scaled.plan);
       const ts = budget({
@@ -34,6 +38,11 @@ export function checkScaling(plan: Planner, checks: Checks): void {
         `${where}: pooled matches the TypeScript budget`,
         get(out, 'pooled_required') === ts.pooled,
         `${get(out, 'pooled_required')} vs ${ts.pooled}`
+      );
+      checks.ok(
+        `${where}: the worker role limit matches the TypeScript budget`,
+        get(out, 'worker_role_limit') === workerRoleLimit(ts),
+        `${get(out, 'worker_role_limit')} vs ${workerRoleLimit(ts)}`
       );
     }
   }
@@ -96,5 +105,6 @@ export function checkRefusals(plan: Planner, checks: Checks): void {
   refused('endpoints', /Missing:/, 'no route out and too few endpoints is refused', 'egress=none', 'interface_endpoints=["sqs"]');
   refused('rate', /scheduler_schedule must be/, 'a tick schedule finer than a minute is refused', 'scheduler_schedule=rate(30 seconds)');
   refused('cron', /scheduler_schedule must be/, 'a tick schedule that is not a rate is refused', 'scheduler_schedule=cron(0 * * * ? *)');
+  refused('timeout', /non-negative whole milliseconds/, 'a negative session timeout is refused', 'database_session_timeouts={lock_ms=-1}');
   refused('retention', /Retention must be/, 'a retention SQS would refuse is refused', 'queues={default={retention_seconds=5}}');
 }

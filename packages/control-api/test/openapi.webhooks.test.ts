@@ -79,8 +79,10 @@ describeDb('docs/openapi.yaml webhook bodies', () => {
     expect(Object.keys(schema('WebhookCreate').properties ?? {}).sort()).toEqual([
       'enabled',
       'events',
+      'filter',
       'queue',
       'secret',
+      'shape',
       'url',
     ]);
     for (const name of ['Webhook', 'WebhookDelivery', 'WebhookAttempt']) {

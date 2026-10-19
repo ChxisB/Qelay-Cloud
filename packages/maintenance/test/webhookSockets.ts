@@ -3,11 +3,13 @@ import type { PostRequest } from '../src/webhookHttp';
 /** A raw TCP listener that answers each connection with `reply` and records what it was sent. */
 export function listener(reply: (socket: { write(data: string): void; end(): void }) => void) {
   const requests: string[] = [];
+  let connections = 0;
   const server = Bun.listen<{ buffer: Buffer }>({
     hostname: '127.0.0.1',
     port: 0,
     socket: {
       open(socket) {
+        connections += 1;
         socket.data = { buffer: Buffer.alloc(0) };
       },
       data(socket, chunk) {
@@ -23,7 +25,12 @@ export function listener(reply: (socket: { write(data: string): void; end(): voi
       },
     },
   });
-  return { port: server.port, requests, stop: () => server.stop(true) };
+  return {
+    port: server.port,
+    requests,
+    connections: () => connections,
+    stop: () => server.stop(true),
+  };
 }
 
 export const request = (port: number, overrides: Partial<PostRequest> = {}): PostRequest => ({

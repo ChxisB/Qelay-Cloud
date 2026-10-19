@@ -1,9 +1,10 @@
 # Identities, least privilege. There is no project-level binding and no primitive role (Owner, Editor,
 # Viewer) anywhere in this configuration: every grant below is on one resource.
 #
-#   workers    publisher on the doorbell topic (the SDK and the in-process tick ring from the worker);
+#   workers    publisher on the doorbell topic and on each hot queue's own topic (the SDK and the in-process
+#              tick ring from the worker);
 #              subscriber on its queues' subscriptions; accessor on the secrets it reads
-#   tick       publisher on the doorbell topic; accessor on the secrets it reads
+#   tick       publisher on the doorbell topic and each hot queue's own topic; accessor on the secrets it reads
 #   scheduler  invoker of the tick service (granted in the tick module, on that service); nothing else
 #
 # No Cloud SQL role is granted. The database is reached on its private IP with a password, over TLS, and a
@@ -33,6 +34,22 @@ resource "google_pubsub_topic_iam_member" "workers_publish" {
 
 resource "google_pubsub_topic_iam_member" "tick_publish" {
   topic  = var.topic_name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${google_service_account.tick.email}"
+}
+
+resource "google_pubsub_topic_iam_member" "workers_publish_hot" {
+  for_each = var.hot_topic_names
+
+  topic  = each.value
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${google_service_account.workers.email}"
+}
+
+resource "google_pubsub_topic_iam_member" "tick_publish_hot" {
+  for_each = var.hot_topic_names
+
+  topic  = each.value
   role   = "roles/pubsub.publisher"
   member = "serviceAccount:${google_service_account.tick.email}"
 }

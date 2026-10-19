@@ -127,10 +127,41 @@ variable "database_instance_class" {
   default     = "db.t4g.small"
 }
 
+variable "database_session_timeouts" {
+  description = "Server-wide session limits in milliseconds, 0 = off. statement_ms bounds a statement the client gave up on (the SDK's own deadline retires the pool but cannot stop the server); lock_ms makes a statement that cannot get a lock give up instead of queueing everyone behind it; idle_in_transaction_ms ends a session that opened a transaction and went away. The migrator lifts statement_ms for itself, so a slow index build is bounded by its own deadline only. Behind a pooler these cannot be startup parameters, which is why they are set here, on the server."
+  type = object({
+    statement_ms           = optional(number, 30000)
+    lock_ms                = optional(number, 5000)
+    idle_in_transaction_ms = optional(number, 30000)
+  })
+  default = {}
+
+  validation {
+    condition     = alltrue([for v in values(var.database_session_timeouts) : v >= 0 && floor(v) == v])
+    error_message = "database_session_timeouts values must be non-negative whole milliseconds (0 turns one off)."
+  }
+}
+
 variable "database_multi_az" {
   description = "A standby in another zone with automatic failover, at about double the instance cost. Off: a zonal failure restores from the latest backup."
   type        = bool
   default     = false
+}
+
+variable "database_cluster" {
+  description = <<-EOT
+    A Multi-AZ DB cluster (a writer and two readable standbys in three zones, semi-synchronous) in place of the single
+    instance: AWS documents up to twice as fast a commit as a Multi-AZ instance with one standby, and a failover
+    typically under 35 seconds. Null (default): the instance. No storage autoscaling (database_storage_gb is the size),
+    no rds_proxy, no database_multi_az. instance_class, storage_type and iops have no default: take them from AWS's
+    list for your region and engine version, and check the plan against a real account before relying on it.
+  EOT
+  type = object({
+    instance_class = string
+    storage_type   = string
+    iops           = number
+  })
+  default = null
 }
 
 variable "database_storage_gb" {
@@ -212,6 +243,46 @@ variable "rds_proxy" {
     borrow_timeout_seconds       = optional(number, 30)
   })
   default = null
+}
+
+variable "webhooks" {
+  description = "Webhooks: generates QCLOUD_WEBHOOK_KEY (the key webhook secrets are sealed with) as a secret and gives it to the tick, the loop, the sender and the control plane's API, and to no worker. The key lives in the Terraform state like the database password; losing it makes every stored webhook secret unreadable until each is rotated, so back the state up."
+  type        = bool
+  default     = false
+}
+
+variable "tick_loop" {
+  description = "The always-on tick: an ECS service that runs `qcloud-tick loop` (a beat every second, the retention steps every 30 s, the lease choosing one leader), next to the EventBridge schedule, which stays as the safety net and the cron source. Null: no loop, and a delayed job is released up to a schedule minute late (docs/limits.md). `instances` is fixed; 2 gives failover, since only the lease holder ticks."
+  type = object({
+    instances = optional(number, 1)
+    pool_size = optional(number, 2)
+    cpu       = optional(number, 512)
+    memory    = optional(number, 1024)
+    env       = optional(map(string), {})
+  })
+  default = null
+
+  validation {
+    condition     = var.tick_loop == null ? true : (var.tick_loop.instances >= 1 && floor(var.tick_loop.instances) == var.tick_loop.instances)
+    error_message = "tick_loop.instances must be a whole number, 1 or more."
+  }
+}
+
+variable "webhook_sender" {
+  description = "The webhook sender: an ECS service, apart from the job workers, that runs `qcloud-tick send`, so a slow customer receiver holds a sender and no job. Needs webhooks = true. `instances` is fixed, not scaled on the delivery backlog (nothing publishes it); spread over several tasks, since a VPC's DNS resolver takes 1,024 packets a second per network interface. Null: no sender, and webhooks are not delivered."
+  type = object({
+    instances = optional(number, 2)
+    pool_size = optional(number, 2)
+    cpu       = optional(number, 512)
+    memory    = optional(number, 1024)
+    env       = optional(map(string), {})
+  })
+  default = null
+
+  validation {
+    condition     = var.webhook_sender == null ? true : (var.webhook_sender.instances >= 1 && floor(var.webhook_sender.instances) == var.webhook_sender.instances)
+    error_message = "webhook_sender.instances must be a whole number, 1 or more."
+  }
 }
 
 variable "vpc_cidr" {

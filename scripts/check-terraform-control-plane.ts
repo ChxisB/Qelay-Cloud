@@ -19,6 +19,7 @@ import {
   checkServices,
 } from './terraform-control-plane-assertions';
 import { checkGcpApiAlert } from './terraform-control-plane-alerts';
+import { checkEdge } from './terraform-control-plane-edge';
 import type { Plan } from './terraform-plan-model';
 import { Checks, get } from './terraform-plan-model';
 
@@ -32,6 +33,7 @@ const FIXTURE: Fixture = {
   region: 'europe-west2',
   namespace: 'ci',
   queues: ['default', 'emails'],
+  hotQueues: ['emails'],
 };
 
 const env = {
@@ -160,9 +162,18 @@ try {
     );
   }
 
+  // The opt-in edge: a load balancer with a Cloud Armor rate limit, and nothing else changes for the services.
+  const edgeVar = 'edge={api_hostname="api.example.com",panel_hostname="qelay.example.com",rate_limit_per_minute=900}';
+  const edge = plan(CONTROL, 'edge', edgeVar);
+  checks.ok('edge plans', edge.plan !== null, edge.diagnostics);
+  if (edge.plan !== null) checkEdge(edge.plan, checks, { apiHost: 'api.example.com', panelHost: 'qelay.example.com', limit: 900, apiTimeout: 900 });
+  checks.ok('no load balancer unless asked for', base.plan !== null && base.plan.resource_changes.every((c) => !c.type.startsWith('google_compute_')));
+
   // What must be refused, and why.
   const refusals: Array<[string, string[], RegExp]> = [
     ['an unknown exposure', ['exposure=iap'], /exposure must be/],
+    ['an edge on a private deployment', ['exposure=private', 'edge={api_hostname="a.example.com",panel_hostname="b.example.com"}'], /Use one or the other/],
+    ['an edge with one host name for both', ['edge={api_hostname="a.example.com",panel_hostname="a.example.com"}'], /two different/],
     ['more API instances than the connection budget counts', ['api_max_instances=3'], /connection budget counts/],
     ['a pool bigger than the budgeted one', ['api_pool_size=5'], /connections per control process/],
     ['a request timeout that cuts streams', ['api_request_timeout_seconds=620'], /close a stream before Cloud Run/],

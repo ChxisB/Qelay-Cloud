@@ -43,12 +43,13 @@ pool is made by the first call.
 | `transport` | New, required | The `DeliveryTransport` that rings the doorbell (`@qelay-cloud/transport-local`, `@qelay-cloud/transport-gcp`). The queue never closes it. |
 | `namespace` | New | Default `'default'`. Isolates the jobs of one deployment inside one database. |
 | `store` | New | A `PostgresStore` the caller owns, for sharing one pool. `close()` leaves it open. Do not pass `databaseUrl`, `database` or `namespace` with it. |
+| `ringCoverMs` | New | Milliseconds, default 0 (off). A new job that is claimable at once and whose queue has a claimable job rung in the last `ringCoverMs` ms gets no bell of its own: it is recorded as rung by that bell. Needs this package's workers (`claimAgain`, on by default) on every consumer of the queue; any other consumer waits for the tick's re-ring. Do not pass it with `store`. |
 | `logger`, `metrics` | New | Sinks (`warn`, `count`). Errors thrown by a sink are swallowed. |
 | `defaultJobOptions` | Supported | Merged under the options of every `add`. Validated when the queue is built. |
 | `connection` | Not supported | Upstream selects a TCP or shared connection with it. Use `databaseUrl` or `database`. |
 | `host`, `port` | Not supported | The Qelay TCP server does not exist here. |
 | `embedded`, `dataPath` | Not supported | Embedded mode is a SQLite-in-process engine. There is none. |
-| `autoBatch` | Not supported | No client-side batching: `addBulk` is one transaction. |
+| `autoBatch` | Not supported | No client-side batching by default: `addBulk` is one transaction. Qelay-Cloud's own `groupCommit` queue option (off by default) lets concurrent `add` calls share one. |
 | `prefixKey` | Not supported | Namespacing is `namespace`; the tables are `qcloud_*`. |
 
 Each refused option throws `UnsupportedOptionError(key, 'is a Qelay option and is not supported: <advice> (docs/compat.md)')`.
@@ -291,6 +292,8 @@ The connection options are a `Queue`'s, minus `defaultJobOptions`.
 | `workerName` | New | The display name in the worker list. Default: the worker's id. |
 | `drainedAfterMs` | New | How long the worker is idle before it checks the queue and emits `drained`. Default 250. |
 | `closeTransport` | New | Close the transport together with the worker. Default false: the transport belongs to the caller. |
+| `claimAgain` | New | Default true. After a job ends and the last claim came back full, the worker claims again for its free slots without a bell, until a claim comes back short. False: only a bell starts a claim. |
+| `groupComplete` | New | `true` or `{ maxJobs?: number }` (1 to 1,000, default 100). Jobs that finish while another finish is being stored share one transaction. Off by default. |
 | `databaseUrl`, `database`, `transport`, `namespace`, `store`, `logger`, `metrics` | New | As on the `Queue`. |
 | `connection`, `host`, `port`, `embedded`, `dataPath`, `prefixKey` | Not supported | As on the `Queue`. |
 | `batchSize`, `pollTimeout`, `drainDelay` | Not supported | The worker waits for bells and does not poll. A bell claims as many jobs as the free slots allow. |

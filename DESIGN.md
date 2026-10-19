@@ -35,6 +35,7 @@ Sources studied: `qelay` (`../qelay`, about 97k lines of TypeScript, MIT) and
 | D5 | **Postgres is authoritative; the cloud queue is a "doorbell"** (section 3). The engine is ported from Qelay, not rewritten. | **Decided** at the Phase 0 gate |
 | D6 | Flows run on Postgres dependency tables, not Step Functions or Cloud Workflows. | Proposed |
 | D7 | Panel is copied and diverges (it is pinned to Qelay 2.9.11 contracts), not consumed as a dependency. | Proposed |
+| D10 | **Scale out by namespace, with an explicit map** (`QCLOUD_SHARDS`), one Postgres per shard. A namespace never spans databases. No hashing, no cross-shard queries. | Decided (review R21) |
 
 The numbering above is this document's. The build plan's `CURRENT.md` has its own list (D1-D12) of decisions
 that are the user's call, and its D1 (worker hosting) and D2 (doorbell granularity) are section 10's open
@@ -179,6 +180,17 @@ One idempotent function that is safe to run concurrently with itself. It does le
   counts bells. `rung_at` means "a doorbell is deliverable at this time" (now, or `run_at` for a
   delayed bell), is set only for bells the broker took, and is cleared whenever a job returns to
   claimable (retry, recovery, resume, promotion).
+- **Covered jobs (opt-in `ringCoverMs`).** An enqueue whose queue already has a claimable job rung in the last
+  `ringCoverMs` ms rings nothing and records the new job as rung at that bell's time. One bell wakes a worker, and a
+  worker whose claim came back full keeps claiming as its slots free (`claimAgain`), so it drains the backlog without
+  more bells. What that leaves behind (a worker that found the queue empty a moment before the add, or a consumer
+  that does not claim again) is found by the same re-ring, at most `reRingAfterMs` after the covering bell. A covered
+  job takes its bell's age, never now, so a steady stream of adds cannot hold the window open. The model harness does
+  not cover it (it breaks "deliverable bells >= claimable jobs" by design); the store tests and
+  `worker.pump.test.ts` do.
+- **The tick's re-rings have their own cap.** `maxStaleRingsPerQueue` (default: the per-queue cap) limits the jobs
+  whose bell has aged out, so a deep healthy backlog is not rung in full each interval, while jobs never rung keep
+  the whole cap.
 - **Limits on the re-ring.** A cap per queue per tick: under a backlog, an uncapped tick rings one
   doorbell per waiting job every time. A grace period for a job with no `rung_at` yet, so the tick
   does not ring jobs whose publish is still in flight.
@@ -194,9 +206,34 @@ One idempotent function that is safe to run concurrently with itself. It does le
   when two run. A crashed leader is replaced within about the lease length; a graceful one hands
   over within a tick. In a worker's shutdown the loop stops after the jobs are released and before
   the transport closes, because its last beat may still ring. It is also run as an endpoint
-  (`POST /internal/tick`, OIDC or a shared secret) and a CLI (`qcloud-tick run | serve`).
+  (`POST /internal/tick`, OIDC or a shared secret) and a CLI (`qcloud-tick run | serve | loop`).
+  `loop` is the always-on form: a beat every second by default, with the retention steps (they
+  free space and gain nothing from running each second) on their own 30 s schedule per process
+  (`upkeepEveryMs`; recovery, crons, promotion, expiry and the ring query run on every beat).
+  Both Terraform examples run it as `tick_loop`: a fixed count of tasks of the tick image on the tick's identity, next to
+  the scheduler. `webhook_sender` does the same for `qcloud-tick send`, with the webhook key (`webhooks`) readable by the
+  tick and the control plane and by no worker. Both hold database pools the budget counts, under the workers' database user.
 - **Cloud Scheduler stays.** The 1-minute scheduler tick is the safety net and the cron source,
   and the in-process tick never replaces it.
+
+### Shards (review R21)
+
+Every table is scoped by `namespace`, the journal lock and the tick lease are per namespace, and a transport's topics and
+queues are per namespace, so a namespace is already a unit that needs nothing outside itself. Scaling out is therefore
+a routing table, not a data-model change: `QCLOUD_SHARDS=acme=a,globex=b` says which database holds a namespace, and
+`QCLOUD_SHARD_A_DATABASE_URL` (with any `QCLOUD_SHARD_A_DATABASE_*` override of the shared `QCLOUD_DATABASE_*`) says how to
+reach it. `ShardMap` (`packages/store-postgres`) is that table; the SDK (`shards` option), the Control API and `qcloud-tick`
+each look their namespace up and open that one database.
+
+- **Explicit, not hashed.** A hash moves namespaces when a shard is added; here one moves only when someone edits the
+  map and copies its rows. A namespace the map does not list is refused, not guessed.
+- **One TickLoop per namespace, one pool per shard.** `QCLOUD_SHARD=a qcloud-tick loop` ticks every namespace of shard
+  `a` over one pool. The lease key is the namespace, so two such processes still fail over.
+- **The Control API and the panel stay one namespace per process.** The map chooses that process's database. A request-time
+  router needs the namespace in the URL and the authorization model and is not built.
+- **A single namespace cannot be split.** The gain comes from several namespaces, not from one busy one.
+- **Not built:** moving a namespace (manual), views across shards, Terraform for several databases, the connection
+  budget as one number (it is per shard). Not measured under load.
 
 ## 4. Feature mapping
 
@@ -218,7 +255,7 @@ One idempotent function that is safe to run concurrently with itself. It does le
 | Events / live activity | Postgres `qcloud_events` | - | - | `events.ts`, `eventJournal.ts` |
 | Workers page | Postgres heartbeats | - | - | `workers.ts` |
 | Metrics | Postgres buckets + cloud metrics | Cloud Monitoring | CloudWatch | `qelay_metric_*` |
-| Webhooks | Postgres config + deliveries, sent by the tick | - | - | `qcloud_webhooks`, `qcloud_webhook_deliveries`, `webhookSender.ts` (task 52; upstream `webhookManager.ts` was in-memory) |
+| Webhooks | Postgres config + deliveries, sent by the tick | - | - | `qcloud_webhooks`, `qcloud_deliveries` (before migration 13 `qcloud_webhook_deliveries`), `webhookSender.ts` (task 52; upstream `webhookManager.ts` was in-memory) |
 | Process start/stop/restart, SQLite inspector, S3 backup, Fleet | n/a | dropped | dropped | n/a (replaced by managed backups and deploy status) |
 
 ## 5. Packages
@@ -296,7 +333,9 @@ interface StateStore {                                  // time comes from an in
 
 **Transport.** One cloud queue per Qelay queue: `subscribe` and `stats` take the queue, and `ring`
 routes each bell by `bell.queue`. On GCP that is one topic per environment with a filtered
-subscription per queue. A worker that receives a bell for a queue it does not serve can do nothing
+subscription per queue, or, for a *hot* queue, a topic of its own (`qcloud.<ns>.hot.<queue>`) with an unfiltered
+subscription, so a busy queue's bells are not delivered once per queue of the environment. The list is configuration
+(`QCLOUD_GCP_HOT_QUEUES`), kept in one place (`names.ts`). A worker that receives a bell for a queue it does not serve can do nothing
 with it, and SQS cannot filter. Adding a queue is an infrastructure change.
 
 **Store.** Every mutation that makes a job claimable returns the doorbells to ring, with the delay
@@ -397,8 +436,24 @@ audited. What the design asked for, and what was decided where it left room:
   the panel's queue-operations metrics (they come from the local agent), and the job `name` in an event frame.
 
 **As built (task 52, [docs/webhooks.md](docs/webhooks.md)).** Webhooks are persisted (migration 8: `qcloud_webhooks`,
-`qcloud_webhook_deliveries`) and sent by a step of the tick, after the store's own work and the ringing. What was decided
-where the design left room:
+`qcloud_webhook_deliveries`; partitioned by day in migration 13 as `qcloud_deliveries`) and sent by a step of the tick, after
+the store's own work and the ringing. What was decided where the design left room:
+
+- **A writer, not the trigger, can make the deliveries (migration 14, review F7).** The trigger cannot apply a per-webhook
+  filter or shape, and a shaped body must be the same bytes on every retry. A row in `qcloud_webhook_writers` moves a
+  namespace to a writer that reads the journal after a cursor, matches each event with the enabled webhooks (`filter`, `shape`,
+  `active_from`), renders the body once into `qcloud_deliveries.body` and moves the cursor, in one transaction. The trigger
+  keeps working for namespaces without a row, so the default is unchanged. Switching off is lossless: the trigger resumes
+  first, the writer catches up, and a final `FOR UPDATE` on the row waits for job transactions that skipped their deliveries.
+  The cost is that deliveries are written a moment after the job's commit, not in it, and an event the journal's retention
+  removes first makes none. Filters and shapes see the seven fields of the event, not the job's `data`, because the journal
+  carries none; adding job data would need it in the journal (a payload copy per event) and is not built.
+- **Deliveries are partitioned by day (migration 13, review F2).** Finished rows were deleted one by one on the hot table,
+  which kept a standing load of dead tuples. `qcloud_deliveries` is partitioned by `created_at` (the event's time), and the
+  tick drops a day whole once it is `webhookKeepMs` (default 2 days, was 7) past its end and holds no live delivery. A default
+  partition takes a row whose day has no partition, so a write never fails for a missing one. The `events` table is not
+  partitioned: its retention is a cap per queue, not an age, and its readers need one ordered key. See docs/limits.md,
+  "Webhook deliveries by day".
 
 - **Deliveries are made in the job's transaction.** A trigger on `qcloud_events` inserts one delivery per enabled webhook
   that matches the event, so a job and its deliveries commit together and a webhook sees only events committed after it
@@ -411,9 +466,13 @@ where the design left room:
   at-least-once and the receiver deduplicates on `X-Webhook-Id`).
 - **Signing:** `X-Webhook-Signature: v1=hex(HMAC-SHA256(secret, "<timestamp>.<body>"))`, a 300 s replay window. The secret is
   sealed (AES-256-GCM, authenticated with the row's identity) under `QCLOUD_WEBHOOK_KEY`, which the database never holds,
-  and is never returned after the call that sets it. Unsigned webhooks are allowed and listed as `signed: false`.
+  and is never returned after the call that sets it, except that a secret the service generated (a store with a key, none
+  given) is returned once in the create or rotate response. A store with a key signs every webhook; without one,
+  webhooks are unsigned and listed as `signed: false`. Rotation keeps the old secret signing beside the new for 24 hours.
+  A webhook whose deliveries fail 20 times in a row (every attempt used) is paused: `enabled = false` with a reason, deliveries
+  still collected for 24 hours, enabling it clears the pause.
 - **SSRF:** `https:` only outside development, no credentials, no private name, every resolved address public, the request
-  sent to the address that was checked (not the name), no redirect followed, no response body kept. Registration validates
+  sent to the address that was checked (not the name), no redirect followed, no response body kept (a failed answer's first 1 KB is kept as text on the attempt). Registration validates
   the string and does not resolve the name; the send-time check is the defence. An independent review is owed in task 72.
 - **The body carries no job data**, only ids and the state after the event. Best-effort order, no ordering guarantee.
 - **Routes:** `/webhooks` (list, create), `/webhooks/:id` (get, delete), `/webhooks/:id/enabled`, `/webhooks/:id/test`
@@ -564,8 +623,8 @@ is a compare-and-set for `cancel` and `recover` only.
    an ECS service). Seconds-level delay precision exists only there. Scale-to-zero push handlers are a thin
    add-on after v1.0.0, with one-minute precision. (CURRENT.md D1)
 2. **Doorbell granularity.** *Closed for Pub/Sub: per job.* Per-queue doorbells drained a backlog faster and
-   were no faster under steady load. SQS: per job costs about 2.1 requests per job on the emulator (about $0.84 per
-   million jobs at the list price, [docs/limits.md](docs/limits.md) section 11), so it stays per job pending a
+   were no faster under steady load. SQS: per job costs about 1.1 to 1.6 requests per job on the emulator (deletes are batched; about
+   $0.64 per million jobs at the list price at the high end, [docs/limits.md](docs/limits.md) section 11), so it stays per job pending a
    real-SQS load test.
    (CURRENT.md D2)
 3. **Tenancy**: map Qelay's `namespace` column to environment (dev/prod) or to tenant? Default: environment.

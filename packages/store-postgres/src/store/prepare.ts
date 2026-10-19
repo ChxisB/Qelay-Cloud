@@ -1,6 +1,8 @@
 import type { BackoffOptions, Codec, JobOptions, NewJob } from '@qelay-cloud/core';
 import { StoreError, UnsupportedOptionError, validateJobOptions } from '@qelay-cloud/core';
-import { BatchTooLargeError, PayloadTooLargeError } from '../errors';
+import { BatchTooLargeError, PayloadTooComplexError, PayloadTooLargeError } from '../errors';
+import type { ShapeLimits } from './payloadShape';
+import { overShape } from './payloadShape';
 
 /** Most jobs one `enqueue` call admits. The bulk insert runs in chunks of this size. */
 export const MAX_BATCH = 1000;
@@ -58,7 +60,7 @@ export interface PreparedJob {
   readonly groupMaxSize: number | null;
 }
 
-export interface PrepareLimits {
+export interface PrepareLimits extends ShapeLimits {
   readonly maxBatch: number;
   readonly maxPayloadBytes: number;
 }
@@ -130,9 +132,12 @@ function prepareOne(job: NewJob, index: number, codec: Codec, limits: PrepareLim
     job.name === undefined ? DEFAULT_JOB_NAME : text('name', job.name, MAX_IDENTIFIER_CHARS);
   const options = validateJobOptions(job.options);
   if (job.trace !== undefined) text('trace', job.trace, MAX_IDENTIFIER_CHARS);
+  const envelope = envelopeOf(job, name, options);
+  const shape = overShape(job.data, limits);
+  if (shape) throw new PayloadTooComplexError(shape.kind, shape.limit, index);
   let payload: Uint8Array;
   try {
-    payload = codec.encode(envelopeOf(job, name, options));
+    payload = codec.encode(envelope);
   } catch (error) {
     throw new StoreError(`the payload of job ${index} cannot be encoded`, { cause: error });
   }

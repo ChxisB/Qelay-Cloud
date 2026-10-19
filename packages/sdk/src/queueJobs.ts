@@ -4,6 +4,7 @@ import type { BulkJob } from './add';
 import { addJob, addJobs } from './add';
 import { appendLog, clearLogs, jobLogs } from './config';
 import type { JobLogs } from './config';
+import { AddBatcher, groupCommitSize } from './groupCommit';
 import type { Job } from './job';
 import type { JobStateName } from './jobOps';
 import * as ops from './jobOps';
@@ -23,10 +24,17 @@ import { openRuntime } from './runtime';
 export abstract class QueueJobs<T = unknown> {
   readonly name: string;
   protected readonly rt: Runtime;
+  /** Set by `groupCommit`: concurrent `add` calls share a transaction. `close` drains it. */
+  protected readonly adds: AddBatcher | undefined;
 
   protected constructor(name: string, options: QueueOptions) {
     this.rt = openRuntime(name, options);
     this.name = name;
+    const { groupCommit } = options;
+    this.adds =
+      groupCommit === undefined || groupCommit === false
+        ? undefined
+        : new AddBatcher(this.rt, groupCommitSize(groupCommit));
   }
 
   /**
@@ -35,7 +43,9 @@ export abstract class QueueJobs<T = unknown> {
    * (`duplicated: true`) when the custom id or deduplication key matches one.
    */
   add<R = unknown>(name: string, data: T, opts?: JobOptions): Promise<Job<T, R>> {
-    return addJob<T, R>(this.rt, name, data, opts);
+    return this.adds === undefined
+      ? addJob<T, R>(this.rt, name, data, opts)
+      : this.adds.add<T, R>(name, data, opts);
   }
 
   /** In one transaction. Options are all validated before anything is sent. */

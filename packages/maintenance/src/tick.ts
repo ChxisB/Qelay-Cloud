@@ -153,6 +153,7 @@ export async function runTick(deps: TickDeps, config: TickConfig): Promise<PassR
     ['webhooks.retrying', sent.retrying],
     ['webhooks.failed', sent.failed],
     ['webhooks.stale', sent.stale],
+    ['webhooks.paused', sent.paused],
     ['webhooks.errors', sent.errors],
     ...totals,
     ['more_work', report.moreWork || swept.moreWork || sent.moreWork ? 1 : 0],
@@ -175,6 +176,7 @@ export async function runTick(deps: TickDeps, config: TickConfig): Promise<PassR
       retrying: sent.retrying,
       failed: sent.failed,
       stale: sent.stale,
+      paused: sent.paused,
       errors: sent.errors,
     },
   };

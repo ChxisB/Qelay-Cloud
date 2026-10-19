@@ -7,6 +7,8 @@ output "connection_budget" {
     utilization     = module.budget.utilization
     direct_required = module.budget.direct_required
     pooled_required = module.budget.pooled_required
+
+    worker_role_limit = module.budget.worker_role_limit
   }
 }
 
@@ -85,10 +87,12 @@ output "control_plane_inputs" {
     subnet_cidr                    = var.subnet_cidr
     data_plane_instances           = local.total_instances
     topic_name                     = module.messaging.topic_name
+    hot_topic_names                = module.messaging.hot_topic_names
     dead_letter_subscription_names = module.messaging.dead_letter_subscription_names
     database_url_secret            = local.secret_ref["database-url"]
     database_ca_secret             = lookup(local.secret_ref, "database-ca", null)
     database_direct_url_secret     = lookup(local.secret_ref, "database-listen-url", null)
+    webhook_key_secret             = lookup(local.secret_ref, "webhook-key", null)
     database_tls                   = var.database_tls
     pooled                         = local.pooled
     budgeted_control_processes     = var.control_processes

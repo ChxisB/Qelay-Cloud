@@ -21,7 +21,7 @@ locals {
 resource "google_cloud_run_v2_service" "panel" {
   name                = local.panel_name
   location            = var.region
-  ingress             = local.private ? "INGRESS_TRAFFIC_INTERNAL_ONLY" : "INGRESS_TRAFFIC_ALL"
+  ingress             = local.ingress
   deletion_protection = false
   labels              = local.labels
 

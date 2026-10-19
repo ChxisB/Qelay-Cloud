@@ -67,6 +67,14 @@ export function checkDatabase(plan: Plan, checks: Checks, maxConnections: number
     ? flags.find((f) => get(f, 'name') === 'max_connections')
     : undefined;
   checks.ok('max_connections is the budgeted flag', get(flag, 'value') === String(maxConnections));
+  const flagValue = (name: string) =>
+    Array.isArray(flags) ? get(flags.find((f) => get(f, 'name') === name), 'value') : undefined;
+  checks.ok(
+    'the session timeouts are set on the server: statement 30 s, lock 5 s, idle in transaction 30 s',
+    flagValue('statement_timeout') === '30000' &&
+      flagValue('lock_timeout') === '5000' &&
+      flagValue('idle_in_transaction_session_timeout') === '30000'
+  );
 }
 
 /** Every queue has its own subscription, and each agrees with what the transport looks up. */
@@ -94,10 +102,17 @@ export function checkMessaging(
   // configuration: what the expression refers to, not what it evaluates to.
   const refs = (resource: string, ...path: Array<string | number>) =>
     referencesOf(plan, 'messaging', resource, ...path);
+  const hot = Object.entries(queues).filter(([, given]) => (given as { hot?: boolean }).hot === true);
   checks.ok(
-    'queue subscriptions are on the doorbell topic',
-    refs('google_pubsub_subscription.queue', 'topic').includes('google_pubsub_topic.bells.id')
+    'a queue is on the doorbell topic, or on its own topic when hot',
+    refs('google_pubsub_subscription.queue', 'topic').includes('google_pubsub_topic.bells.id') &&
+      (hot.length === 0 ||
+        refs('google_pubsub_subscription.queue', 'topic').includes('google_pubsub_topic.hot'))
   );
+  for (const [queue] of hot) {
+    const own = queueNames(namespace, queue, true).topic;
+    checks.ok(`${queue}: its own topic has the transport's name`, topics.includes(own), own);
+  }
   checks.ok(
     'queue subscriptions dead-letter to the dead-letter topic',
     refs('google_pubsub_subscription.queue', 'dead_letter_policy', 0, 'dead_letter_topic').includes(
@@ -111,14 +126,15 @@ export function checkMessaging(
     )
   );
   for (const [queue, given] of Object.entries(queues)) {
-    const wanted = queueNames(namespace, queue);
+    const wanted = queueNames(namespace, queue, (given as { hot?: boolean }).hot === true);
     const main = byName.get(wanted.subscription);
     const dead = byName.get(wanted.deadLetterSubscription);
     checks.ok(`${queue}: its own subscription`, main !== undefined);
     checks.ok(`${queue}: its own dead-letter subscription`, dead !== undefined);
     checks.ok(
       `${queue}: the transport's filter`,
-      get(main, 'filter') === wanted.filter && get(dead, 'filter') === wanted.filter
+      (get(main, 'filter') ?? undefined) === wanted.subscriptionFilter &&
+        get(dead, 'filter') === wanted.filter
     );
     checks.ok(
       `${queue}: no ordering, no exactly-once`,

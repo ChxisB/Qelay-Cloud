@@ -26,6 +26,44 @@ TABLE qcloud_crons
   executions integer NOT NULL DEFAULT 0
   max_limit integer
   updated_at bigint NOT NULL
+TABLE qcloud_deliveries
+  id bigint NOT NULL DEFAULT nextval('qcloud_deliveries_id_seq'::regclass)
+  namespace text NOT NULL
+  webhook_id text NOT NULL
+  event_id bigint
+  event_name text NOT NULL
+  queue text NOT NULL
+  job_id text NOT NULL
+  occurred_at bigint NOT NULL
+  status text NOT NULL
+  attempts integer NOT NULL DEFAULT 0
+  attempt_base integer NOT NULL DEFAULT 0
+  next_attempt_at bigint NOT NULL
+  last_status_code integer
+  last_error text
+  history jsonb NOT NULL DEFAULT '[]'::jsonb
+  created_at bigint NOT NULL
+  finished_at bigint
+  body text
+TABLE qcloud_deliveries_default
+  id bigint NOT NULL DEFAULT nextval('qcloud_deliveries_id_seq'::regclass)
+  namespace text NOT NULL
+  webhook_id text NOT NULL
+  event_id bigint
+  event_name text NOT NULL
+  queue text NOT NULL
+  job_id text NOT NULL
+  occurred_at bigint NOT NULL
+  status text NOT NULL
+  attempts integer NOT NULL DEFAULT 0
+  attempt_base integer NOT NULL DEFAULT 0
+  next_attempt_at bigint NOT NULL
+  last_status_code integer
+  last_error text
+  history jsonb NOT NULL DEFAULT '[]'::jsonb
+  created_at bigint NOT NULL
+  finished_at bigint
+  body text
 TABLE qcloud_dependencies
   namespace text NOT NULL
   job_id text NOT NULL
@@ -189,6 +227,13 @@ TABLE qcloud_webhook_deliveries
   history jsonb NOT NULL DEFAULT '[]'::jsonb
   created_at bigint NOT NULL
   finished_at bigint
+TABLE qcloud_webhook_writers
+  namespace text NOT NULL
+  commit_seq bigint NOT NULL
+  event_id bigint NOT NULL
+  stopping boolean NOT NULL DEFAULT false
+  started_at bigint NOT NULL
+  updated_at bigint NOT NULL
 TABLE qcloud_webhooks
   namespace text NOT NULL
   id text NOT NULL
@@ -204,6 +249,15 @@ TABLE qcloud_webhooks
   last_triggered bigint
   rate_window_start bigint NOT NULL DEFAULT 0
   rate_window_count integer NOT NULL DEFAULT 0
+  filter jsonb
+  shape jsonb
+  active_from bigint
+  consecutive_failures integer NOT NULL DEFAULT 0
+  alert_level smallint NOT NULL DEFAULT 0
+  disabled_reason text
+  disabled_at bigint
+  secret_previous_sealed text
+  secret_previous_until bigint
 TABLE qcloud_workers
   namespace text NOT NULL
   id text NOT NULL
@@ -264,6 +318,12 @@ TABLE qcloud_workflow_executions_archive
 CONSTRAINT qcloud_audit.qcloud_audit_pkey PRIMARY KEY (id)
 CONSTRAINT qcloud_completions.qcloud_completions_pkey PRIMARY KEY (namespace, job_id)
 CONSTRAINT qcloud_crons.qcloud_crons_pkey PRIMARY KEY (namespace, name)
+CONSTRAINT qcloud_deliveries.qcloud_deliveries_namespace_webhook_id_fkey FOREIGN KEY (namespace, webhook_id) REFERENCES qcloud_webhooks(namespace, id) ON DELETE CASCADE
+CONSTRAINT qcloud_deliveries.qcloud_deliveries_pkey PRIMARY KEY (id, created_at)
+CONSTRAINT qcloud_deliveries.qcloud_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sending'::text, 'delivered'::text, 'failed'::text])))
+CONSTRAINT qcloud_deliveries_default.qcloud_deliveries_default_pkey PRIMARY KEY (id, created_at)
+CONSTRAINT qcloud_deliveries_default.qcloud_deliveries_namespace_webhook_id_fkey FOREIGN KEY (namespace, webhook_id) REFERENCES qcloud_webhooks(namespace, id) ON DELETE CASCADE
+CONSTRAINT qcloud_deliveries_default.qcloud_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sending'::text, 'delivered'::text, 'failed'::text])))
 CONSTRAINT qcloud_dependencies.qcloud_dependencies_on_failure_check CHECK ((on_failure = ANY (ARRAY['fail'::text, 'continue'::text, 'ignore'::text, 'remove'::text])))
 CONSTRAINT qcloud_dependencies.qcloud_dependencies_pkey PRIMARY KEY (namespace, job_id, dependency_id)
 CONSTRAINT qcloud_event_commits.qcloud_assign_event_commit TRIGGER DEFERRABLE INITIALLY DEFERRED
@@ -292,6 +352,7 @@ CONSTRAINT qcloud_tick_state.qcloud_tick_state_pkey PRIMARY KEY (namespace)
 CONSTRAINT qcloud_webhook_deliveries.qcloud_webhook_deliveries_namespace_webhook_id_fkey FOREIGN KEY (namespace, webhook_id) REFERENCES qcloud_webhooks(namespace, id) ON DELETE CASCADE
 CONSTRAINT qcloud_webhook_deliveries.qcloud_webhook_deliveries_pkey PRIMARY KEY (id)
 CONSTRAINT qcloud_webhook_deliveries.qcloud_webhook_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sending'::text, 'delivered'::text, 'failed'::text])))
+CONSTRAINT qcloud_webhook_writers.qcloud_webhook_writers_pkey PRIMARY KEY (namespace)
 CONSTRAINT qcloud_webhooks.qcloud_webhooks_events_check CHECK ((cardinality(events) >= 1))
 CONSTRAINT qcloud_webhooks.qcloud_webhooks_pkey PRIMARY KEY (namespace, id)
 CONSTRAINT qcloud_workers.qcloud_workers_pkey PRIMARY KEY (namespace, id)
@@ -310,6 +371,18 @@ CREATE INDEX qcloud_completions_queue_idx ON qcloud_completions USING btree (nam
 CREATE INDEX qcloud_completions_recent_idx ON qcloud_completions USING btree (namespace, completed_at DESC, job_id DESC)
 CREATE INDEX qcloud_crons_due_idx ON qcloud_crons USING btree (namespace, next_run, name)
 CREATE UNIQUE INDEX qcloud_crons_pkey ON qcloud_crons USING btree (namespace, name)
+CREATE INDEX qcloud_deliveries_default_created_idx ON qcloud_deliveries_default USING btree (created_at)
+CREATE INDEX qcloud_deliveries_default_finished_idx ON qcloud_deliveries_default USING btree (namespace, finished_at) WHERE (status = ANY (ARRAY['delivered'::text, 'failed'::text]))
+CREATE INDEX qcloud_deliveries_default_namespace_next_attempt_at_idx ON qcloud_deliveries_default USING btree (namespace, next_attempt_at) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]))
+CREATE UNIQUE INDEX qcloud_deliveries_default_namespace_webhook_id_event_id_cre_idx ON qcloud_deliveries_default USING btree (namespace, webhook_id, event_id, created_at) WHERE (event_id IS NOT NULL)
+CREATE INDEX qcloud_deliveries_default_namespace_webhook_id_id_idx ON qcloud_deliveries_default USING btree (namespace, webhook_id, id DESC)
+CREATE INDEX qcloud_deliveries_default_namespace_webhook_id_next_attempt_idx ON qcloud_deliveries_default USING btree (namespace, webhook_id, next_attempt_at, id) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]))
+CREATE UNIQUE INDEX qcloud_deliveries_default_pkey ON qcloud_deliveries_default USING btree (id, created_at)
+CREATE INDEX qcloud_deliveries_due_idx ON ONLY qcloud_deliveries USING btree (namespace, webhook_id, next_attempt_at, id) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]))
+CREATE UNIQUE INDEX qcloud_deliveries_event_idx ON ONLY qcloud_deliveries USING btree (namespace, webhook_id, event_id, created_at) WHERE (event_id IS NOT NULL)
+CREATE INDEX qcloud_deliveries_history_idx ON ONLY qcloud_deliveries USING btree (namespace, webhook_id, id DESC)
+CREATE UNIQUE INDEX qcloud_deliveries_pkey ON ONLY qcloud_deliveries USING btree (id, created_at)
+CREATE INDEX qcloud_deliveries_stale_idx ON ONLY qcloud_deliveries USING btree (namespace, next_attempt_at) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]))
 CREATE INDEX qcloud_dependencies_dependency_idx ON qcloud_dependencies USING btree (namespace, dependency_id, job_id)
 CREATE UNIQUE INDEX qcloud_dependencies_pkey ON qcloud_dependencies USING btree (namespace, job_id, dependency_id)
 CREATE UNIQUE INDEX qcloud_event_commits_pkey ON qcloud_event_commits USING btree (namespace, transaction_id)
@@ -357,6 +430,7 @@ CREATE INDEX qcloud_webhook_deliveries_finished_idx ON qcloud_webhook_deliveries
 CREATE INDEX qcloud_webhook_deliveries_history_idx ON qcloud_webhook_deliveries USING btree (namespace, webhook_id, id DESC)
 CREATE UNIQUE INDEX qcloud_webhook_deliveries_pkey ON qcloud_webhook_deliveries USING btree (id)
 CREATE INDEX qcloud_webhook_deliveries_stale_idx ON qcloud_webhook_deliveries USING btree (namespace, next_attempt_at) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]))
+CREATE UNIQUE INDEX qcloud_webhook_writers_pkey ON qcloud_webhook_writers USING btree (namespace)
 CREATE UNIQUE INDEX qcloud_webhooks_pkey ON qcloud_webhooks USING btree (namespace, id)
 CREATE UNIQUE INDEX qcloud_workers_pkey ON qcloud_workers USING btree (namespace, id)
 CREATE UNIQUE INDEX qcloud_workflow_definitions_pkey ON qcloud_workflow_definitions USING btree (namespace, name, hash)
@@ -370,7 +444,15 @@ CREATE UNIQUE INDEX qcloud_workflow_executions_pkey ON qcloud_workflow_execution
 CREATE INDEX qcloud_workflow_executions_progress_idx ON qcloud_workflow_executions USING btree (namespace, state, updated_at, id)
 CREATE INDEX qcloud_workflow_executions_state_idx ON qcloud_workflow_executions USING btree (namespace, state, created_at DESC, id DESC)
 CREATE INDEX qcloud_workflow_executions_wait_idx ON qcloud_workflow_executions USING btree (namespace, wait_deadline, id) WHERE ((state = 'waiting'::text) AND (wait_deadline IS NOT NULL))
+OPTIONS qcloud_deliveries_default fillfactor=80, autovacuum_vacuum_scale_factor=0.01
+OPTIONS qcloud_jobs fillfactor=80, autovacuum_vacuum_scale_factor=0.01
+OPTIONS qcloud_metric_buckets fillfactor=80, autovacuum_vacuum_scale_factor=0.01
+OPTIONS qcloud_metric_totals fillfactor=80, autovacuum_vacuum_scale_factor=0.01
+OPTIONS qcloud_queue_state fillfactor=80, autovacuum_vacuum_scale_factor=0.01
+OPTIONS qcloud_webhook_deliveries fillfactor=80, autovacuum_vacuum_scale_factor=0.01
+PARTITIONED qcloud_deliveries RANGE (created_at)
 SEQUENCE qcloud_audit_id_seq bigint start 1 min 1 max 9223372036854775807 increment 1 cycle f cache 1
+SEQUENCE qcloud_deliveries_id_seq bigint start 1 min 1 max 9223372036854775807 increment 1 cycle f cache 1
 SEQUENCE qcloud_event_commit_seq bigint start 1 min 1 max 9223372036854775807 increment 1 cycle f cache 1
 SEQUENCE qcloud_events_id_seq bigint start 1 min 1 max 9223372036854775807 increment 1 cycle f cache 1
 SEQUENCE qcloud_group_order_seq bigint start 1 min 1 max 9223372036854775807 increment 1 cycle f cache 1
@@ -413,10 +495,44 @@ BEGIN
   RETURN NULL;
 END;
 
+FUNCTION qcloud_drop_delivery_partitions(before_ms bigint) RETURNS integer LANGUAGE plpgsql
+
+DECLARE
+  part TEXT;
+  live BOOLEAN;
+  dropped INTEGER := 0;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext(current_schema() || '/qcloud_deliveries'));
+  PERFORM set_config('lock_timeout', '1000', true);
+  FOR part IN
+    SELECT c.relname::text FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+    WHERE i.inhparent = 'qcloud_deliveries'::regclass AND c.relname ~ '^qcloud_deliveries_[0-9]{8}$'
+      AND extract(epoch FROM to_date(substr(c.relname::text, 19), 'YYYYMMDD') + 1)::BIGINT * 1000 <= before_ms
+    ORDER BY c.relname
+  LOOP
+    EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I WHERE status IN (''pending'', ''sending''))', part)
+      INTO live;
+    CONTINUE WHEN live;
+    BEGIN
+      EXECUTE format('DROP TABLE %I', part);
+      dropped := dropped + 1;
+    EXCEPTION WHEN lock_not_available THEN
+      EXIT;
+    END;
+  END LOOP;
+  RETURN dropped;
+END
+
 FUNCTION qcloud_enqueue_webhook_deliveries() RETURNS trigger LANGUAGE plpgsql
 
+DECLARE
+  written TEXT[];
 BEGIN
-  INSERT INTO qcloud_webhook_deliveries
+  SELECT coalesce(array_agg(s.namespace), '{}') INTO written FROM (
+    SELECT x.namespace FROM qcloud_webhook_writers x
+    WHERE NOT x.stopping AND x.namespace IN (SELECT namespace FROM new_event_rows)
+    FOR KEY SHARE OF x) s;
+  INSERT INTO qcloud_deliveries
     (namespace, webhook_id, event_id, event_name, queue, job_id, occurred_at, status,
      next_attempt_at, created_at)
   SELECT e.namespace, w.id, e.id, m.webhook_event, e.queue, e.job_id, e.occurred_at, 'pending',
@@ -431,14 +547,49 @@ BEGIN
   ) AS m(event_type, webhook_event) ON m.event_type = e.event_type
   JOIN qcloud_webhooks w
     ON w.namespace = e.namespace
-   AND w.enabled
+   AND (w.enabled OR w.disabled_reason IS NOT NULL)
    AND m.webhook_event = ANY (w.events)
    AND (w.queue IS NULL OR w.queue = e.queue)
+  WHERE NOT (e.namespace = ANY (written))
   ORDER BY e.id, w.id
   FOR KEY SHARE OF w
   ON CONFLICT DO NOTHING;
   RETURN NULL;
 END;
+
+FUNCTION qcloud_ensure_delivery_partitions(now_ms bigint, ahead integer) RETURNS integer LANGUAGE plpgsql
+
+DECLARE
+  first_day INTEGER := (now_ms / 86400000)::INTEGER;
+  lo BIGINT;
+  part TEXT;
+  made INTEGER := 0;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext(current_schema() || '/qcloud_deliveries'));
+  PERFORM set_config('lock_timeout', '1000', true);
+  -- The loop variable is an INTEGER of its own: the day's start in milliseconds is made in a BIGINT.
+  FOR dn IN first_day .. first_day + ahead LOOP
+    lo := dn::BIGINT * 86400000;
+    part := 'qcloud_deliveries_' || to_char(to_timestamp(lo / 1000) AT TIME ZONE 'UTC', 'YYYYMMDD');
+    CONTINUE WHEN EXISTS (
+      SELECT 1 FROM pg_class WHERE relname = part AND relnamespace = current_schema()::regnamespace);
+    CONTINUE WHEN EXISTS (
+      SELECT 1 FROM qcloud_deliveries_default
+      WHERE created_at >= lo AND created_at < lo + 86400000);
+    -- Attach, not CREATE ... PARTITION OF, which takes ACCESS EXCLUSIVE on the parent.
+    BEGIN
+      EXECUTE format(
+        'CREATE TABLE %I (LIKE qcloud_deliveries INCLUDING DEFAULTS INCLUDING CONSTRAINTS) WITH (fillfactor = 80, autovacuum_vacuum_scale_factor = 0.01)', part);
+      EXECUTE format(
+        'ALTER TABLE qcloud_deliveries ATTACH PARTITION %I FOR VALUES FROM (%s) TO (%s)',
+        part, lo, lo + 86400000);
+      made := made + 1;
+    EXCEPTION WHEN lock_not_available THEN
+      EXIT;
+    END;
+  END LOOP;
+  RETURN made;
+END
 
 FUNCTION qcloud_register_event_rows() RETURNS trigger LANGUAGE plpgsql
 

@@ -76,6 +76,14 @@ export class FakeStore extends FakeCore implements StateStore {
     return { ok: true, rings: [] };
   }
 
+  async completeMany(
+    items: ReadonlyArray<{ readonly lease: Lease; readonly result: unknown }>
+  ): Promise<Outcome[]> {
+    const outcomes: Outcome[] = [];
+    for (const { lease, result } of items) outcomes.push(await this.complete(lease, result));
+    return outcomes;
+  }
+
   async fail(lease: Lease, error: FailureInfo): Promise<Outcome> {
     const row = this.held(lease);
     if (!row) return REFUSED;

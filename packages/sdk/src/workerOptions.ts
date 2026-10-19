@@ -1,6 +1,7 @@
 import { UnsupportedOptionError } from '@qelay-cloud/core';
 import type { LogLevel } from '@qelay-cloud/store-postgres';
 import type { FlowReads } from './flowOps';
+import { groupCommitSize } from './groupCommit';
 import type { QueueOptions } from './options';
 import { rejectLegacyOptions } from './options';
 
@@ -77,6 +78,18 @@ export interface WorkerOptions extends Omit<QueueOptions, 'defaultJobOptions'> {
   readonly drainedAfterMs?: number;
   /** Close the transport with the worker. Default false: the transport belongs to the caller. */
   readonly closeTransport?: boolean;
+  /**
+   * Off by default. When on, jobs that finish while another finish is being stored share one
+   * transaction (up to `maxJobs`, default 100): one commit and one set of metric rows for the group,
+   * instead of one per job. A worker that finishes one job at a time is unchanged. See `CompleteBatcher`.
+   */
+  readonly groupComplete?: boolean | { readonly maxJobs?: number };
+  /**
+   * Default true. When a job ends and the last claim came back full, the worker claims again for its
+   * free slots without waiting for a bell, until a claim comes back short. That is what lets one bell
+   * wake a worker for a whole backlog (see `ringCoverMs`). With false only a bell starts a claim.
+   */
+  readonly claimAgain?: boolean;
 }
 
 export interface ResolvedWorkerOptions {
@@ -88,7 +101,16 @@ export interface ResolvedWorkerOptions {
   readonly group: WorkerOptions['group'];
   readonly drainedAfterMs: number;
   readonly closeTransport: boolean;
+  readonly claimAgain: boolean;
+  /** Jobs per `completeMany`; undefined when `groupComplete` is off. */
+  readonly groupComplete: number | undefined;
 }
+
+/** What a worker's runtime takes from the resolved options. */
+export const runtimeOptions = (resolved: ResolvedWorkerOptions) => ({
+  ...(resolved.lockDuration === undefined ? {} : { leaseMs: resolved.lockDuration }),
+  ...(resolved.groupComplete === undefined ? {} : { groupComplete: resolved.groupComplete }),
+});
 
 export const MAX_WORKER_CONCURRENCY = 10_000;
 export const MIN_LOCK_DURATION_MS = 50;
@@ -146,6 +168,7 @@ export function resolveWorkerOptions(options: WorkerOptions): ResolvedWorkerOpti
   return {
     concurrency: integer('concurrency', options.concurrency, 1, 1, MAX_WORKER_CONCURRENCY),
     autorun: options.autorun ?? true,
+    claimAgain: options.claimAgain ?? true,
     lockDuration:
       options.lockDuration === undefined
         ? undefined
@@ -167,6 +190,10 @@ export function resolveWorkerOptions(options: WorkerOptions): ResolvedWorkerOpti
       3_600_000
     ),
     closeTransport: options.closeTransport ?? false,
+    groupComplete:
+      options.groupComplete === undefined || options.groupComplete === false
+        ? undefined
+        : groupCommitSize(options.groupComplete, 'groupComplete'),
   };
 }
 

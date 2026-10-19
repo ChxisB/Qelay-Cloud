@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
-import { WEBHOOK_HISTORY_ENTRIES } from '@qelay-cloud/core';
+import { WEBHOOK_HISTORY_ENTRIES, WEBHOOK_RESPONSE_CHARS } from '@qelay-cloud/core';
 import { describeDb } from '../../../test/support/db';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
@@ -9,7 +9,7 @@ import { addHook, CLAIM, event, journal, KEY, outcome, POLICY } from './webhookH
 describeDb('webhooks: recording attempts', () => {
   let t: TestStore;
   beforeAll(async () => {
-    t = await openTestStore({ webhookKey: KEY });
+    t = await openTestStore({ webhookKey: KEY, random: () => 0.5 });
   });
   afterAll(async () => {
     await t.drop();
@@ -33,7 +33,7 @@ describeDb('webhooks: recording attempts', () => {
       [outcome(claimed, { ok: true, statusCode: 204, at: t.clock.now() - 40 }, 33)],
       POLICY
     );
-    expect(summary).toEqual({ delivered: 1, retrying: 0, failed: 0, stale: 0 });
+    expect(summary).toEqual({ delivered: 1, retrying: 0, failed: 0, stale: 0, paused: 0 });
     expect(await only(hook.id)).toMatchObject({
       status: 'delivered',
       attempts: 1,
@@ -71,7 +71,7 @@ describeDb('webhooks: recording attempts', () => {
     t.clock.advance(2_000);
     const third = await claimOne();
     const summary = await t.store.webhooks.record([outcome(third, { ok: false })], POLICY);
-    expect(summary).toEqual({ delivered: 0, retrying: 0, failed: 1, stale: 0 });
+    expect(summary).toEqual({ delivered: 0, retrying: 0, failed: 1, stale: 0, paused: 0 });
     expect(await only(hook.id)).toMatchObject({
       status: 'failed',
       attempts: 3,
@@ -117,6 +117,7 @@ describeDb('webhooks: recording attempts', () => {
       retrying: 0,
       failed: 0,
       stale: 1,
+      paused: 0,
     });
     expect(await t.store.webhooks.record([done], POLICY)).toMatchObject({ delivered: 0, stale: 1 });
     expect(await t.store.webhooks.get(hook.id)).toMatchObject({ successCount: 1 });
@@ -153,6 +154,26 @@ describeDb('webhooks: recording attempts', () => {
     expect(delivery.history.at(-1)!.attempt).toBe(WEBHOOK_HISTORY_ENTRIES + 4);
     expect(delivery.lastError!.length).toBeLessThanOrEqual(500);
     expect(delivery.history.every((h) => h.error!.length <= 500)).toBe(true);
+  });
+
+  test('a failed answer keeps its first bytes in the history, cut and without NUL; a success keeps none', async () => {
+    const hook = await addHook(t);
+    await journal(t, [event('pushed')]);
+    const first = await claimOne();
+    await t.store.webhooks.record(
+      [outcome(first, { ok: false, response: `bad\0 gateway ${'y'.repeat(3_000)}` })],
+      POLICY
+    );
+    t.clock.advance(60_000);
+    const second = await claimOne();
+    await t.store.webhooks.record(
+      [outcome(second, { ok: true, response: 'ignored for a success' })],
+      POLICY
+    );
+    const history = (await only(hook.id)).history;
+    expect(history[0]!.response!.startsWith('bad gateway yyy')).toBe(true);
+    expect(history[0]!.response!.length).toBe(WEBHOOK_RESPONSE_CHARS);
+    expect('response' in history[1]!).toBe(false);
   });
 
   test('a manual retry gives a failed delivery a full budget while attempt numbers keep rising', async () => {
@@ -202,6 +223,7 @@ describeDb('webhooks: recording attempts', () => {
       retrying: 0,
       failed: 0,
       stale: 0,
+      paused: 0,
     });
   });
 });

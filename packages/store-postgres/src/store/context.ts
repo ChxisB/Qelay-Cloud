@@ -41,6 +41,8 @@ export interface StoreContext {
   readonly recorder: EventRecorder;
   /** Longest delay the transport can hold a bell for. 0: it cannot delay delivery at all. */
   readonly ringWindowMs: number;
+  /** A new job whose queue has a claimable job rung within this many ms is not rung (`ringCover.ts`). 0: every job is rung. */
+  readonly ringCoverMs: number;
   readonly limits: PrepareLimits;
   /** How long a lease lasts from a claim or a heartbeat, before the job's own timeouts shorten it. */
   readonly leaseMs: number;
@@ -65,6 +67,8 @@ export interface StoreContext {
   readonly auditRetentionMs: number;
   /** Entries the operator audit log keeps; past it the oldest go. */
   readonly maxAuditEntries: number;
+  /** How long a finished webhook delivery stays readable. */
+  readonly webhookKeepMs: number;
   /** The key webhook secrets are sealed with (32 bytes), or null: then a webhook cannot be given a secret. */
   readonly webhookKey: Uint8Array | null;
 }

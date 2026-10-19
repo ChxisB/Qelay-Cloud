@@ -116,7 +116,10 @@ export interface EnqueuedJob {
   /** False when a live job with the same custom id or dedup key was returned instead. */
   readonly created: boolean;
   readonly state: JobState;
-  /** Present when the job is claimable now or inside the delay window. The caller rings it. */
+  /**
+   * Present when the job is claimable now or inside the delay window. The caller rings it. Absent for a job
+   * that the store's `ringCoverMs` records as rung by a recent bell of its queue.
+   */
   readonly ring: Ring | null;
 }
 
@@ -210,8 +213,21 @@ export interface TickBudget {
   readonly maxDurationMs: number;
   /** Cap on re-rings per queue, so a backlog does not ring once per job on every tick. */
   readonly maxRingsPerQueue: number;
+  /**
+   * Cap on the re-rings of jobs that already had a bell, per queue, apart from the first rings of
+   * jobs that never had one. A worker claims again while a queue has more, so a standing backlog
+   * needs a bell or two per interval, not `maxRingsPerQueue`. Default: `maxRingsPerQueue`.
+   */
+  readonly maxStaleRingsPerQueue?: number;
   /** Cap on the work done in one pass: recovered jobs, promoted jobs, cron firings. */
   readonly maxItems: number;
+  /**
+   * Skip the retention steps (DLQ, workers, webhook deliveries, events, completions, metric
+   * buckets). A loop that ticks every second sets it between upkeep rounds: those steps free
+   * space, so they gain nothing from running each second. Recovery, crons, promotion, expiry and
+   * the ring query always run. Default false.
+   */
+  readonly skipUpkeep?: boolean;
   /**
    * A claimable job whose last bell is at least this old is rung again. Must not exceed the tick
    * interval, or a lost bell is found later than the documented bound. The store cannot check it

@@ -18,10 +18,11 @@ locals {
   # Behind the proxy every process connects to the proxy; the direct URL is kept for LISTEN.
   database_url = local.pooled ? "postgres://${module.database.user_name}:${module.database.password}@${module.database.proxy_endpoint}:5432/${module.database.database_name}" : local.direct_url
 
-  secret_names = toset(concat(["database-url"], local.pooled ? ["database-listen-url"] : []))
+  secret_names = toset(concat(["database-url"], local.pooled ? ["database-listen-url"] : [], var.webhooks ? ["webhook-key"] : []))
   secret_values = merge(
     { "database-url" = local.database_url },
     { for key in ["database-listen-url"] : key => local.direct_url if local.pooled },
+    { for key in ["webhook-key"] : key => random_id.webhook_key[0].hex if var.webhooks },
   )
 
   # --- what every process is told ----------------------------------------------------------------------------
@@ -45,15 +46,33 @@ locals {
   # ECS reads a secret's value with the execution role and needs the secret's full ARN (name plus random suffix).
   secret_ref = { for key in local.secret_names : key => module.secrets.arns[key] }
 
-  tick_secret_keys   = ["database-url"]
-  worker_secret_keys = sort(tolist(local.secret_names))
-  tick_secret_env    = { QCLOUD_DATABASE_URL = local.secret_ref["database-url"] }
+  # The webhook key seals and opens the webhook secrets: the tick, the loop, the sender and the API hold it, a job worker never.
+  tick_secret_keys    = concat(["database-url"], var.webhooks ? ["webhook-key"] : [])
+  worker_secret_keys  = sort(tolist(setsubtract(local.secret_names, ["webhook-key"])))
+  database_secret_env = { QCLOUD_DATABASE_URL = local.secret_ref["database-url"] }
+  tick_secret_env = merge(
+    local.database_secret_env,
+    { for key in ["webhook-key"] : "QCLOUD_WEBHOOK_KEY" => local.secret_ref[key] if var.webhooks },
+  )
   worker_secret_env = merge(
-    local.tick_secret_env,
+    local.database_secret_env,
     { for key in ["database-listen-url"] : "QCLOUD_DATABASE_LISTEN_URL" => local.secret_ref[key] if local.pooled },
   )
   # A task reads its secrets once, at start: a changed secret must roll the services to reach them.
-  rollout_trigger = join(",", [for key in local.worker_secret_keys : module.secrets.version_ids[key]])
+  rollout_trigger      = join(",", [for key in local.worker_secret_keys : module.secrets.version_ids[key]])
+  tick_rollout_trigger = join(",", [for key in local.tick_secret_keys : module.secrets.version_ids[key]])
+
+  # The always-on pools of the tick image: the loop and the sender, each a fixed number of tasks on the tick's roles.
+  background = merge(
+    var.tick_loop == null ? {} : { "tick-loop" = { subcommand = "loop", spec = var.tick_loop } },
+    var.webhook_sender == null ? {} : { "webhook-sender" = { subcommand = "send", spec = var.webhook_sender } },
+  )
+  background_logs  = { for key in keys(local.background) : key => "/qcloud/${var.name}/${key}" }
+  background_tasks = sum(concat([0], [for pool in values(local.background) : pool.spec.instances]))
+  # What the budget counts: every task holds a pool and none a LISTEN connection.
+  background_budget = { for key, pool in local.background : key => { max_instances = pool.spec.instances, pool_size = pool.spec.pool_size, listen_connections = 0 } }
+
+  database_instance_class = var.database_cluster == null ? var.database_instance_class : var.database_cluster.instance_class
 
   # --- the endpoints ------------------------------------------------------------------------------------------
   # With a NAT gateway the tasks reach every AWS API through it, and the endpoints only keep the two busiest calls
@@ -81,7 +100,7 @@ locals {
   # AWS reserves five addresses of every subnet. The tick may overlap itself once.
   subnet_prefix   = tonumber(split("/", var.vpc_cidr)[1]) + 4
   subnet_usable   = pow(2, 32 - local.subnet_prefix) - 5
-  total_tasks     = sum([for service in values(var.worker_services) : service.max_instances]) + 2
+  total_tasks     = sum([for service in values(var.worker_services) : service.max_instances]) + local.background_tasks + 2
   subnet_required = 2 * local.total_tasks
 
   # Scaling on a queue that does not exist would fail at apply with a message about a dimension, not about the typo.
@@ -113,6 +132,10 @@ resource "terraform_data" "inputs" {
       error_message = "egress = \"none\" has no route out but the interface endpoints. Missing: ${join(", ", sort(tolist(local.missing_endpoints)))}. A task could not pull its image, write its logs, read its secret or receive a bell."
     }
     precondition {
+      condition     = var.webhook_sender == null || var.webhooks
+      error_message = "webhook_sender needs webhooks = true: the sender signs with QCLOUD_WEBHOOK_KEY."
+    }
+    precondition {
       condition     = length(setsubtract(local.scaled_queues, toset(keys(var.queues)))) == 0
       error_message = "A worker service scales on a queue that is not in `queues`: ${join(", ", sort(tolist(setsubtract(local.scaled_queues, toset(keys(var.queues))))))}."
     }
@@ -138,13 +161,16 @@ module "budget" {
   source = "../../modules/budget"
 
   max_connections = var.max_connections
-  services = {
-    for name, service in var.worker_services : name => {
-      max_instances      = service.max_instances
-      pool_size          = service.pool_size
-      listen_connections = service.listen_connections
-    }
-  }
+  services = merge(
+    {
+      for name, service in var.worker_services : name => {
+        max_instances      = service.max_instances
+        pool_size          = service.pool_size
+        listen_connections = service.listen_connections
+      }
+    },
+    local.background_budget,
+  )
   control_processes = var.control_processes
   control_pool_size = var.control_pool_size
   pooled            = local.pooled
@@ -165,10 +191,12 @@ module "database" {
   client_security_group_ids = [module.network.tasks_security_group_id]
   instance_class            = var.database_instance_class
   multi_az                  = var.database_multi_az
+  cluster                   = var.database_cluster
   allocated_storage_gb      = var.database_storage_gb
   max_allocated_storage_gb  = var.database_max_storage_gb
   backup_retention_days     = var.database_backup_retention_days
   max_connections           = module.budget.max_connections
+  session_timeouts          = var.database_session_timeouts
   deletion_protection       = var.database_deletion_protection
   proxy                     = var.rds_proxy
   secrets_kms_key_arn       = var.secrets_kms_key_arn
@@ -219,6 +247,7 @@ module "iam" {
   cluster_name              = local.cluster_name
   workers_log_groups        = values(local.worker_logs)
   tick_log_group            = local.tick_log_name
+  tick_extra_log_groups     = values(local.background_logs)
   tick_family               = local.tick_family
   schedule_name             = "${var.name}-tick"
   additional_principal_arns = var.additional_principal_arns
@@ -298,6 +327,43 @@ module "tick" {
   depends_on = [module.iam, module.messaging]
 }
 
+resource "random_id" "webhook_key" {
+  count = var.webhooks ? 1 : 0
+
+  byte_length = 32
+}
+
+module "background" {
+  source   = "../modules/workers"
+  for_each = local.background
+
+  name               = "${var.name}-${each.key}"
+  region             = var.region
+  image              = var.tick_image
+  entry_point        = var.tick_command
+  command            = [each.value.subcommand]
+  cluster_arn        = aws_ecs_cluster.main.arn
+  cluster_name       = aws_ecs_cluster.main.name
+  task_role_arn      = module.iam.tick_task_role_arn
+  execution_role_arn = module.iam.tick_execution_role_arn
+  subnet_ids         = module.network.private_subnet_ids
+  security_group_ids = [module.network.tasks_security_group_id]
+  min_instances      = each.value.spec.instances
+  max_instances      = each.value.spec.instances
+  pool_size          = each.value.spec.pool_size
+  cpu                = each.value.spec.cpu
+  memory             = each.value.spec.memory
+  cpu_architecture   = var.cpu_architecture
+  env                = merge(local.runtime_env, each.value.spec.env)
+  secret_env         = local.tick_secret_env
+  rollout_trigger    = local.tick_rollout_trigger
+  log_group_name     = local.background_logs[each.key]
+  log_retention_days = var.log_retention_days
+  tags               = local.tags
+
+  depends_on = [module.iam, module.messaging, module.network]
+}
+
 module "scheduler" {
   source = "../modules/scheduler"
 
@@ -320,10 +386,11 @@ module "monitoring" {
   database_identifier     = module.database.identifier
   max_connections         = var.max_connections
   database_storage_gb     = var.database_storage_gb
+  database_dimension      = module.database.metric_dimension
   tick_log_group_name     = local.tick_log_name
   tick_schedule_minutes   = local.tick_schedule_minutes
   tick_missed_minutes     = max(5, 3 * local.tick_schedule_minutes)
-  database_instance_class = var.database_instance_class
+  database_instance_class = local.database_instance_class
   cluster_name            = aws_ecs_cluster.main.name
   worker_service_names    = [for worker in module.workers : worker.service_name]
   runbook_base_url        = var.runbook_base_url

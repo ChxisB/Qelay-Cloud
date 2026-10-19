@@ -15,12 +15,19 @@ import { TransportError } from '@qelay-cloud/core';
  * dead-letter topic      qcloud.<namespace>.bells-dlq
  * subscription           qcloud.<namespace>.sub.<queue>
  * dead-letter subscript. qcloud.<namespace>.dlq.<queue>
+ * hot queue's own topic  qcloud.<namespace>.hot.<queue>
  * ```
  *
  * Messages carry `route = <namespace>.<queue>` (both encoded) as an attribute, and every
- * subscription filters on it (`attributes.route = "..."`). The encoded form has no character that
- * needs escaping inside a filter string, which the raw name would. The raw names travel as the
- * `namespace` and `queue` attributes for humans reading a dead-letter message.
+ * subscription on a shared topic filters on it (`attributes.route = "..."`). The encoded form has
+ * no character that needs escaping inside a filter string, which the raw name would. The raw names
+ * travel as the `namespace` and `queue` attributes for humans reading a dead-letter message.
+ *
+ * A *hot* queue has its own topic and an unfiltered subscription (same name as any queue's), so
+ * its bells are not checked against every other queue's filter and its subscription does not count
+ * towards the shared topic's limit of 10,000. This file is the one place that says which topic a
+ * queue's bells go to: the caller names the hot queues, `queueNames(namespace, queue, hot).topic`
+ * answers. The dead-letter topic stays shared, with a filtered subscription per queue.
  */
 const PREFIX = 'qcloud';
 export const MAX_RESOURCE_ID_LENGTH = 255;
@@ -67,10 +74,14 @@ export interface EnvironmentNames {
 export interface QueueNames {
   /** The value of the `route` attribute every bell for this queue carries. */
   readonly route: string;
+  /** The topic this queue's bells are published to: the environment's, or the queue's own when it is hot. */
+  readonly topic: string;
   readonly subscription: string;
   readonly deadLetterSubscription: string;
-  /** The subscription filter, on both the queue's subscription and its dead-letter subscription. */
+  /** The filter of the dead-letter subscription, and of the queue's subscription when its topic is shared. */
   readonly filter: string;
+  /** What the queue's subscription filters on: `filter`, or nothing on a hot queue's own topic. */
+  readonly subscriptionFilter: string | undefined;
 }
 
 function checked(id: string, what: string): string {
@@ -95,8 +106,8 @@ export function environmentNames(namespace: string): EnvironmentNames {
   };
 }
 
-/** Throws `TransportError` when the pair cannot be a resource id. */
-export function queueNames(namespace: string, queue: string): QueueNames {
+/** Throws `TransportError` when the pair cannot be a resource id. `hot`: the queue has its own topic. */
+export function queueNames(namespace: string, queue: string, hot = false): QueueNames {
   requireName(namespace, 'a namespace');
   requireName(queue, 'a queue name');
   const environment = `${PREFIX}.${encodeName(namespace)}`;
@@ -104,6 +115,9 @@ export function queueNames(namespace: string, queue: string): QueueNames {
   const route = `${encodeName(namespace)}.${encodedQueue}`;
   return {
     route,
+    topic: hot
+      ? checked(`${environment}.hot.${encodedQueue}`, `the topic name of "${queue}"`)
+      : environmentNames(namespace).topic,
     subscription: checked(
       `${environment}.sub.${encodedQueue}`,
       `the subscription name of "${queue}"`
@@ -113,6 +127,7 @@ export function queueNames(namespace: string, queue: string): QueueNames {
       `the dead-letter subscription name of "${queue}"`
     ),
     filter: `attributes.route = "${route}"`,
+    subscriptionFilter: hot ? undefined : `attributes.route = "${route}"`,
   };
 }
 

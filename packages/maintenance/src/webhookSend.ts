@@ -6,11 +6,13 @@ import {
   validateWebhookUrl,
   WEBHOOK_ERROR_CHARS,
   WEBHOOK_HEADERS,
+  WEBHOOK_SCHEMA_VERSION,
 } from '@qelay-cloud/core';
 import type { WebhookUrlPolicy } from '@qelay-cloud/core';
 import type { AttemptOutcome, ClaimedDelivery } from '@qelay-cloud/store-postgres';
-import type { PostFailure, PostFunction } from './webhookHttp';
-import { postOverSocket } from './webhookHttp';
+import type { Destinations } from './webhookDestinations';
+import type { PostFailure, PostFunction, PostResult } from './webhookHttp';
+import { postOverSocket } from './webhookPool';
 
 /**
  * One delivery attempt: the checks that keep a webhook from being a way into the network, then the
@@ -26,10 +28,11 @@ import { postOverSocket } from './webhookHttp';
  *    again for a destination the operator never wrote, and a receiver that wants a new URL can be
  *    edited.
  *
- * What an attempt records is short and fixed text: the status the receiver answered, or a reason in
- * words. Never a response body (a webhook pointed at an internal service would turn the delivery
- * history into a way to read it) and never a resolved address (it would answer "what does this
- * internal name point to").
+ * What an attempt records is short text: the status the receiver answered, or a reason in words,
+ * and for a failed answer the first bytes of its body when `captureBytes` is set (only a public
+ * address is ever connected to, so that is a public receiver's own words; a sender that allows
+ * private addresses leaves capture off unless asked). Never a resolved address (it would answer
+ * "what does this internal name point to").
  */
 
 /** How many of a name's addresses one attempt tries while the connection is refused. */
@@ -41,16 +44,56 @@ export type Resolver = (host: string) => Promise<readonly string[]> | readonly s
 export const systemResolver: Resolver = async (host) =>
   (await lookup(host, { all: true, verbatim: true })).map((answer) => answer.address);
 
+/** Names kept at most; past it the oldest goes. */
+const MAX_CACHED_NAMES = 1_024;
+
+/**
+ * `resolve`, with each name's answers kept for `ttlMs` and one lookup at a time per name, so a sender
+ * doing thousands of deliveries a second to a few receivers does a few lookups, not thousands (a
+ * cloud resolver caps the packets it takes from one machine). It keeps answers, not a verdict:
+ * `sendDelivery` checks every answer it is given, cached or fresh, so a name that turns private is
+ * refused on its next use after the entry expires. A failed lookup is not kept.
+ * shortcut: no negative cache and no serving of an expired answer, add them if lookups to a dead name show up in the resolver's load.
+ */
+export function cachedResolver(
+  resolve: Resolver,
+  ttlMs: number,
+  clock: () => number = () => performance.now()
+): Resolver {
+  const seen = new Map<
+    string,
+    { readonly until: number; readonly answers: Promise<readonly string[]> }
+  >();
+  return (host) => {
+    const now = clock();
+    const hit = seen.get(host);
+    if (hit !== undefined && hit.until > now) return hit.answers;
+    const entry = { until: now + ttlMs, answers: Promise.resolve().then(() => resolve(host)) };
+    seen.set(host, entry);
+    entry.answers.catch(() => {
+      if (seen.get(host) === entry) seen.delete(host);
+    });
+    if (seen.size > MAX_CACHED_NAMES) seen.delete(seen.keys().next().value!);
+    return entry.answers;
+  };
+}
+
 export interface SendDeps {
   readonly urlPolicy: WebhookUrlPolicy;
   readonly resolve: Resolver;
   readonly post: PostFunction;
+  /** Per-destination concurrency and breaker. Absent: none. */
+  readonly destinations?: Destinations;
   /** Bound on the whole attempt: name lookup, connection, TLS and the receiver's answer. */
   readonly timeoutMs: number;
   /** Epoch milliseconds. The attempt's timestamp, header and history entry come from it. */
   readonly now: () => number;
   /** Extra trusted CA (PEM) for https receivers. */
   readonly ca?: string;
+  /** Bytes of a failed answer's body kept in the attempt's history entry. Absent or 0: none. */
+  readonly captureBytes?: number;
+  /** The `User-Agent` header. Absent: `DEFAULT_USER_AGENT`. */
+  readonly userAgent?: string;
 }
 
 export const defaultSendDeps = (
@@ -84,7 +127,8 @@ export async function sendDelivery(
   const outcome = (
     ok: boolean,
     statusCode: number | null,
-    error: string | null
+    error: string | null,
+    response: string | null = null
   ): AttemptOutcome => ({
     deliveryId: delivery.deliveryId,
     webhookId: delivery.webhookId,
@@ -92,6 +136,7 @@ export async function sendDelivery(
     ok,
     statusCode,
     error: error === null ? null : cut(error),
+    response,
     startedAt,
     durationMs: Math.max(0, Math.round(performance.now() - clock)),
   });
@@ -120,51 +165,78 @@ export async function sendDelivery(
       return refuse('destination not allowed: the name resolves to a non-public address');
     }
 
-    const body = deliveryBody({
-      id: delivery.deliveryId,
-      event: delivery.event,
-      occurredAt: delivery.occurredAt,
-      queue: delivery.queue,
-      jobId: delivery.jobId,
-      state: delivery.state,
-      error: delivery.error,
-      progress: delivery.progress,
-    });
+    // The delivery writer shapes a body once and stores it: every attempt sends and signs those bytes.
+    if (delivery.body === '') return refuse('shaped body was too large to make');
+    const body =
+      delivery.body ??
+      deliveryBody({
+        id: delivery.deliveryId,
+        event: delivery.event,
+        occurredAt: delivery.occurredAt,
+        queue: delivery.queue,
+        jobId: delivery.jobId,
+        state: delivery.state,
+        error: delivery.error,
+        progress: delivery.progress,
+      });
     const timestamp = deps.now();
     const headers: Record<string, string> = {
       [WEBHOOK_HEADERS.id]: delivery.deliveryId,
       [WEBHOOK_HEADERS.event]: delivery.event,
       [WEBHOOK_HEADERS.timestamp]: String(timestamp),
       [WEBHOOK_HEADERS.attempt]: String(delivery.attempt),
+      ...(delivery.body === null ? { [WEBHOOK_HEADERS.schema]: WEBHOOK_SCHEMA_VERSION } : {}),
     };
     if (delivery.secret !== null) {
-      headers[WEBHOOK_HEADERS.signature] = await signWebhook(delivery.secret, timestamp, body);
+      // During a rotation both secrets sign (comma-separated), so a receiver holding either verifies.
+      const secrets = [
+        delivery.secret,
+        ...(delivery.previousSecret === null ? [] : [delivery.previousSecret]),
+      ];
+      headers[WEBHOOK_HEADERS.signature] = (
+        await Promise.all(secrets.map((secret) => signWebhook(secret, timestamp, body)))
+      ).join(',');
     }
     const { url } = verdict;
     const secure = url.protocol === 'https:';
 
-    let last: PostFailure = 'refused';
-    for (const address of addresses.slice(0, MAX_ADDRESSES_TRIED)) {
-      const budget = remaining();
-      if (budget === 0) return refuse(FAILURE_TEXT.timeout);
-      const result = await deps.post({
-        address,
-        port: verdict.port,
-        secure,
-        ...(verdict.literal ? {} : { serverName: verdict.host }),
-        hostHeader: url.host,
-        path: `${url.pathname}${url.search}`,
-        headers,
-        body,
-        timeoutMs: budget,
-        ...(deps.ca === undefined ? {} : { ca: deps.ca }),
-      });
-      if (result.kind === 'status') return answered(result.status, outcome);
-      last = result.failure;
-      // Only a refused connection is worth another address: anything else reached a host.
-      if (last !== 'refused') break;
+    const key = `${verdict.host}:${verdict.port}`;
+    const entry =
+      deps.destinations === undefined ? null : await deps.destinations.enter(key, remaining());
+    if (entry === 'open') return refuse('destination paused: it failed several attempts in a row');
+    if (entry === 'busy') return refuse('destination busy: too many requests in flight to it');
+
+    let result: PostResult = { kind: 'failed', failure: 'refused' };
+    try {
+      for (const address of addresses.slice(0, MAX_ADDRESSES_TRIED)) {
+        const budget = remaining();
+        if (budget === 0) {
+          result = { kind: 'failed', failure: 'timeout' };
+          break;
+        }
+        result = await deps.post({
+          address,
+          port: verdict.port,
+          secure,
+          ...(verdict.literal ? {} : { serverName: verdict.host }),
+          hostHeader: url.host,
+          path: `${url.pathname}${url.search}`,
+          headers,
+          body,
+          timeoutMs: budget,
+          ...(deps.ca === undefined ? {} : { ca: deps.ca }),
+          ...(deps.captureBytes ? { captureBytes: deps.captureBytes } : {}),
+          ...(deps.userAgent === undefined ? {} : { userAgent: deps.userAgent }),
+        });
+        // Only a refused connection is worth another address: anything else reached a host.
+        if (result.kind === 'status' || result.failure !== 'refused') break;
+      }
+    } finally {
+      entry?.leave(result.kind === 'status' && result.status < 500 && result.status !== 429);
     }
-    return refuse(FAILURE_TEXT[last]);
+    return result.kind === 'status'
+      ? answered(result, outcome)
+      : refuse(FAILURE_TEXT[result.failure]);
   } catch {
     // A bug or a driver error must cost this attempt, not the others in its batch. Nothing of the
     // error is recorded: it could carry a path or an address.
@@ -173,13 +245,19 @@ export async function sendDelivery(
 }
 
 function answered(
-  status: number,
-  outcome: (ok: boolean, statusCode: number | null, error: string | null) => AttemptOutcome
+  result: { readonly status: number; readonly body?: string },
+  outcome: (
+    ok: boolean,
+    statusCode: number | null,
+    error: string | null,
+    response?: string | null
+  ) => AttemptOutcome
 ): AttemptOutcome {
+  const { status, body } = result;
   if (status >= 200 && status < 300) return outcome(true, status, null);
   if (status >= 300 && status < 400)
-    return outcome(false, status, `redirect not followed (${status})`);
-  return outcome(false, status, `receiver answered ${status}`);
+    return outcome(false, status, `redirect not followed (${status})`, body);
+  return outcome(false, status, `receiver answered ${status}`, body);
 }
 
 /** `promise`, or a rejection after `ms`. The late result of `promise` is ignored. */

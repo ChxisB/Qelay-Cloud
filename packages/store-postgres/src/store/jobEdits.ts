@@ -1,8 +1,9 @@
 import type { OperatorOptions, Outcome } from '@qelay-cloud/core';
 import { StoreError, UnsupportedOptionError, validateJobOptions } from '@qelay-cloud/core';
-import { PayloadTooLargeError } from '../errors';
+import { PayloadTooComplexError, PayloadTooLargeError } from '../errors';
 import type { StoreContext } from './context';
 import { assertVersion, checkedVersion, lockRow } from './operator';
+import { overShape } from './payloadShape';
 import type { Envelope } from './prepare';
 import { normalizeProgress } from './progress';
 import { runTransaction } from './retry';
@@ -49,6 +50,8 @@ export async function updateJobData(
       if (row) assertVersion(id, row, expected);
       if (!row || !isLiveState(row.state)) return false;
       const envelope = ctx.codec.decode(row.payload) as Envelope;
+      const shape = overShape(data, ctx.limits);
+      if (shape) throw new PayloadTooComplexError(shape.kind, shape.limit, 0);
       let payload: Uint8Array;
       try {
         payload = ctx.codec.encode({ ...envelope, data });

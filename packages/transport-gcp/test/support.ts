@@ -94,8 +94,10 @@ export interface Environment {
   destroy(): Promise<void>;
 }
 
-export interface EnvironmentOptions extends TopologyOptions {
+export interface EnvironmentOptions extends Omit<TopologyOptions, 'hot'> {
   readonly queues: readonly string[];
+  /** The queues (a subset of `queues`) that get their own topic. */
+  readonly hotQueues?: readonly string[];
   /** Defaults to a fresh unique namespace, so test files never share messages. */
   readonly namespace?: string;
 }
@@ -113,12 +115,15 @@ export async function openEnvironment(options: EnvironmentOptions): Promise<Envi
   const namespace = options.namespace ?? uniqueNamespace();
   const topology = { ...FAST_TOPOLOGY, ...options };
   await ensureEnvironment(pubsub, namespace);
-  for (const queue of options.queues) await ensureQueue(pubsub, namespace, queue, topology);
+  const hot = new Set(options.hotQueues ?? []);
+  for (const queue of options.queues) {
+    await ensureQueue(pubsub, namespace, queue, { ...topology, hot: hot.has(queue) });
+  }
   let destroyed = false;
   return {
     namespace,
     pubsub,
-    names: (queue) => queueNames(namespace, queue),
+    names: (queue) => queueNames(namespace, queue, hot.has(queue)),
     async destroy() {
       if (destroyed) return;
       destroyed = true;

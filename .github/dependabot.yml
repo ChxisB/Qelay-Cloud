@@ -1,0 +1,7 @@
+# Keeps the SHA-pinned actions in .github/workflows current: each update PR moves the commit and its tag comment together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

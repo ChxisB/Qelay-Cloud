@@ -22,6 +22,7 @@ describe('connection options', () => {
       prepare: true,
       schema: null,
       operationDeadlineMs: 10_000,
+      maxInFlight: 128,
       connectTimeoutSeconds: 10,
       maxLifetimeSeconds: 300,
       idleTimeoutSeconds: 30,

@@ -205,9 +205,21 @@ describeDb('ring query: which jobs need a bell', () => {
     });
   });
 
+  test('staleCap limits the re-rings of old bells, not the first rings of jobs that never had one', async () => {
+    const rung = await enqueueN(t.store, 8);
+    await t.store.markRung(rung.map((jobId) => ({ jobId, deliverAfterMs: 0 })));
+    t.clock.advance(5_000);
+    const fresh = await enqueueN(t.store, 3);
+    t.clock.advance(1);
+    const rings = await ids({ ...NO_GRACE, reRingAfterMs: 5_000, perQueueCap: 20, staleCap: 2 });
+    expect(rings.filter((id) => fresh.includes(id!))).toHaveLength(3);
+    expect(rings.filter((id) => rung.includes(id!))).toHaveLength(2);
+  });
+
   test.each([
     ['perQueueCap', { perQueueCap: 0 }],
     ['perQueueCap', { perQueueCap: 1.5 }],
+    ['staleCap', { staleCap: 0 }],
     ['reRingAfterMs', { reRingAfterMs: -1 }],
     ['graceMs', { graceMs: Number.NaN }],
     ['windowMs', { windowMs: -5 }],

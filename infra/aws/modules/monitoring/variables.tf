@@ -17,6 +17,17 @@ variable "database_identifier" {
   type = string
 }
 
+variable "database_dimension" {
+  description = "The CloudWatch dimension that names the database: DBInstanceIdentifier for an instance, DBClusterIdentifier for a Multi-AZ DB cluster (not verified against a real account: if the cluster's metrics sit under the member instances, the alarms report no data instead of firing)."
+  type        = string
+  default     = "DBInstanceIdentifier"
+
+  validation {
+    condition     = contains(["DBInstanceIdentifier", "DBClusterIdentifier"], var.database_dimension)
+    error_message = "database_dimension is DBInstanceIdentifier or DBClusterIdentifier."
+  }
+}
+
 variable "max_connections" {
   description = "The database's max_connections: the connection alarm fires at connection_alarm_ratio of it."
   type        = number
