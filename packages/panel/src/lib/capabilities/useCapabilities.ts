@@ -72,13 +72,6 @@ export function useConceptHidden(name: string): boolean {
   return useCapabilitiesStore((s) => isConceptHidden(s.caps, name));
 }
 
-/** The DLQ controls this caller gets: none for a viewer, and no retry where the transport has none. */
-export function useDlqMutations(): { operator: boolean; retry: boolean } {
-  const operator = useCanOperate();
-  const retry = useActionSupported('dlq-retry');
-  return { operator, retry };
-}
-
 export interface CapabilitiesView {
   status: CapabilitiesStatus;
   error: string | null;

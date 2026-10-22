@@ -8,6 +8,22 @@ async function visit(page: Page, route: string): Promise<void> {
   await expect(page).toHaveURL(`${E2E_APP_URL}${route}`);
 }
 
+/** Add job, Bulk add and the job inspector are reached from the Jobs page, not the sidebar. */
+async function openFromJobs(
+  page: Page,
+  link: string,
+  route: string,
+  heading: string
+): Promise<void> {
+  await visit(page, '/jobs');
+  await page.locator('#main').getByRole('link', { name: link, exact: true }).click();
+  await expect(page).toHaveURL(`${E2E_APP_URL}${route}`);
+  // The address changes before the lazy page renders; wait for its heading so a field is not found on the old page.
+  await expect(
+    page.locator('#main').getByRole('heading', { name: heading, level: 1 })
+  ).toBeVisible();
+}
+
 async function read(request: APIRequestContext, path: string) {
   const response = await request.get(`${E2E_APP_URL}/api${path}`, {
     headers: { Authorization: `Bearer ${E2E_SERVER_TOKEN}` },
@@ -27,7 +43,7 @@ test('enqueues from Add Job, inspects persisted data and imports a real bulk', a
   browserErrors,
 }, testInfo) => {
   const queue = `operations-${testInfo.project.name}-${testInfo.retry}`;
-  await visit(page, '/add-job');
+  await openFromJobs(page, 'Add job', '/add-job', 'Add job');
   await page.getByLabel('Queue', { exact: true }).fill(queue);
   await page.getByLabel('Job name', { exact: true }).fill('verified-job');
   await page.getByLabel('Data (JSON)').fill('{"evidence":"browser-persisted","amount":42}');
@@ -51,14 +67,14 @@ test('enqueues from Add Job, inspects persisted data and imports a real bulk', a
   await expect(page.getByRole('link', { name: queue, exact: true })).toBeVisible();
   await page.getByRole('link', { name: queue, exact: true }).click();
   await expect(page.getByRole('heading', { name: queue, exact: true })).toBeVisible();
-  await visit(page, '/job');
+  await openFromJobs(page, 'Find by ID', '/job', 'Job inspector');
   await page.getByLabel('Job ID', { exact: true }).fill(id);
   await page.getByRole('button', { name: 'Look up', exact: true }).click();
   await expect(
     page.locator('#main').getByText('browser-persisted', { exact: false })
   ).toBeVisible();
 
-  await visit(page, '/jobs/bulk-add');
+  await openFromJobs(page, 'Bulk add', '/jobs/bulk-add', 'Bulk add jobs');
   await page.getByLabel('Queue', { exact: true }).fill(queue);
   await page.getByLabel('Jobs JSON').fill(
     JSON.stringify([
@@ -78,7 +94,12 @@ test('enqueues from Add Job, inspects persisted data and imports a real bulk', a
 });
 
 test('reads live diagnostics', async ({ page, browserErrors }) => {
-  await visit(page, '/diagnostics');
+  await visit(page, '/deployment');
+  await page
+    .getByRole('navigation', { name: 'Health' })
+    .getByRole('link', { name: 'Diagnostics', exact: true })
+    .click();
+  await expect(page).toHaveURL(`${E2E_APP_URL}/diagnostics`);
   await expect(page.getByText(`v${E2E_VERSION}`, { exact: true })).toBeVisible();
   const ping = page.waitForResponse((r) => r.url().endsWith('/api/ping'));
   await page.getByRole('button', { name: 'Ping', exact: true }).click();

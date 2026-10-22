@@ -18,7 +18,9 @@ import {
 import { ensureDom } from './domSetup';
 
 const ROOT = join(import.meta.dir, '..');
-const CSS = readFileSync(join(ROOT, 'src/index.css'), 'utf8');
+const CSS = ['index', 'tokens']
+  .map((n) => readFileSync(join(ROOT, `src/${n}.css`), 'utf8'))
+  .join('\n');
 const ROLES: StateRole[] = ['waiting', 'prioritized', 'active', 'completed', 'failed', 'delayed'];
 
 const mounted: Array<() => void> = [];
@@ -77,7 +79,7 @@ describe('state role table', () => {
 });
 
 describe('StatusBadge / StatusDot', () => {
-  test('every mapped status renders its role pill, a dot and the status text', () => {
+  test('every mapped status renders its role pill, a glyph and the status text', () => {
     for (const [status, role] of Object.entries(STATE_ROLE)) {
       const host = render(<StatusBadge status={status} />);
       const pill = host.firstElementChild as HTMLElement;
@@ -85,7 +87,8 @@ describe('StatusBadge / StatusDot', () => {
       expect(pill.className, status).toContain(`text-state-${role}-fg`);
       expect(pill.className).toContain('rounded-full');
       expect(pill.textContent).toBe(status);
-      expect(pill.querySelector('.bg-current')).not.toBeNull();
+      // The glyph is decorative and never the only signal: the word is the pill's whole text.
+      expect(pill.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
     }
   });
 
@@ -100,7 +103,7 @@ describe('StatusBadge / StatusDot', () => {
       green: 'bg-success',
       amber: 'bg-warning',
       red: 'bg-danger-fill',
-      zinc: 'bg-state-waiting-fg',
+      zinc: 'bg-idle',
     } as const;
     for (const [tone, cls] of Object.entries(expected)) {
       const host = render(<StatusDot label="x" tone={tone as keyof typeof expected} />);

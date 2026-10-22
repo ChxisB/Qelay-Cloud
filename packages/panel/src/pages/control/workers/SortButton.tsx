@@ -16,7 +16,7 @@ export function SortButton({
       onClick={onClick}
       title={`Sort by ${label}`}
       className={cn(
-        'inline-flex items-center gap-1 uppercase transition-colors hover:text-fg',
+        'inline-flex min-h-8 items-center gap-1 rounded-control uppercase transition-colors hover:text-fg',
         active ? 'text-fg' : 'text-muted'
       )}
     >

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { bq } from '@/lib/bq';
 import { formatNumber } from '@/lib/format';
 import { benchmarkQueueError, isDashboardBenchmarkQueue, LIMITS } from './engine';
@@ -60,11 +61,14 @@ export function useBenchmarkOperations({
       counts && pollQueue === queue
         ? ` Currently ${formatNumber(counts.waiting ?? 0)} waiting / ${formatNumber(counts.completed ?? 0)} completed.`
         : '';
-    if (
-      !window.confirm(
-        `Clean every cleanable job from the dedicated dashboard benchmark queue "${queue}" on ${pinned.target.baseUrl}? This is queue-wide; the cryptographic queue name is owned by this browser session.${countNote}`
-      )
-    ) {
+    const yes = await confirmInPage({
+      question: 'Clean the benchmark queue?',
+      confirmLabel: 'Clean queue',
+      danger: true,
+      detail: `Clean every cleanable job from the dedicated dashboard benchmark queue "${queue}" on ${pinned.target.baseUrl}? This is queue-wide; the cryptographic queue name is owned by this browser session.${countNote}`,
+    });
+    if (!mountedRef.current) return;
+    if (!yes) {
       operationRef.current = null;
       return;
     }
@@ -120,7 +124,7 @@ export function useBenchmarkOperations({
     }
   };
 
-  const start = () => {
+  const start = async () => {
     if (operationRef.current) return;
     operationRef.current = 'run';
     const config = toBenchmarkConfig(draft);
@@ -144,9 +148,13 @@ export function useBenchmarkOperations({
       existingJobs > 0
         ? ` Warning: it already holds ${formatNumber(existingJobs)} job(s) across all states; the safety preflight will refuse the run until the dedicated queue is empty.`
         : '';
-    if (
-      !window.confirm(`Enqueue real jobs into "${queue}" on ${pinned.target.baseUrl}?${warning}`)
-    ) {
+    const yes = await confirmInPage({
+      question: 'Run the benchmark?',
+      confirmLabel: 'Run benchmark',
+      detail: `Enqueue real jobs into "${queue}" on ${pinned.target.baseUrl}?${warning}`,
+    });
+    if (!mountedRef.current) return;
+    if (!yes) {
       operationRef.current = null;
       return;
     }

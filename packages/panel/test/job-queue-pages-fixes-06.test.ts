@@ -1,3 +1,4 @@
+import { answerConfirms } from './confirmSupport';
 import {
   act,
   clickText,
@@ -46,13 +47,13 @@ describe('JobLogs — a stale read must not undo a just-run mutation', () => {
       return Promise.resolve(json({ ok: false, error: `unexpected request: ${call.url}` }, 500));
     }) as typeof fetch;
 
-    const originalConfirm = window.confirm;
-    window.confirm = (() => true) as typeof window.confirm;
+    const yes = answerConfirms();
     const { container, unmount } = render(createElement(JobLogs, { jobId: 'shared-job' }));
     try {
       await settle(5);
       expect(container.textContent).toContain('server-a');
       clickText(container, 'Clear logs');
+      await settle(5); // the question is answered, then the DELETE goes out
       const oldDelete = calls.find((call) => call.method === 'DELETE');
       expect(oldDelete?.signal?.aborted).toBeFalse();
 
@@ -95,7 +96,7 @@ describe('JobLogs — a stale read must not undo a just-run mutation', () => {
         },
       ]);
     } finally {
-      window.confirm = originalConfirm;
+      yes.stop();
       unmount();
     }
   });
@@ -111,8 +112,7 @@ describe('JobLogs — a stale read must not undo a just-run mutation', () => {
       return Promise.resolve(json({ ok: false, error: 'reload down' }, 502));
     }) as typeof fetch;
 
-    const originalConfirm = window.confirm;
-    window.confirm = (() => true) as typeof window.confirm;
+    const yes = answerConfirms();
     const { container, unmount } = render(createElement(JobLogs, { jobId: 'j1' }));
     try {
       await settle(5);
@@ -123,7 +123,7 @@ describe('JobLogs — a stale read must not undo a just-run mutation', () => {
       );
       expect(container.textContent).not.toContain('old line');
     } finally {
-      window.confirm = originalConfirm;
+      yes.stop();
       unmount();
     }
   });

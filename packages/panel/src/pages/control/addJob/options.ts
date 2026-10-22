@@ -26,6 +26,17 @@ interface AddJobNumericOptions {
   groupMaxSize?: number;
 }
 
+/** The words the form shows for each option; the validation messages use the same ones. */
+export const OPTION_LABELS = {
+  delay: 'Wait before running',
+  maxAttempts: 'Tries before it fails',
+  backoff: 'Wait between tries',
+  backoffType: 'How the wait grows',
+  timeout: 'Time limit per try',
+  ttl: 'Expires after',
+  groupMaxSize: 'Group size limit',
+} as const;
+
 export function parseAddJobNumbers(
   raw: AddJobNumericInput,
   grouped = false
@@ -42,14 +53,14 @@ export function parseAddJobNumbers(
       min: grouped ? 0 : -1_000_000,
       max: grouped ? MAX_GROUP_PRIORITY : 1_000_000,
     },
-    { key: 'delay', label: 'Delay', min: 0, max: MAX_DELAY_MS },
-    { key: 'maxAttempts', label: 'Max attempts', min: 1, max: 1000 },
-    { key: 'backoff', label: 'Backoff', min: 0, max: MAX_DURATION_MS },
-    { key: 'timeout', label: 'Timeout', min: 0, max: MAX_DURATION_MS },
-    { key: 'ttl', label: 'TTL', min: 0, max: MAX_DELAY_MS },
+    { key: 'delay', label: OPTION_LABELS.delay, min: 0, max: MAX_DELAY_MS },
+    { key: 'maxAttempts', label: OPTION_LABELS.maxAttempts, min: 1, max: 1000 },
+    { key: 'backoff', label: OPTION_LABELS.backoff, min: 0, max: MAX_DURATION_MS },
+    { key: 'timeout', label: OPTION_LABELS.timeout, min: 0, max: MAX_DURATION_MS },
+    { key: 'ttl', label: OPTION_LABELS.ttl, min: 0, max: MAX_DELAY_MS },
     {
       key: 'groupMaxSize',
-      label: 'Group max size',
+      label: OPTION_LABELS.groupMaxSize,
       min: 1,
       max: Number.MAX_SAFE_INTEGER,
     },
@@ -82,7 +93,10 @@ export function resolveBackoff(
 ): { ok: true; backoff: Backoff | undefined } | { ok: false; msg: string } {
   if (delayMs == null) {
     return type
-      ? { ok: false, msg: 'Backoff strategy needs a base delay in Backoff (ms)' }
+      ? {
+          ok: false,
+          msg: `${OPTION_LABELS.backoffType} needs a time in "${OPTION_LABELS.backoff}"`,
+        }
       : { ok: true, backoff: undefined };
   }
   return { ok: true, backoff: type ? { type, delay: delayMs } : delayMs };

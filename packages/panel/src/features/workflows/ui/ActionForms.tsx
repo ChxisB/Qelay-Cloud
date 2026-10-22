@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from 'react';
 import { Button } from '@/components/ui/Button';
-import { Field, Input } from '@/components/ui/form';
+import { Field, Input, Textarea } from '@/components/ui/form';
 import { ACTION_HINTS, ACTION_LABELS, actionBody, signalBody } from '../domain/workflowActions';
 import type {
   WorkflowActionBody,
@@ -15,9 +15,6 @@ interface FormProps {
   onSubmit: (body: WorkflowActionBody) => void;
   onCancel: () => void;
 }
-
-const areaClass =
-  'w-full rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-xs text-fg outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 /** Signals an event into the run. The payload is JSON, or empty for a signal with no data. */
 export function SignalForm({
@@ -41,7 +38,7 @@ export function SignalForm({
 
   return (
     <form aria-label="Send a signal" className="space-y-2" onSubmit={submit}>
-      <p className="text-xs text-muted">{ACTION_HINTS.signal}</p>
+      <p className="text-[13px] text-muted">{ACTION_HINTS.signal}</p>
       <Field label="Event">
         <Input
           name="signal-event"
@@ -53,18 +50,18 @@ export function SignalForm({
         />
       </Field>
       <Field label="Payload (JSON, optional)">
-        <textarea
+        <Textarea
           name="signal-payload"
           rows={4}
           spellCheck={false}
           value={payload}
           aria-invalid={problem?.field === 'payload'}
           onChange={(e) => setPayload(e.target.value)}
-          className={areaClass}
+          className="font-mono text-xs"
         />
       </Field>
       {problem && (
-        <p role="alert" className="text-xs text-danger">
+        <p role="alert" className="text-[13px] font-semibold text-danger">
           {problem.text}
         </p>
       )}
@@ -101,7 +98,7 @@ export function ConfirmForm({
         if (typed === execution.id) onSubmit(actionBody(execution, action, reason));
       }}
     >
-      <p className="text-xs text-muted">
+      <p className="text-[13px] text-muted">
         {ACTION_HINTS[action]} This cannot be undone. Type{' '}
         <span translate="no" className="break-all font-mono text-fg">
           {execution.id}

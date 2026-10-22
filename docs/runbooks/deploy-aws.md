@@ -37,7 +37,7 @@ same variables. These are the differences.
 | --- | --- |
 | Broker | `QCLOUD_TRANSPORT=aws-sqs`, `QCLOUD_AWS_REGION`. Credentials come from the task role. `QCLOUD_AWS_SQS_ENDPOINT` is never set. |
 | Delay limit | 15 minutes (`/capabilities` says `maxDeliverDelayMs: 900000`). A longer delay is kept by the database and rung when due. |
-| Transport page | Depth, in flight and delayed come from `GetQueueAttributes`: SQS calls them approximate, so the page prefixes them with "≈" and says how old the reading is. The age of the oldest bell comes from CloudWatch, about five minutes behind (`monitoring_read = false` leaves it blank). |
+| Job delivery page | Depth, in flight and delayed come from `GetQueueAttributes`: SQS calls them approximate, so the page prefixes them with "≈" and says how old the reading is. The age of the oldest bell comes from CloudWatch, about five minutes behind (`monitoring_read = false` leaves it blank). |
 | Database URL | A Secrets Manager reference (the task definition's `secrets`, the full ARN). Read when a task starts. |
 | Database CA | `QCLOUD_DATABASE_TLS_CA`: the PEM text of the region's RDS bundle, a plain environment value (Fargate has no file mount). Exactly one of it, `QCLOUD_DATABASE_TLS_CA_FILE` and `QCLOUD_DATABASE_TLS` is set. |
 | Exposure | An ALB with HTTPS on a certificate you bring and two host names you point at it. `public` (default), `private`. Optional WAF rate limit: `edge_rate_limit_per_minute`. See the README. |

@@ -1,3 +1,4 @@
+import { ConfirmDialog } from '../src/components/ui/ConfirmDialog';
 import {
   act,
   CommandPalette,
@@ -77,18 +78,13 @@ describe('modal focus and background isolation', () => {
 
   test('Copilot isolates the app and restores focus to its trigger', async () => {
     useCopilotStore.getState().addUser('Conversation that must not be lost accidentally');
-    let approveClear = false;
-    let confirmCalls = 0;
-    window.confirm = () => {
-      confirmCalls += 1;
-      return approveClear;
-    };
     const { host, unmount } = render(
       createElement(
         'div',
         {},
         createElement('button', { id: 'copilot-background', type: 'button' }, 'Background'),
-        createElement(Copilot)
+        createElement(Copilot),
+        createElement(ConfirmDialog)
       )
     );
     const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Open Copilot"]');
@@ -100,14 +96,30 @@ describe('modal focus and background isolation', () => {
     expect(background.inert).toBe(true);
     expect(dialog?.contains(document.activeElement)).toBe(true);
 
-    act(() => clear.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
-    expect(confirmCalls).toBe(1);
+    // The question is asked in the page, over the panel, which stays where it is.
+    const press = (button: Element | null | undefined) =>
+      act(() => button?.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
+    const buttonNamed = (name: string) =>
+      Array.from(host.querySelectorAll('[role="alertdialog"] button')).find(
+        (button) => button.textContent === name
+      );
+    press(clear);
+    await settle(2);
+    expect(host.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Clear the entire Copilot conversation'
+    );
+    expect(host.querySelector('[role="dialog"][aria-label="Copilot"]')).not.toBeNull();
+    press(buttonNamed('Cancel'));
+    await settle(260);
+    expect(host.querySelector('[role="alertdialog"]')).toBeNull();
     expect(useCopilotStore.getState().messages).toHaveLength(1);
-    approveClear = true;
-    const clearAgain = await waitForElement<HTMLButtonElement>(host, '[aria-label="Clear chat"]');
-    act(() => clearAgain.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
-    expect(confirmCalls).toBe(2);
+
+    press(await waitForElement<HTMLButtonElement>(host, '[aria-label="Clear chat"]'));
+    await settle(2);
+    press(buttonNamed('Clear chat'));
+    await settle(260);
     expect(useCopilotStore.getState().messages).toHaveLength(0);
+    expect(host.querySelector('[role="dialog"][aria-label="Copilot"]')).not.toBeNull();
 
     act(() =>
       document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))

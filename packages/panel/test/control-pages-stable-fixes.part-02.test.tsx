@@ -66,7 +66,7 @@ function usageFetch(overview: unknown): typeof fetch {
 describe('UsagePro malformed /dashboard body', () => {
   test('an {ok:true} body without stats renders an error instead of crashing', async () => {
     globalThis.fetch = usageFetch({ ok: true });
-    const view = render(createElement(UsagePro));
+    const view = render(createElement(MemoryRouter, null, createElement(UsagePro)));
     await settle(15);
     expect(view.host.textContent).toContain('Malformed /dashboard response');
     expect(view.host.textContent).not.toContain('Heap used');
@@ -74,14 +74,14 @@ describe('UsagePro malformed /dashboard body', () => {
 
   test('a body without memory.heapUsed is rejected rather than rendered as NaN', async () => {
     globalThis.fetch = usageFetch({ ...fullOverview, memory: { rss: 40 } });
-    const view = render(createElement(UsagePro));
+    const view = render(createElement(MemoryRouter, null, createElement(UsagePro)));
     await settle(15);
     expect(view.host.textContent).toContain('memory.heapUsed is missing');
   });
 
   test('a complete body still renders the usage page', async () => {
     globalThis.fetch = usageFetch(fullOverview);
-    const view = render(createElement(UsagePro));
+    const view = render(createElement(MemoryRouter, null, createElement(UsagePro)));
     await settle(15);
     expect(view.host.textContent).toContain('Heap used');
   });

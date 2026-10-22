@@ -1,3 +1,4 @@
+import { answerConfirms } from './confirmSupport';
 import {
   clickText,
   createElement,
@@ -95,13 +96,18 @@ describe('JobInspector — a fetch failure is never rendered as a fact', () => {
       createElement(MemoryRouter, { initialEntries: ['/job?id=j1'] }, createElement(JobInspector))
     );
     await settle(10);
-    clickText(container, 'Promote (run now)');
-    await settle(10);
-    const text = container.textContent ?? '';
-    // Pre-fix the red reload error REPLACED the success line, so the operator
-    // re-ran an action the server had already accepted.
-    expect(text).toContain('Promote ✓');
-    expect(text).toContain("couldn't reload");
-    unmount();
+    const yes = answerConfirms();
+    try {
+      clickText(container, 'Promote (run now)');
+      await settle(10);
+      const text = container.textContent ?? '';
+      // Pre-fix the red reload error REPLACED the success line, so the operator
+      // re-ran an action the server had already accepted.
+      expect(text).toContain('Promote ✓');
+      expect(text).toContain("couldn't reload");
+    } finally {
+      yes.stop();
+      unmount();
+    }
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import {
   CONNECTION_STORAGE_KEY,
   useConnectionStore,
@@ -143,7 +144,7 @@ describe('S3 retention draft', () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
-    act(() => root.render(createElement(S3BackupPro)));
+    act(() => root.render(createElement(MemoryRouter, null, createElement(S3BackupPro))));
     try {
       await settle(5);
       const input = host.querySelector('input[name="s3-retention"]') as HTMLInputElement;

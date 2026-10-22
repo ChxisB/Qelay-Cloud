@@ -1,3 +1,5 @@
+import type { WebhookDedupeFull, WebhookPausedBy } from './bq/gatewayTypes';
+
 export interface JobFull {
   id: string;
   queue?: string;
@@ -109,8 +111,12 @@ export interface DlqStatsFull {
 
 export interface WebhookFull {
   id: string;
-  /** The address; for a read-only caller only its origin (see `urlRedacted`). */
+  /** `http` POSTs to `url`; `queue` adds a job to `target`. */
+  destination: 'http' | 'queue';
+  /** The address; for a read-only caller only its origin (see `urlRedacted`). Empty for a queue route. */
   url: string;
+  /** The queue a queue route adds jobs to; null for http. */
+  target: string | null;
   urlRedacted: boolean;
   events: string[];
   queue: string | null;
@@ -121,6 +127,25 @@ export interface WebhookFull {
   successCount: number;
   failureCount: number;
   enabled: boolean;
+  /** Failed deliveries in a row; `alertLevel` (0 to 4) is how far that has come toward the pause. */
+  consecutiveFailures: number;
+  alertLevel: number;
+  /** Set when the route was paused after repeated failures; it is then not enabled. */
+  disabledReason: string | null;
+  disabledAt: number | null;
+  /** Rules, as the server holds them: only events that pass `filter` go, in the shape `shape` says. */
+  filter: Record<string, unknown> | null;
+  shape: Record<string, unknown> | null;
+  /** What the operator calls it, and a note; null for none. */
+  name: string | null;
+  description: string | null;
+  /** A delivery is due this many ms after its event; null for at once. */
+  delayMs: number | null;
+  dedupe: WebhookDedupeFull | null;
+  /** Who paused a route that is off and collecting; null when running or disabled by hand (ignoring events). */
+  pausedBy: WebhookPausedBy;
+  /** The saved destination the address was copied from; null when it was given directly. */
+  destinationId: string | null;
 }
 
 export interface WorkerFull {

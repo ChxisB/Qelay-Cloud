@@ -183,12 +183,28 @@ ignores them, with two consequences: a webhook the newer release paused has `ena
 sends nothing for it either and the writer's held deliveries expire; and a secret still in its rotation window signs with
 the new secret only. Enable paused webhooks again after the rollback if they should send.
 
+**Rolling back past versions 16 to 19 (the event gateway).** Each adds nullable or defaulted columns or a new table, and the
+previous release ignores them:
+
+- **16 (queue destinations).** The previous release cannot send a `queue` route: it fails each event of it without a request,
+  and auto-pause then pauses the route. Resume it after the newer release runs again; **Retry all failed** puts its events back.
+- **17 (name, description, delay, de-duplication).** The previous release shows no name and ignores `delay_ms` and `dedupe`:
+  its writer sends at once and does not drop repeats. Its `webhook-writer off` is blocked only by a filter or a shape, so a
+  webhook with a delay or a de-duplication alone does not stop it, and goes back to the trigger without either rule. Delete
+  such a webhook first, or accept that it sends at once and repeats are not dropped. `qcloud_webhook_dedupe` stays and is never pruned
+  while the old tick runs; it is small and pruned once the newer release runs again.
+- **18 (issues).** Nothing reads or updates `qcloud_webhook_issues`, so its rows stop changing: an issue stays open after its
+  connection recovers, and no new one opens. The newer release resolves and opens them correctly on its next settled delivery.
+- **19 (saved destinations).** The previous release can neither make a connection from a saved destination nor rewrite a copy,
+  so an address edited in the panel does not reach the connections that use it. Connections keep delivering to the copy they
+  hold. Do not edit a destination while any worker runs the previous release.
+
 ### Switching webhook deliveries to the writer
 
 `qcloud-tick webhook-writer on | off | status` (see [webhooks](webhooks.md#filters-and-shapes)) switches who makes a
 namespace's webhook deliveries. Each is safe to repeat and loses no event. `on` starts from the journal's end now. `off` waits for
-job transactions that were already running, and can take a few seconds under load; it is refused while a webhook has a filter or
-shape. While the writer is on, **a process that writes must be running**: the tick with `QCLOUD_WEBHOOK_BATCH` above 0, or
+job transactions that were already running, and can take a few seconds under load; it is refused while a webhook has a filter,
+shape, delay or de-duplication. While the writer is on, **a process that writes must be running**: the tick with `QCLOUD_WEBHOOK_BATCH` above 0, or
 `qcloud-tick send`. The gauge `qcloud.tick.webhooks.writer_gaps` at 1 means the journal's retention removed events before the
 writer read them (those events made no deliveries): run `send` so the writer is never far behind.
 

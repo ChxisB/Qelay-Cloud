@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { mayRestoreModalFocus } from '@/components/dashboard/stores/globalModalStore';
+import {
+  mayRestoreModalFocus,
+  useGlobalModalStore,
+} from '@/components/dashboard/stores/globalModalStore';
+import { iconButtonClass } from '@/components/ui/Button';
+import { CodeBlock } from '@/components/ui/CodeBlock';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { IconClose } from '@/components/ui/icons';
 import { bq } from '@/lib/bq';
+import { cn } from '@/lib/cn';
 import { pretty } from './dbUtils';
 
 /* ------------------------------- row detail -------------------------------- */
@@ -22,6 +28,7 @@ export function RowDetailDrawer({
   row,
   rowid,
   truncated,
+  leaving = false,
   onClose,
 }: {
   table: string;
@@ -29,6 +36,8 @@ export function RowDetailDrawer({
   row: unknown[];
   rowid: number | string | null;
   truncated: boolean[];
+  /** Closed and sliding away: it no longer traps focus or answers a click. */
+  leaving?: boolean;
   onClose: () => void;
 }) {
   // Full values for cells the grid truncated, lazy-fetched by rowid.
@@ -38,8 +47,11 @@ export function RowDetailDrawer({
   const closeRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  // A confirm over the drawer keeps it on screen but out of reach.
+  const blocked = useGlobalModalStore((s) => s.active === 'confirm');
 
   useEffect(() => {
+    if (leaving) return;
     const invoker = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
     const focusables = () =>
@@ -54,6 +66,7 @@ export function RowDetailDrawer({
       if (candidates.length === 0) panel?.focus();
     };
     const onKey = (event: KeyboardEvent) => {
+      if (useGlobalModalStore.getState().active === 'confirm') return;
       if (event.key === 'Escape') {
         event.preventDefault();
         onCloseRef.current();
@@ -78,6 +91,7 @@ export function RowDetailDrawer({
       }
     };
     const onFocus = (event: FocusEvent) => {
+      if (useGlobalModalStore.getState().active === 'confirm') return;
       if (panel && !panel.contains(event.target as Node)) focusInside();
     };
 
@@ -90,7 +104,7 @@ export function RowDetailDrawer({
       document.removeEventListener('focusin', onFocus);
       if (mayRestoreModalFocus('database-row') && invoker?.isConnected) invoker.focus();
     };
-  }, []);
+  }, [leaving]);
 
   // Stable key of the truncated columns in this immutable row selection.
   const truncatedKey = JSON.stringify(columns.filter((_, i) => truncated[i]));
@@ -128,7 +142,11 @@ export function RowDetailDrawer({
         type="button"
         aria-label="Close row detail"
         onClick={onClose}
-        className="fixed inset-0 z-40 bg-black/50"
+        inert={blocked || undefined}
+        className={cn(
+          'fixed inset-0 z-40 cursor-default bg-scrim',
+          leaving ? 'motion-fade-out pointer-events-none' : 'motion-fade'
+        )}
       />
       <aside
         ref={panelRef}
@@ -136,21 +154,27 @@ export function RowDetailDrawer({
         aria-modal="true"
         aria-label={`${table} row ${rowid ?? 'detail'}`}
         tabIndex={-1}
-        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-xl flex-col border-l border-line bg-surface shadow-xl focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+        inert={blocked || undefined}
+        className={cn(
+          'fixed inset-y-0 right-0 z-50 flex w-full max-w-[580px] flex-col border-l border-line-strong bg-surface shadow-pop focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring',
+          leaving ? 'motion-slide-out pointer-events-none' : 'motion-slide'
+        )}
       >
-        <div className="flex items-center justify-between border-b border-line px-5 py-4">
-          <h2 className="font-mono text-sm text-fg">{table} · row detail</h2>
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <h2 className="m-0 min-w-0 break-words font-mono text-lg font-bold text-fg">
+            {table} · row detail
+          </h2>
           <button
             ref={closeRef}
             type="button"
             aria-label="Close"
             onClick={onClose}
-            className="flex size-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={iconButtonClass('ghost', 'sm')}
           >
             <IconClose className="size-4" />
           </button>
         </div>
-        <div className="flex-1 overscroll-contain overflow-y-auto p-5">
+        <div className="flex-1 overscroll-contain overflow-y-auto p-4">
           <dl className="flex flex-col gap-4">
             {columns.map((c, i) => {
               const loaded = Object.hasOwn(full, c);
@@ -159,7 +183,7 @@ export function RowDetailDrawer({
               const multiline = text.includes('\n') || text.length > 80;
               return (
                 <div key={c}>
-                  <dt className="mb-1 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-faint">
+                  <dt className="mb-1 flex flex-wrap items-center gap-1.5 font-mono text-[13px] font-bold text-muted">
                     {c}
                     {value != null && <CopyButton value={String(value)} />}
                     {truncated[i] &&
@@ -167,27 +191,30 @@ export function RowDetailDrawer({
                       // WITHOUT ROWID tables have no key to lazy-fetch the full
                       // value by, so no request is ever issued for it.
                       (rowid == null ? (
-                        <span className="normal-case text-warning">
+                        <span className="font-sans font-bold text-warning">
                           (truncated — full value unavailable: this table has no rowid to fetch it
                           by)
                         </span>
                       ) : Object.hasOwn(loadErrors, c) ? (
-                        <span role="alert" className="normal-case text-danger">
+                        <span role="alert" className="font-sans font-bold text-danger">
                           (full value unavailable — {loadErrors[c]})
                         </span>
                       ) : (
-                        <span className="text-warning">(loading full value…)</span>
+                        <span className="font-sans font-bold text-warning">
+                          (loading full value…)
+                        </span>
                       ))}
                   </dt>
-                  <dd>
+                  {/* A value that has just loaded fades in over the truncated one. */}
+                  <dd className={loaded ? 'motion-fade' : undefined}>
                     {value == null ? (
-                      <span className="italic text-faint">NULL</span>
+                      <span className="italic text-muted">NULL</span>
                     ) : multiline ? (
-                      <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-2 p-3 font-mono text-xs text-muted">
+                      <CodeBlock label={`${c} value`} className="whitespace-pre-wrap break-words">
                         {text}
-                      </pre>
+                      </CodeBlock>
                     ) : (
-                      <span className="break-words font-mono text-sm text-fg">{text}</span>
+                      <span className="break-words font-mono text-[13px] text-fg">{text}</span>
                     )}
                   </dd>
                 </div>

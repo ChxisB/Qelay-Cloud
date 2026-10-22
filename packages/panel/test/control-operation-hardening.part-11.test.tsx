@@ -1,19 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import type { ServerConfig, ServerStatus } from '../src/lib/bqTypes';
 import { ConfigCard } from '../src/pages/control/server/ConfigCard';
 import { parseConfigSaveResponse } from '../src/pages/control/server/configEditor';
 import { ServerControl } from '../src/pages/control/ServerControl';
+import { answerConfirms } from './confirmSupport';
 import { changeControl } from './control-dom.helpers';
 import { ensureDom, settle } from './domSetup';
 
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window.confirm;
 const mounted = new Set<() => void>();
+let asked: ReturnType<typeof answerConfirms>;
 const initialConfig: ServerConfig = {
   command: 'qelay start',
   httpPort: 6790,
@@ -23,6 +25,7 @@ const initialConfig: ServerConfig = {
 };
 
 beforeEach(() => {
+  asked = answerConfirms();
   useConnectionStore.setState({
     baseUrl: 'http://server-a.test',
     token: 'server-a-token',
@@ -34,7 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
+  asked.stop();
   useConnectionStore.setState({ baseUrl: '/api', token: '', agentToken: '', refreshMs: 3000 });
 });
 
@@ -45,7 +48,6 @@ describe('configuration save ordering', () => {
     let restarts = 0;
     let currentConfig = initialConfig;
     let currentRevision = 1;
-    globalThis.window.confirm = () => true;
     globalThis.fetch = (async (input) => {
       const path = new URL(String(input)).pathname;
       if (path === '/control/config') {
@@ -63,7 +65,7 @@ describe('configuration save ordering', () => {
       if (path === '/health') return Response.json(health());
       throw new Error(`Unexpected request: ${path}`);
     }) as typeof fetch;
-    const view = render(createElement(ServerControl));
+    const view = render(createElement(MemoryRouter, null, createElement(ServerControl)));
     await settle(15);
     const command = field(view.host);
     changeControl(command, 'saved command');

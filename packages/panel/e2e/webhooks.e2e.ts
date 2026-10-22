@@ -1,5 +1,13 @@
 import type { Page } from '@playwright/test';
-import { expect, expectNoBrowserErrors, OPERATOR, test, unlockDashboard, VIEWER } from './fixtures';
+import {
+  expect,
+  expectNoBrowserErrors,
+  OPERATOR,
+  openCreateForm,
+  test,
+  unlockDashboard,
+  VIEWER,
+} from './fixtures';
 import { clickNavLink } from './navigation';
 
 const main = (page: Page) => page.locator('#main');
@@ -23,6 +31,7 @@ test('webhook: an operator adds a signed webhook, sends a test event, sees it pe
 
   // A generated secret is shown while the webhook is being added, so it can be copied, and
   // never again: the list says only that deliveries are signed.
+  await openCreateForm(page, 'New webhook');
   await main(page).getByLabel('URL', { exact: true }).fill(url);
   await main(page).getByRole('button', { name: 'Generate a signing secret' }).click();
   const secret = await main(page).getByLabel('Signing secret (optional)').inputValue();
@@ -32,6 +41,8 @@ test('webhook: an operator adds a signed webhook, sends a test event, sees it pe
   await expect(listed).toBeVisible();
   await expect(listed).toContainText('signed');
   expect(await page.content()).not.toContain(secret);
+  // The form closed with the create; opened again it is empty, so the secret was not kept.
+  await openCreateForm(page, 'New webhook');
   await expect(main(page).getByLabel('Signing secret (optional)')).toHaveValue('');
 
   // The history opens empty; a test event becomes one pending delivery for this webhook.

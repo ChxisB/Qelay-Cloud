@@ -1,6 +1,6 @@
 import {
   cloneElement,
-  type InputHTMLAttributes,
+  type ComponentProps,
   isValidElement,
   type ReactElement,
   type ReactNode,
@@ -11,63 +11,108 @@ import { cn } from '@/lib/cn';
 
 export function Label({ children, htmlFor }: { children: ReactNode; htmlFor?: string }) {
   return (
-    <label
-      htmlFor={htmlFor}
-      className="text-[11px] font-medium uppercase tracking-wider text-faint"
-    >
+    <label htmlFor={htmlFor} className="text-[13px] font-bold leading-5 text-fg">
       {children}
     </label>
+  );
+}
+
+/**
+ * A row of fields and the buttons that act on them. Fields stay top-aligned so a hint or an error under one
+ * field never pushes its neighbours; wrap a button in `FieldAction` so it sits level with the controls.
+ */
+export function FormRow({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn('flex flex-wrap items-start gap-3', className)}>{children}</div>;
+}
+
+/** Holds a button (or two) level with the control of the `Field`s next to it: a 20px label line plus the 8px gap. */
+export function FieldAction({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('mt-7 flex min-h-8 flex-wrap items-center gap-2', className)}>
+      {children}
+    </div>
   );
 }
 
 export function Field({
   label,
   hint,
+  error,
   htmlFor: explicitHtmlFor,
   children,
 }: {
   label: string;
   hint?: ReactNode;
+  /** Validation message under the control. Marks a single Input/Select invalid and describes it. */
+  error?: ReactNode;
   /** Required when `children` is a compound control rather than one Input/Select. */
   htmlFor?: string;
   children: ReactNode;
 }) {
   const autoId = useId();
+  const hintId = `${autoId}-hint`;
+  const errorId = `${autoId}-error`;
+  const describedBy = [hint && hintId, error && errorId].filter(Boolean).join(' ') || undefined;
   // Wire label→control (htmlFor/id) when there's a single element child — the
   // common case. An explicit id is respected; multi-node children (e.g. the
   // env-vars editor) keep the visual label only, as before.
   let control: ReactNode = children;
   let htmlFor = explicitHtmlFor;
   if (!explicitHtmlFor && isValidElement(children)) {
-    const el = children as ReactElement<{ id?: string }>;
+    const el = children as ReactElement<{
+      id?: string;
+      'aria-invalid'?: boolean;
+      'aria-describedby'?: string;
+    }>;
     // Do not point a <label> at a layout wrapper (`<div>`, `<span>`, …). Compound
     // fields must provide htmlFor explicitly so the label targets the actual
     // input instead of a non-labellable element.
     const labellableControl =
       (typeof el.type === 'string' && ['input', 'select', 'textarea'].includes(el.type)) ||
       el.type === Input ||
-      el.type === Select;
+      el.type === Select ||
+      el.type === Textarea;
     if (labellableControl) {
       htmlFor = el.props.id ?? autoId;
-      control = el.props.id ? el : cloneElement(el, { id: autoId });
+      control = cloneElement(el, {
+        id: htmlFor,
+        'aria-invalid': error ? true : el.props['aria-invalid'],
+        'aria-describedby':
+          [el.props['aria-describedby'], describedBy].filter(Boolean).join(' ') || undefined,
+      });
     }
   }
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2">
       <Label htmlFor={htmlFor}>{label}</Label>
       {control}
-      {hint && <p className="text-xs leading-relaxed text-faint">{hint}</p>}
+      {hint && (
+        <p id={hintId} className="text-[12px] leading-relaxed text-faint">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={errorId} className="text-[12px] font-semibold text-danger">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
 
+// A compact field, 32px so it lines up with the 32px buttons beside it: 1px field-line border on the card colour.
+// index.css pins form controls to 16px below `sm`, so a phone does not zoom the page when the field takes focus.
 const controlClass =
-  'h-9 rounded-control border border-line-strong bg-surface-2 px-3 text-[13px] text-fg ' +
-  'placeholder:text-faint light:bg-surface transition-colors focus-visible:border-ring ' +
-  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
+  'min-h-8 rounded-control border border-line-strong bg-surface px-2.5 text-[13px] text-fg ' +
+  'placeholder:text-faint transition-colors aria-invalid:border-bad focus-visible:border-ring ' +
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-55';
 
-export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className, ...props }: ComponentProps<'input'>) {
   return <input className={cn(controlClass, 'w-full', className)} {...props} />;
+}
+
+export function Textarea({ className, ...props }: ComponentProps<'textarea'>) {
+  return <textarea className={cn(controlClass, 'w-full py-2', className)} {...props} />;
 }
 
 export function Select({
@@ -82,6 +127,7 @@ export function Select({
   );
 }
 
+/** On/off switch. The button is the 36x24 target; the track and thumb are drawn inside it. */
 export function Toggle({
   checked,
   onChange,
@@ -102,16 +148,24 @@ export function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+        'relative h-6 w-9 shrink-0 rounded-full',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-        checked ? 'bg-ring' : 'bg-surface-2 border border-line',
-        disabled && 'opacity-40'
+        'disabled:cursor-not-allowed disabled:opacity-50'
       )}
     >
       <span
+        aria-hidden="true"
         className={cn(
-          'inline-block size-4 transform rounded-full bg-white shadow transition-transform',
-          checked ? 'translate-x-6' : 'translate-x-1'
+          'absolute left-0 top-0.5 h-5 w-9 rounded-full transition-colors duration-(--duration-hover) ease-settle',
+          checked ? 'bg-ok' : 'bg-line-strong'
+        )}
+      />
+      {/* The thumb slides by transform, with the small overshoot the Motion board gives a switch. */}
+      <span
+        aria-hidden="true"
+        className={cn(
+          'absolute left-0.5 top-1 size-4 rounded-full transition-[transform,background-color] duration-(--duration-press) ease-pop',
+          checked ? 'translate-x-4 bg-on-ok' : 'translate-x-0 bg-fg'
         )}
       />
     </button>
@@ -126,6 +180,7 @@ export function SegmentedControl<T extends string>({
   disabled,
   label = 'View options',
   format,
+  asWritten,
 }: {
   options: readonly T[];
   value: T;
@@ -135,9 +190,11 @@ export function SegmentedControl<T extends string>({
   label?: string;
   /** Visible text for an option when it should differ from its value, e.g. to append a count. */
   format?: (option: T) => ReactNode;
+  /** Keep the text exactly as `format` writes it, instead of capitalising every word. */
+  asWritten?: boolean;
 }) {
   return (
-    <fieldset className="inline-flex items-center gap-0.5 rounded-control border border-line bg-surface p-[3px] light:border-transparent light:bg-surface-2">
+    <fieldset className="m-0 inline-flex min-w-0 overflow-hidden rounded-segment border border-line-strong bg-surface p-0">
       <legend className="sr-only">{label}</legend>
       {options.map((opt) => (
         <button
@@ -147,12 +204,13 @@ export function SegmentedControl<T extends string>({
           disabled={disabled}
           onClick={() => onChange(opt)}
           className={cn(
-            'h-7 rounded-segment px-3 text-[13px] capitalize transition-colors',
-            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+            'min-h-[38px] min-w-11 px-4 text-sm transition-colors duration-(--duration-hover) ease-settle',
+            !asWritten && 'capitalize',
+            'focus-visible:outline-2 focus-visible:-outline-offset-3 focus-visible:outline-ring',
             value === opt
-              ? 'bg-segment-active font-semibold text-fg light:ring-1 light:ring-line'
-              : 'font-medium text-muted hover:text-fg',
-            disabled && 'opacity-40'
+              ? 'bg-segment-active font-bold text-fg'
+              : 'font-bold text-muted hover:bg-hover',
+            disabled && 'cursor-not-allowed opacity-50'
           )}
         >
           {format ? format(opt) : opt}

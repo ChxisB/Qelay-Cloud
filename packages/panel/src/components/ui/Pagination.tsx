@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { formatNumber } from '@/lib/format';
+import { buttonClass } from './Button';
 
 /**
  * Shared pagination control. Two modes:
@@ -57,25 +58,27 @@ export function Pagination({
     : `Page ${shownPage + 1}`;
 
   return (
-    <div className={`mt-4 flex items-center justify-between text-sm text-faint ${className ?? ''}`}>
+    <div
+      className={`mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted ${className ?? ''}`}
+    >
       <span>{summary}</span>
       <div className="flex items-center gap-2">
         <button
           type="button"
           disabled={!canPrev}
           onClick={() => onPageChange(shownPage - 1)}
-          className="rounded-md px-3 py-1 text-xs hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40 disabled:hover:text-faint"
+          className={buttonClass('default', 'sm')}
         >
           Previous
         </button>
-        <span className="rounded-md bg-selected px-2.5 py-1 text-xs font-medium text-link tnum">
+        <span className="min-w-12 text-center text-sm font-bold text-fg tnum">
           {knownTotal ? `${shownPage + 1} / ${pageCount}` : shownPage + 1}
         </span>
         <button
           type="button"
           disabled={!canNext}
           onClick={() => onPageChange(shownPage + 1)}
-          className="rounded-md px-3 py-1 text-xs hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40 disabled:hover:text-faint"
+          className={buttonClass('default', 'sm')}
         >
           Next
         </button>

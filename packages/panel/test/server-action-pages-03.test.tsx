@@ -1,7 +1,7 @@
+import { answer, asking, menuItem, openMenu } from './gateway.helpers';
 import {
-  act,
-  buttonByText,
   clickSameTick,
+  ConnectionsPage,
   createElement,
   deferred,
   describe,
@@ -9,13 +9,11 @@ import {
   installTestHooks,
   json,
   render,
-  setInput,
   settle,
   test,
-  Webhooks,
 } from './server-action-pages.helpers';
 
-installTestHooks();
+installTestHooks({ yesToQuestions: true });
 
 describe('webhook mutation intent', () => {
   const webhook = (enabled = false) => ({
@@ -32,20 +30,14 @@ describe('webhook mutation intent', () => {
     createdAt: 1_000,
   });
 
-  test('same-tick form submits and deletes each issue one mutation', async () => {
-    const add = deferred<Response>();
+  test('same-tick deletes issue one mutation', async () => {
     const remove = deferred<Response>();
-    let addCalls = 0;
     let removeCalls = 0;
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? 'GET';
       if (url.endsWith('/webhooks') && method === 'GET') {
         return Promise.resolve(json({ ok: true, data: { webhooks: [webhook()] } }));
-      }
-      if (url.endsWith('/webhooks') && method === 'POST') {
-        addCalls += 1;
-        return add.promise;
       }
       if (url.endsWith('/webhooks/hook-1') && method === 'DELETE') {
         removeCalls += 1;
@@ -54,30 +46,14 @@ describe('webhook mutation intent', () => {
       return Promise.resolve(json({ ok: false, error: `Unexpected ${method} ${url}` }, 500));
     }) as typeof fetch;
 
-    const view = render(createElement(Webhooks));
+    const view = render(createElement(ConnectionsPage));
     await settle(20);
-    const url = view.host.querySelector<HTMLInputElement>(
-      'input[placeholder="https://example.com/hook"]'
-    );
-    expect(url).not.toBeNull();
-    setInput(url as HTMLInputElement, 'https://receiver.test/hook');
-    expect((url as HTMLInputElement).value).toBe('https://receiver.test/hook');
-    const addButton = buttonByText(view.host, 'Add webhook');
-    // HTMLElement.click() performs the submit button's default form action;
-    // dispatchEvent(MouseEvent) alone only invokes explicit onClick handlers.
-    act(() => {
-      addButton.click();
-      addButton.click();
-    });
-    expect(addCalls).toBe(1);
-    add.resolve(json({ ok: true, id: 'new-hook' }));
-    await settle(20);
-
-    const deleteButton = view.host.querySelector<HTMLButtonElement>(
-      'button[aria-label="Remove webhook"]'
-    );
-    expect(deleteButton).not.toBeNull();
-    clickSameTick(deleteButton as HTMLButtonElement);
+    const item = menuItem(openMenu(view.host, 'https://example.test/hook'), 'Remove connection');
+    clickSameTick(item as HTMLButtonElement);
+    await settle(5);
+    // Each click asks in the page; the answer is given for every question.
+    while (asking()) answer(true);
+    await settle(5);
     expect(removeCalls).toBe(1);
     remove.resolve(json({ ok: true }));
     await settle(20);
@@ -107,7 +83,7 @@ describe('webhook mutation intent', () => {
       return Promise.resolve(json({ ok: false, error: `Unexpected ${method} ${url}` }, 500));
     }) as typeof fetch;
 
-    const view = render(createElement(Webhooks));
+    const view = render(createElement(ConnectionsPage));
     await settle(20);
     const toggle = view.host.querySelector<HTMLButtonElement>('button[role="switch"]');
     expect(toggle?.getAttribute('aria-checked')).toBe('false');

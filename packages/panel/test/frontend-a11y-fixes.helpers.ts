@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, NavLink, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { CommandPalette } from '../src/components/CommandPalette';
 import { Copilot } from '../src/components/copilot/Copilot';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { useCopilotStore } from '../src/components/dashboard/stores/copilotStore';
+import { useGlobalModalStore } from '../src/components/dashboard/stores/globalModalStore';
 import { titleFor, useDocumentTitle } from '../src/components/layout/pageTitle';
-import { NAV } from '../src/components/layout/Sidebar';
+import { Sidebar } from '../src/components/layout/Sidebar';
 import { CardHeader } from '../src/components/ui/Card';
 import { Field, Input } from '../src/components/ui/form';
 import { Database } from '../src/pages/control/Database';
@@ -19,8 +20,6 @@ import { fetchHealthWithTimeout, Settings } from '../src/pages/Settings';
 import { ensureDom, settle } from './domSetup';
 
 const realFetch = globalThis.fetch;
-
-const realConfirm = window.confirm;
 
 const mounted = new Set<() => void>();
 
@@ -85,17 +84,15 @@ export {
   LogsPro,
   MemoryRouter,
   mounted,
-  NAV,
-  NavLink,
   NotFound,
   QueueDetailPro,
   Route,
   Routes,
-  realConfirm,
   realFetch,
   render,
   Settings,
   settle,
+  Sidebar,
   test,
   titleFor,
   useConnectionStore,
@@ -110,6 +107,8 @@ export function installTestHooks() {
     useConnectionStore.setState({ baseUrl: '/api', token: '', agentToken: '' });
     useCopilotStore.getState().clear();
     useCopilotStore.getState().setOpen(false);
+    // One test's open palette or drawer must not hold the shell for the next.
+    useGlobalModalStore.getState().reset();
     animationFrameState.installed = false;
     if (!globalThis.requestAnimationFrame) {
       animationFrameState.previousRequest = Object.getOwnPropertyDescriptor(
@@ -131,9 +130,10 @@ export function installTestHooks() {
     try {
       for (const unmount of [...mounted]) unmount();
       globalThis.fetch = realFetch;
-      window.confirm = realConfirm;
       useCopilotStore.getState().clear();
       useCopilotStore.getState().setOpen(false);
+      // The last test of a file must not leave the shell held for the next file.
+      useGlobalModalStore.getState().reset();
     } finally {
       if (animationFrameState.installed) {
         if (animationFrameState.previousRequest) {

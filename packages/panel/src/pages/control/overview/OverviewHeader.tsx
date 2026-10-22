@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/Button';
+import { StatusGlyph } from '@/components/ui/StatusBadge';
 import { cn } from '@/lib/cn';
 import { formatRelativeTime } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
@@ -33,11 +34,9 @@ export function OverviewHeader({
 }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-      <div className="flex min-w-0 flex-col gap-2.5">
-        <div className="flex items-center gap-3">
-          <h1 className="text-[28px] font-bold leading-[1.1] tracking-[-0.03em] text-fg">
-            Overview
-          </h1>
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl leading-tight font-semibold tracking-[-0.01em] text-fg">Home</h1>
           {(live || paused) && (
             <span
               className={cn(
@@ -52,6 +51,10 @@ export function OverviewHeader({
             </span>
           )}
         </div>
+        <p className="max-w-[680px] text-sm text-pretty text-muted">
+          Every queue, worker and connection at a glance, with the things that need a person at the
+          top.
+        </p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px] text-muted">
           <span
             className={cn(
@@ -59,10 +62,7 @@ export function OverviewHeader({
               degraded ? 'text-warning' : 'text-fg'
             )}
           >
-            <span
-              className={cn('size-2 rounded-full', degraded ? 'bg-warning' : 'bg-success')}
-              aria-hidden="true"
-            />
+            <StatusGlyph state={degraded ? 'delayed' : 'completed'} small />
             {degraded ? 'Connection lost — showing last known data' : 'Server connected'}
           </span>
           <span className="font-mono text-xs">{strip.host}</span>

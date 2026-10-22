@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader } from '@/components/ui/Card';
-import { Field, Input, Toggle } from '@/components/ui/form';
+import { Facts } from '@/components/ui/Facts';
+import { Field, FieldAction, FormRow, Input } from '@/components/ui/form';
+import { ReadFirstCard, Value } from '@/components/ui/ReadFirstCard';
 import { bq } from '@/lib/bq';
 import type { StallConfig } from '@/lib/bqTypes';
+import { formatDuration, formatNumber } from '@/lib/format';
 import { assertConfigMutationResponse, type StallDraft, stallConfigPayload } from './configModel';
 import { useConfigSaveGuard, useSyncedConfig } from './configState';
 
@@ -18,6 +20,7 @@ export function StallForm({
 }) {
   const [draft, setDraft, beginSave] = useSyncedConfig<StallDraft>(config);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   const save = useConfigSaveGuard(`stall-config:${queue}`);
   // A target change clears errors from the previous target.
   useEffect(() => setError(null), [save.scopeKey]);
@@ -35,6 +38,7 @@ export function StallForm({
       markSaved(payload.value);
       await onSaved();
       save.showSaved(lease);
+      setOpen(false);
     } catch (caught) {
       if (lease.isCurrent()) setError((caught as Error).message);
     } finally {
@@ -42,76 +46,79 @@ export function StallForm({
     }
   };
   return (
-    <Card>
-      <CardHeader title="Stall detection" />
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2 flex items-center gap-2">
-          <Toggle
-            checked={draft.enabled}
-            onChange={(enabled) => setDraft({ ...draft, enabled })}
-            label="enabled"
+    <ReadFirstCard
+      title="Stuck job detection"
+      sub="A job is stuck when its worker stops responding. Qelay then puts it back in the queue so another worker can take it."
+      open={open}
+      onOpenChange={setOpen}
+      summary={
+        <>
+          {config.maxStalls === 0 ? (
+            <>
+              A job can get stuck <Value>any number of times</Value> without being marked failed.
+            </>
+          ) : (
+            <>
+              A job that gets stuck <Value>{formatNumber(config.maxStalls)}</Value>{' '}
+              {config.maxStalls === 1 ? 'time' : 'times'} is marked failed.
+            </>
+          )}
+          {save.saved && <span className="ml-2 font-semibold text-success">Saved ✓</span>}
+        </>
+      }
+      facts={
+        <>
+          <p className="mb-3 text-[13px] text-muted">Set by the server, shown for reference.</p>
+          <Facts
+            items={[
+              { label: 'Stuck job check', value: config.enabled ? 'Always on' : 'Off' },
+              {
+                label: 'A worker counts as stuck after',
+                value: `${formatDuration(config.stallInterval)} of silence`,
+              },
+              {
+                label: 'Extra waiting time',
+                value: config.gracePeriod === 0 ? 'None' : formatDuration(config.gracePeriod),
+              },
+            ]}
           />
-          <span className="text-sm text-muted" aria-hidden="true">
-            enabled
-          </span>
+        </>
+      }
+    >
+      <FormRow>
+        <div className="min-w-56 flex-1">
+          <Field
+            label="Most times a job can get stuck"
+            hint="After that it is marked failed. 0 means no limit."
+          >
+            <Input
+              name="stall-max-count"
+              autoComplete="off"
+              type="number"
+              min={0}
+              max={Number.MAX_SAFE_INTEGER}
+              step={1}
+              value={draft.maxStalls}
+              onChange={(event) => setDraft({ ...draft, maxStalls: event.target.value })}
+            />
+          </Field>
         </div>
-        <Field label="Stall interval (ms)">
-          <Input
-            name="stall-interval-ms"
-            autoComplete="off"
-            type="number"
-            min={0}
-            max={Number.MAX_SAFE_INTEGER}
-            step={1}
-            value={draft.stallInterval}
-            onChange={(event) => setDraft({ ...draft, stallInterval: event.target.value })}
-          />
-        </Field>
-        <Field label="Max stalls">
-          <Input
-            name="stall-max-count"
-            autoComplete="off"
-            type="number"
-            min={0}
-            max={Number.MAX_SAFE_INTEGER}
-            step={1}
-            value={draft.maxStalls}
-            onChange={(event) => setDraft({ ...draft, maxStalls: event.target.value })}
-          />
-        </Field>
-        <Field label="Grace period (ms)">
-          <Input
-            name="stall-grace-period-ms"
-            autoComplete="off"
-            type="number"
-            min={0}
-            max={Number.MAX_SAFE_INTEGER}
-            step={1}
-            value={draft.gracePeriod}
-            onChange={(event) => setDraft({ ...draft, gracePeriod: event.target.value })}
-          />
-        </Field>
-      </div>
-      <div className="mt-3 flex items-center gap-3">
-        <Button variant="primary" size="sm" disabled={save.saving || !payload.ok} onClick={submit}>
-          Save
-        </Button>
-        {save.saved && (
-          <span role="status" className="text-xs text-success">
-            Saved ✓
-          </span>
-        )}
-        {!payload.ok && (
-          <span role="alert" className="text-xs text-danger">
-            {payload.error}
-          </span>
-        )}
-        {error && (
-          <span role="alert" className="text-xs text-danger">
-            {error}
-          </span>
-        )}
-      </div>
-    </Card>
+        <FieldAction>
+          <Button variant="primary" disabled={save.saving || !payload.ok} onClick={submit}>
+            Save
+          </Button>
+        </FieldAction>
+      </FormRow>
+      {!payload.ok && (
+        <p role="alert" className="mt-3 text-[13px] font-semibold text-danger">
+          {payload.error}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="mt-3 text-[13px] font-semibold text-danger">
+          {error}
+        </p>
+      )}
+    </ReadFirstCard>
   );
 }

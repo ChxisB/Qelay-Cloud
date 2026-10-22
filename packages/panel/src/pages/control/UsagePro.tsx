@@ -1,7 +1,10 @@
+import { HealthTabs } from '@/components/HealthTabs';
+import { Banner } from '@/components/ui/Banner';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
+import { Wash } from '@/components/ui/Wash';
 import { bq } from '@/lib/bq';
 import type { StorageStatusFlat } from '@/lib/bqTypes';
 import {
@@ -41,7 +44,7 @@ const EMPTY = {
 export function UsagePro() {
   const { data, error, loading, refetch } = usePolledData(async () => {
     // /storage is the honest disk-health source ({ ok, data: { diskFull, … } });
-    // the /dashboard storage blob is what the classic page misread.
+    // the /dashboard storage blob does not carry it.
     const [overview, storage, summary] = await Promise.all([
       bq.overview(),
       bq.storage(),
@@ -68,6 +71,7 @@ export function UsagePro() {
     return (
       <div>
         <PageHeader title="Usage" description="Cumulative resource usage is unavailable." />
+        <HealthTabs current="/usage" />
         <ErrorState error={error} onRetry={refetch} />
       </div>
     );
@@ -87,6 +91,7 @@ export function UsagePro() {
         description="Cumulative resource usage on the connected server."
         live={!!data && !error}
       />
+      <HealthTabs current="/usage" />
       {error && (
         <OfflineBanner
           message="Usage refresh failed — showing the last successful snapshot."
@@ -104,17 +109,17 @@ export function UsagePro() {
         <StatCard label="Waiting" value={formatNumber(stats.waiting)} tone="waiting" />
         <StatCard label="Active" value={formatNumber(stats.active)} tone="active" />
         <StatCard
-          label="Error Rate"
+          label="Error rate"
           value={rate == null ? '—' : formatPercent(rate)}
           tone={rate == null ? 'default' : rate > 0.05 ? 'red' : 'green'}
         />
-        <StatCard label="Uptime" value={uptime} />
+        <StatCard label="Uptime" value={uptime} steady />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader title="Runtime" />
-          <dl className="divide-y divide-line text-sm">
+          <dl className="m-0 divide-y divide-line">
             <Row label="Jobs pushed (since restart)" value={formatNumber(stats.totalPushed)} />
             <Row label="Jobs pulled (since restart)" value={formatNumber(stats.totalPulled)} />
             <Row label="Heap used" value={formatBytes(memory.heapUsed * 1024 * 1024)} />
@@ -125,20 +130,15 @@ export function UsagePro() {
         <Card>
           <CardHeader title="Storage" />
           {storage.diskFull ? (
-            <div className="rounded-lg border border-danger/25 bg-danger/[0.06] px-4 py-3">
-              <div className="font-semibold text-danger">Disk full — writes suspended</div>
-              {storage.error && <div className="mt-1 text-xs text-muted">{storage.error}</div>}
-              {storage.since != null && (
-                <div className="mt-1 text-xs text-faint">
-                  since {formatRelativeTime(storage.since)}
-                </div>
-              )}
-            </div>
+            <Banner key="full" tone="problem" title="Disk full — writes suspended">
+              {storage.error}
+              {storage.error && storage.since != null && ' · '}
+              {storage.since != null && `since ${formatRelativeTime(storage.since)}`}
+            </Banner>
           ) : (
-            <div className="rounded-lg border border-success/25 bg-success/[0.06] px-4 py-3">
-              <div className="font-semibold text-success">Healthy</div>
-              <div className="mt-1 text-xs text-faint">Disk writes are being accepted.</div>
-            </div>
+            <Banner key="ok" tone="ok" title="Healthy">
+              Disk writes are being accepted.
+            </Banner>
           )}
         </Card>
       </div>
@@ -148,9 +148,11 @@ export function UsagePro() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between py-2.5">
-      <dt className="text-muted">{label}</dt>
-      <dd className="font-medium text-fg">{value}</dd>
+    <div className="flex items-center justify-between gap-4 py-2.5">
+      <dt className="text-[13px] text-muted">{label}</dt>
+      <dd className="m-0 text-[13px] font-semibold tnum text-fg">
+        <Wash value={value} />
+      </dd>
     </div>
   );
 }

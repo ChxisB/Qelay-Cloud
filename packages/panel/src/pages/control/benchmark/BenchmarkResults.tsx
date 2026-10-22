@@ -1,5 +1,6 @@
 import { AreaChart } from '@/components/ui/AreaChart';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { Legend } from '@/components/ui/charts/Legend';
 import { StatCard } from '@/components/ui/StatCard';
 import { STATE_SOLID } from '@/components/ui/StatusBadge';
 import { cn } from '@/lib/cn';
@@ -35,8 +36,8 @@ export function BenchmarkResults({
     <div className="flex flex-col gap-6 lg:col-span-2">
       <Card>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-fg">{heading}</h3>
-          <span className="text-right text-xs text-faint">
+          <h3 className="m-0 text-lg font-bold text-fg">{heading}</h3>
+          <span className="text-right text-[13px] text-muted">
             <span className="block">Benchmark target: {pollBaseUrl}</span>
             {etaText && <span className="block">{etaText}</span>}
           </span>
@@ -74,7 +75,7 @@ export function BenchmarkResults({
       </Card>
       <Card>
         <CardHeader title="Throughput" />
-        <p className="-mt-3 mb-4 text-xs text-faint">
+        <p className="-mt-3 mb-4 text-[13px] text-muted">
           Enqueue (client → server) vs completion (workers) per second
         </p>
         <AreaChart
@@ -93,9 +94,13 @@ export function BenchmarkResults({
             },
           ]}
         />
-        <div className="mt-2 flex items-center gap-4 font-mono text-[11px] text-faint">
-          <Legend color="var(--state-active-fg)" label="Push/sec" value={live.pushPerSec} />
-          <Legend color="var(--state-completed-fg)" label="Done/sec" value={live.donePerSec} />
+        <div className="mt-3">
+          <Legend
+            items={[
+              { tone: 'active', label: 'Push/sec', value: `${fmtRate(live.pushPerSec)}/s` },
+              { tone: 'ok', label: 'Done/sec', value: `${fmtRate(live.donePerSec)}/s` },
+            ]}
+          />
         </div>
       </Card>
     </div>
@@ -117,7 +122,7 @@ export function BenchmarkSummary({ summary }: { summary: Summary | null }) {
         <StatCard label="Push p95" value={formatMs(summary.p95)} compact />
         <StatCard label="Push p99" value={formatMs(summary.p99)} compact />
       </div>
-      <p className="mt-3 text-xs text-faint">
+      <p className="mt-3 text-[13px] text-muted">
         Push-batch latency avg {formatMs(summary.avg)} · p50 {formatMs(summary.p50)} · p95{' '}
         {formatMs(summary.p95)} · p99 {formatMs(summary.p99)} · max {formatMs(summary.max)}.
         {summary.error ? ` First error: ${summary.error}` : ''}
@@ -145,11 +150,11 @@ export function BenchmarkQueueCounts({
         title={`Server queue: ${pollQueue}`}
         action={
           error ? (
-            <span className="text-xs font-medium text-warning">stale — server unreachable</span>
+            <span className="text-[13px] font-bold text-warning">stale — server unreachable</span>
           ) : undefined
         }
       />
-      <p className="-mt-3 mb-4 text-xs text-faint">
+      <p className="-mt-3 mb-4 text-[13px] text-muted">
         Live counts from {pollBaseUrl} (poll 1s).
         {pinned ? ' Pinned to the current or last benchmark run.' : ''}
       </p>
@@ -177,7 +182,7 @@ export function BenchmarkQueueCounts({
           <StatCard label="Delayed" value={formatNumber(counts.delayed ?? 0)} compact />
         </div>
       ) : (
-        <p className="text-sm text-faint">
+        <p className="text-sm text-muted">
           No counts yet — waiting for the server to answer for this queue.
         </p>
       )}
@@ -196,35 +201,27 @@ function ProgressBar({
 }) {
   return (
     <div className="mb-2">
-      <div className="mb-1 flex items-center justify-between text-[11px] text-faint">
+      <div className="mb-1 flex items-center justify-between text-[13px] font-semibold text-muted">
         <span>{label}</span>
         <span className="tnum">{pct.toFixed(0)}%</span>
       </div>
       <div
-        className="h-1.5 overflow-hidden rounded-full bg-surface-2"
+        className="h-2.5 overflow-hidden rounded-full bg-slate-tint"
         role="progressbar"
         aria-label={label}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(pct)}
       >
+        {/* Scaled, not resized: only a transform moves, so the bar slides to each new value (motion-fill). */}
         <div
           className={cn(
-            'h-full rounded-full transition-[width] motion-reduce:transition-none',
+            'motion-fill h-full w-full rounded-full',
             tone === 'active' ? STATE_SOLID.active : STATE_SOLID.completed
           )}
-          style={{ width: `${pct}%` }}
+          style={{ transform: `scaleX(${pct / 100})` }}
         />
       </div>
     </div>
-  );
-}
-
-function Legend({ color, label, value }: { color: string; label: string; value: number }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span className="size-2 rounded-full" style={{ background: color }} />
-      {label} <span className="text-fg">{fmtRate(value)}/s</span>
-    </span>
   );
 }

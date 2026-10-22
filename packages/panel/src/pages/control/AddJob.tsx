@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { toast } from '@/components/dashboard/stores/toastStore';
+import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
-import { Field, Input } from '@/components/ui/form';
+import { Field, FieldAction, FormRow, Input } from '@/components/ui/form';
+import { LinkButton } from '@/components/ui/LinkButton';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { bq, bulkJobPayloadBudgetError } from '@/lib/bq';
 import type { CloneJobState } from '@/lib/cloneJob';
@@ -105,66 +107,65 @@ export function AddJob() {
   return (
     <div>
       <PageHeader
-        title="Add Job"
-        description="Enqueue a job with full options."
-        actions={
-          <Link
-            to="/jobs/bulk-add"
-            className="rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg"
-          >
-            Bulk import
-          </Link>
-        }
+        title="Add job"
+        description="Send a job to a queue by hand: pick the queue, write the data the worker should receive, then press Add job."
+        actions={<LinkButton to="/jobs/bulk-add">Bulk import</LinkButton>}
       />
-      {clone && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-link/30 bg-selected px-4 py-2 text-sm text-link">
-          Pre-filled from an existing job. Review the data and options, then enqueue a fresh job.
-        </div>
-      )}
-      <form
-        className="grid grid-cols-1 gap-6 lg:grid-cols-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <AddJobCard
-          values={values}
-          setValue={setValue}
-          queueNames={(queues?.queues ?? []).map((queue) => queue.name)}
-          queueDiscoveryError={queueDiscoveryError}
-          onRetryQueues={() => void refetchQueues()}
-          jsonError={jsonError}
-          setJsonError={setJsonError}
-        />
-        <AddJobOptionsCard values={values} setValue={setValue} />
-        <div className="flex flex-wrap items-end gap-3 lg:col-span-2">
-          <div className="w-28">
-            <Field label="Count" hint="1–10000">
-              <Input
-                type="number"
-                min={1}
-                max={10000}
-                step={1}
-                name="count"
-                value={values.count}
-                onChange={(event) => setValue('count', event.target.value)}
-              />
-            </Field>
+      <div className="flex flex-col gap-6">
+        {clone && (
+          <Banner tone="info" title="Pre-filled from an existing job.">
+            Review the data and options, then enqueue a fresh job.
+          </Banner>
+        )}
+        <form
+          className="grid grid-cols-1 gap-6 lg:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          <AddJobCard
+            values={values}
+            setValue={setValue}
+            queueNames={(queues?.queues ?? []).map((queue) => queue.name)}
+            queueDiscoveryError={queueDiscoveryError}
+            onRetryQueues={() => void refetchQueues()}
+            jsonError={jsonError}
+            setJsonError={setJsonError}
+          />
+          <AddJobOptionsCard values={values} setValue={setValue} />
+          <div className="flex flex-col gap-4 lg:col-span-2">
+            <FormRow>
+              <div className="w-40">
+                <Field label="How many jobs" hint="1 to 10,000">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={10000}
+                    step={1}
+                    name="count"
+                    value={values.count}
+                    onChange={(event) => setValue('count', event.target.value)}
+                  />
+                </Field>
+              </div>
+              <FieldAction>
+                <Button type="submit" variant="primary" disabled={busy}>
+                  {busy ? 'Adding…' : 'Add job'}
+                </Button>
+              </FieldAction>
+            </FormRow>
+            {result && (
+              <Banner
+                tone={result.ok ? 'ok' : 'problem'}
+                title={result.ok ? 'Job submission accepted' : 'The job was not added'}
+              >
+                {result.msg}
+              </Banner>
+            )}
           </div>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? 'Adding…' : 'Add job'}
-          </Button>
-          {result && (
-            <span
-              role={result.ok ? 'status' : 'alert'}
-              className={result.ok ? 'text-sm text-success' : 'text-sm text-danger'}
-            >
-              {result.msg}
-            </span>
-          )}
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }

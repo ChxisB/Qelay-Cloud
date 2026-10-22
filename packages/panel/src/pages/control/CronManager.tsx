@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { toast } from '@/components/dashboard/stores/toastStore';
-import { Card, CardHeader } from '@/components/ui/Card';
+import { Banner } from '@/components/ui/Banner';
+import { CreateCard } from '@/components/ui/CreateCard';
 import { EmptyState, ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
-import { IconCron } from '@/components/ui/icons';
+import { ClockDrawing } from '@/components/ui/illustrations';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { bq } from '@/lib/bq';
 import type { CronFull } from '@/lib/bqTypes';
@@ -34,6 +36,7 @@ export function CronManager() {
   const pageCount = Math.max(1, Math.ceil(crons.length / CRON_PAGE_SIZE));
   const [safePage, setPage] = useClampedPage(pageCount);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [removing, setRemoving] = useState<Set<string>>(new Set());
   const actionGuard = useServerActionGuard('cron-manager');
 
@@ -44,13 +47,14 @@ export function CronManager() {
   }, [actionGuard.scopeKey]);
 
   const remove = async (name: string) => {
-    if (
-      !window.confirm(
-        `Delete cron "${name}"? It will not be recreated automatically; creating a replacement is a separate action.`
-      )
-    ) {
-      return;
-    }
+    const sure = await confirmInPage({
+      question: `Delete cron "${name}"?`,
+      detail:
+        'It will not be recreated automatically; creating a replacement is a separate action.',
+      confirmLabel: 'Delete cron',
+      danger: true,
+    });
+    if (!sure) return;
     const lease = actionGuard.begin(`cron:${name}`);
     if (!lease) return;
     setActionError(null);
@@ -84,22 +88,27 @@ export function CronManager() {
         />
       )}
       <PageHeader
-        title="Cron Manager"
-        description="Submit explicitly acknowledged schedule upserts and manage repeatable jobs."
+        title="Cron jobs"
+        description="Run a job on a schedule: at set times, or every so often."
         live={Boolean(data) && !error}
       />
       {actionError && (
-        <div
-          role="status"
-          className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-2 text-sm text-danger"
-        >
-          {actionError}
+        <div className="mb-4">
+          <Banner tone="problem" title="Cron action failed">
+            {actionError}
+          </Banner>
         </div>
       )}
 
       {canOperate && (
-        <Card className="mb-6">
-          <CardHeader title="Create schedule via upstream upsert" />
+        <CreateCard
+          title="Create schedule"
+          sub="Choose the queue, say when to run, and Qelay adds a job each time."
+          button="New schedule"
+          open={creating}
+          onOpenChange={setCreating}
+          empty={Boolean(data) && crons.length === 0}
+        >
           <CronForm
             existingNames={existingNames}
             onCreate={async (body, isCurrent) => {
@@ -108,11 +117,14 @@ export function CronManager() {
               assertCronNameAvailable(latest, body.name);
               return bq.createCron(body);
             }}
-            onAccepted={refetch}
+            onAccepted={() => {
+              setCreating(false);
+              void refetch();
+            }}
             beginCreate={(name) => actionGuard.begin(`cron:${name}`)}
             scopeKey={actionGuard.scopeKey}
           />
-        </Card>
+        </CreateCard>
       )}
 
       {error && !data ? (
@@ -121,9 +133,13 @@ export function CronManager() {
         <LoadingState label="Loading crons…" />
       ) : crons.length === 0 ? (
         <EmptyState
-          icon={<IconCron />}
-          title="No scheduled jobs"
-          hint={canOperate ? 'Submit one above.' : 'No schedule has been created yet.'}
+          picture={<ClockDrawing />}
+          title="No schedules yet"
+          hint={
+            canOperate
+              ? 'A schedule adds a job to a queue by itself, every few minutes or at set times. Fill in the form above to create the first one.'
+              : 'A schedule adds a job to a queue by itself, every few minutes or at set times. None has been created yet.'
+          }
         />
       ) : (
         <CronTable

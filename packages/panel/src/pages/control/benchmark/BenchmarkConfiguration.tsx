@@ -2,6 +2,7 @@ import type { ChangeEvent } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Field, Input, SegmentedControl, Toggle } from '@/components/ui/form';
+import { StatusGlyph } from '@/components/ui/StatusBadge';
 import { cn } from '@/lib/cn';
 import { formatNumber } from '@/lib/format';
 import { LIMITS } from './engine';
@@ -12,6 +13,7 @@ export function BenchmarkConfiguration({
   active,
   cleaning,
   cleanResult,
+  overLimit,
   setField,
   numberInput,
   onClean,
@@ -20,17 +22,20 @@ export function BenchmarkConfiguration({
   active: boolean;
   cleaning: boolean;
   cleanResult: { remaining: number } | { error: string } | null;
+  /** The number fields whose value is above their limit. */
+  overLimit: readonly BenchmarkNumKey[];
   setField: <K extends keyof BenchmarkDraft>(key: K, value: BenchmarkDraft[K]) => void;
   numberInput: (key: BenchmarkNumKey) => (event: ChangeEvent<HTMLInputElement>) => void;
   onClean: () => void;
 }) {
+  const invalid = (key: BenchmarkNumKey) => (overLimit.includes(key) ? true : undefined);
   return (
     <Card className="lg:col-span-1">
       <CardHeader title="Configuration" />
       <div className="flex flex-col gap-3">
         <Field
           label="Dedicated queue"
-          hint="Cryptographically generated for this browser tab; production queue names cannot be entered here."
+          hint="Made up for this test, so it cannot touch your real queues."
         >
           <Input
             name="benchmark-queue"
@@ -59,6 +64,7 @@ export function BenchmarkConfiguration({
           <Field label="Total jobs" hint={`max ${formatNumber(LIMITS.total)}`}>
             <Input
               name="benchmark-total"
+              aria-invalid={invalid('total')}
               autoComplete="off"
               type="number"
               min={1}
@@ -72,6 +78,7 @@ export function BenchmarkConfiguration({
           <Field label="Duration (s)" hint={`max ${LIMITS.durationS}s`}>
             <Input
               name="benchmark-duration-seconds"
+              aria-invalid={invalid('durationS')}
               autoComplete="off"
               type="number"
               min={1}
@@ -82,13 +89,12 @@ export function BenchmarkConfiguration({
             />
           </Field>
         )}
-        <div className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-faint">
-          Producers
-        </div>
+        <div className="mt-1 text-[13px] font-extrabold text-fg">Producers</div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Producers" hint={`parallel, max ${LIMITS.producers}`}>
             <Input
               name="benchmark-producers"
+              aria-invalid={invalid('producers')}
               autoComplete="off"
               type="number"
               min={1}
@@ -101,6 +107,7 @@ export function BenchmarkConfiguration({
           <Field label="Push batch" hint={`jobs/req, max ${LIMITS.batch}`}>
             <Input
               name="benchmark-push-batch"
+              aria-invalid={invalid('batch')}
               autoComplete="off"
               type="number"
               min={1}
@@ -113,6 +120,7 @@ export function BenchmarkConfiguration({
           <Field label="Payload" hint={`bytes/job, max ${formatNumber(LIMITS.payload)}`}>
             <Input
               name="benchmark-payload-bytes"
+              aria-invalid={invalid('payload')}
               autoComplete="off"
               type="number"
               min={0}
@@ -123,13 +131,12 @@ export function BenchmarkConfiguration({
             />
           </Field>
         </div>
-        <div className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-faint">
-          Workers (simulated)
-        </div>
+        <div className="mt-1 text-[13px] font-extrabold text-fg">Workers (simulated)</div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Workers" hint={`0 = produce only, max ${LIMITS.workers}`}>
             <Input
               name="benchmark-workers"
+              aria-invalid={invalid('workers')}
               autoComplete="off"
               type="number"
               min={0}
@@ -142,6 +149,7 @@ export function BenchmarkConfiguration({
           <Field label="Pull batch" hint={`jobs/pull, max ${LIMITS.workerBatch}`}>
             <Input
               name="benchmark-pull-batch"
+              aria-invalid={invalid('workerBatch')}
               autoComplete="off"
               type="number"
               min={1}
@@ -154,6 +162,7 @@ export function BenchmarkConfiguration({
           <Field label="Process (ms)" hint="simulated work per pull">
             <Input
               name="benchmark-process-ms"
+              aria-invalid={invalid('processMs')}
               autoComplete="off"
               type="number"
               min={0}
@@ -177,19 +186,27 @@ export function BenchmarkConfiguration({
           onChange={(removeOnComplete) => setField('removeOnComplete', removeOnComplete)}
         />
         <div className="flex items-center gap-3 pt-1">
-          <Button variant="ghost" size="sm" disabled={active || cleaning} onClick={onClean}>
+          <Button size="sm" disabled={active || cleaning} onClick={onClean}>
             {cleaning ? 'Cleaning…' : 'Clean queue'}
           </Button>
           {cleanResult &&
             ('error' in cleanResult ? (
-              <span className="text-xs text-danger">Clean unverified — {cleanResult.error}</span>
+              <span
+                role="alert"
+                className="motion-arrive inline-flex items-center gap-1.5 text-[13px] font-bold text-danger"
+              >
+                <StatusGlyph small state="failed" />
+                Clean unverified — {cleanResult.error}
+              </span>
             ) : (
               <span
+                role="status"
                 className={cn(
-                  'text-xs',
+                  'motion-arrive inline-flex items-center gap-1.5 text-[13px] font-bold',
                   cleanResult.remaining > 0 ? 'text-warning' : 'text-success'
                 )}
               >
+                <StatusGlyph small state={cleanResult.remaining > 0 ? 'delayed' : 'completed'} />
                 {cleanResult.remaining > 0
                   ? `Cleaned — ${formatNumber(cleanResult.remaining)} active job(s) remain (requeued after the stall timeout)`
                   : 'Cleaned — 0 jobs remain'}
@@ -215,7 +232,7 @@ function ToggleRow({
   return (
     <div className="flex items-center gap-2">
       <Toggle checked={checked} onChange={onChange} disabled={active} label={label} />
-      <span className="text-sm text-muted">{label}</span>
+      <span className="text-sm font-medium text-fg">{label}</span>
     </div>
   );
 }

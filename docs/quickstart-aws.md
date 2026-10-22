@@ -128,7 +128,7 @@ QCLOUD_TRANSPORT=aws-sqs QCLOUD_AWS_REGION=REGION QCLOUD_NAMESPACE=orders \
 
 Open the panel and sign in. You will see what you saw locally, with expected differences. The failing charge retries up to
 a minute apart, not 500 ms, because the scheduler's tick rings the retry. A delay of up to 15 minutes is held by SQS
-itself; a longer one is kept by the database and rung when due (the Transport page says "≈" because SQS counts are
+itself; a longer one is kept by the database and rung when due (the Job delivery page says "≈" because SQS counts are
 approximate). [Delay precision](limits.md#1-delay-precision-by-hosting-mode) has the numbers for each hosting mode.
 
 ## 5. Smoke-test the deployment

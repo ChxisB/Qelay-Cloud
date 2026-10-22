@@ -25,6 +25,19 @@ function execCommandCopy(value: string): boolean {
   }
 }
 
+/** Write `value` to the clipboard, falling back to the legacy path; false when both fail. */
+export async function copyText(value: string): Promise<boolean> {
+  if (navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      // Permission denied / transient failure — try the legacy path below.
+    }
+  }
+  return execCommandCopy(value);
+}
+
 /**
  * Small icon button that copies `value` to the clipboard and flashes a check
  * mark — or a red ✕ when the copy failed, so the user never pastes stale
@@ -44,16 +57,7 @@ export function CopyButton({ value, className }: { value: string; className?: st
   );
 
   const copy = async () => {
-    let ok = false;
-    if (navigator.clipboard) {
-      try {
-        await navigator.clipboard.writeText(value);
-        ok = true;
-      } catch {
-        // Permission denied / transient failure — try the legacy path below.
-      }
-    }
-    if (!ok) ok = execCommandCopy(value);
+    const ok = await copyText(value);
     setState(ok ? 'copied' : 'failed');
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setState('idle'), 1500);

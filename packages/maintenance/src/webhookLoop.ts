@@ -56,13 +56,13 @@ export function pooledSending(config: WebhookSenderConfig, ca?: string): PooledS
 }
 
 export async function runWebhookLoop(
-  store: Pick<PostgresStore, 'webhooks'>,
+  store: Pick<PostgresStore, 'webhooks' | 'enqueue'>,
   sending: WebhookSending,
   telemetry: Telemetry,
   signal: AbortSignal
 ): Promise<void> {
   const { config } = sending;
-  const deps = sendDepsOf(sending);
+  const deps = sendDepsOf(sending, (jobs) => store.enqueue(jobs));
   const sends = new Set<Promise<void>>();
   let done: AttemptOutcome[] = [];
   let claimed = 0;

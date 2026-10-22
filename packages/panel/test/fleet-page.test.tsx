@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { Fleet } from '../src/pages/Fleet';
 import { ensureDom, settle } from './domSetup';
@@ -121,7 +122,7 @@ afterEach(() => {
 
 describe('Fleet page', () => {
   test('shows a shared PostgreSQL topology and operates an inactive broker', async () => {
-    const host = render(createElement(Fleet));
+    const host = render(createElement(MemoryRouter, null, createElement(Fleet)));
     await settle(20);
 
     expect(host.textContent).toContain('Configured nodes2');

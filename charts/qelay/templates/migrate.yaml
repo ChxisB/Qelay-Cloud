@@ -1,0 +1,45 @@
+{{- /* The release step: before the new pods, never on start. Hooks run on install and upgrade, not on rollback, so an older build never runs its migrations against a newer schema. */}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "qelay.fullname" . }}-migrate
+  labels:
+    {{- include "qelay.labels" (dict "root" . "component" "migrate") | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    # A failed job is kept for its logs; a successful one is not.
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        {{- include "qelay.selector" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "qelay.image" (dict "root" . "image" .Values.api.image) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          args: [migrate]
+          env:
+            {{- include "qelay.env" (dict "root" . "poolSize" 1 "urlKey" .Values.database.directUrlKey) | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}

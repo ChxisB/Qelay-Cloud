@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from '@/components/dashboard/stores/toastStore';
+import { LinkButton } from '@/components/ui/LinkButton';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { bq } from '@/lib/bq';
 import { usePolledData } from '@/lib/usePolledData';
@@ -149,8 +150,9 @@ export function BulkAddJobs() {
   return (
     <div>
       <PageHeader
-        title="Bulk Add Jobs"
-        description="Import many distinct jobs at once from a JSON array, NDJSON, or a file."
+        title="Bulk add jobs"
+        description="Paste a JSON array or one JSON object a line, or upload a file. Every item is checked first, and nothing is sent until all of them pass."
+        actions={<LinkButton to="/add-job">Add one job</LinkButton>}
       />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <BulkJobsCard

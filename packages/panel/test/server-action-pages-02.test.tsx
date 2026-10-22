@@ -20,7 +20,7 @@ import {
   WorkersPro,
 } from './server-action-pages.helpers';
 
-installTestHooks();
+installTestHooks({ yesToQuestions: true });
 
 describe('guarded job and entity actions', () => {
   test('WorkersPro synchronously locks unregister by worker id', async () => {
@@ -69,7 +69,9 @@ describe('guarded job and entity actions', () => {
       'button[aria-label="Remove stale registry record for worker worker-1"]'
     );
     expect(remove).not.toBeNull();
+    // Both clicks ask; the first answer takes the lease for the worker, so the second one sends nothing.
     clickSameTick(remove as HTMLButtonElement);
+    await settle(20);
     expect(deletes).toBe(1);
     mutation.resolve(json({ ok: true }));
     await settle(20);
@@ -112,7 +114,7 @@ describe('retarget-safe bounded fan-outs', () => {
     view.unmount();
   });
 
-  test('DlqPro keeps global retry and purge disabled and sends no mutation', async () => {
+  test('DlqPro draws no global retry or purge and sends no mutation', async () => {
     const mutationUrls: string[] = [];
     const queues = Array.from({ length: 8 }, (_, index) => dashboardQueue(`q${index + 1}`, 1));
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -151,14 +153,8 @@ describe('retarget-safe bounded fan-outs', () => {
       createElement(MemoryRouter, { initialEntries: ['/dlq'] }, createElement(DlqPro))
     );
     await settle(35);
-    const retryAll = buttonByText(view.host, 'Retry all (8 queues)');
-    const purgeAll = buttonByText(view.host, 'Purge all (8 queues)');
-    expect(retryAll.disabled).toBeTrue();
-    expect(purgeAll.disabled).toBeTrue();
-    act(() => {
-      retryAll.click();
-      purgeAll.click();
-    });
+    const labels = [...view.host.querySelectorAll('button')].map((b) => b.textContent?.trim());
+    expect(labels.filter((label) => /^(Retry|Purge)/.test(label ?? ''))).toEqual([]);
     await settle(10);
     expect(mutationUrls).toEqual([]);
     view.unmount();

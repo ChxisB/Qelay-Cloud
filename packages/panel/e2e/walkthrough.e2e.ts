@@ -8,7 +8,15 @@
  * exists, so a replace is an upsert).
  */
 import { E2E_WORKER_NAME } from './config';
-import { control, expect, expectNoBrowserErrors, test, unlockDashboard } from './fixtures';
+import {
+  answerQuestion,
+  control,
+  expect,
+  expectNoBrowserErrors,
+  openCreateForm,
+  test,
+  unlockDashboard,
+} from './fixtures';
 import { addThroughForm, go, post, read, stateOf } from './walkthroughKit';
 
 test.beforeEach(async ({ request }) => {
@@ -38,30 +46,38 @@ test('an operator runs a queue from the first job to the tick, and the panel agr
   });
 
   await test.step('add a delayed job; it waits, then runs', async () => {
-    const id = await addThroughForm(page, queue, 'later', { n: 2 }, { 'Delay (ms)': '2500' });
+    const id = await addThroughForm(
+      page,
+      queue,
+      'later',
+      { n: 2 },
+      { 'Wait before running': '2500' }
+    );
     expect(await stateOf(request, id)()).toBe('delayed');
     await expect.poll(stateOf(request, id), { timeout: 20_000 }).toBe('completed');
   });
 
-  await test.step('watch a job go by on the live Activity Logs', async () => {
+  await test.step('watch a job go by on the live Activity logs', async () => {
     await go(page, '/logs');
-    await expect(page.getByRole('heading', { name: 'Activity Logs', level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Activity logs', level: 1 })).toBeVisible();
     const added = await post(request, `/queues/${queue}/jobs`, { name: 'watched', data: {} });
-    const row = page.locator('#main tbody tr').filter({ hasText: String(added.body.id) });
+    const row = page
+      .getByRole('log', { name: 'Activity events' })
+      .getByRole('button')
+      .filter({ hasText: String(added.body.id) });
     await expect(row.first()).toBeVisible({ timeout: 15_000 });
   });
 
   await test.step('pause the queue: a new job waits; resume: it runs', async () => {
-    await go(page, '/queue-control');
-    await page.getByRole('combobox', { name: 'Queue', exact: true }).selectOption(queue);
-    await page.getByRole('button', { name: 'Pause', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
+    await go(page, `/queues/${queue}?tab=settings`);
+    await page.getByRole('button', { name: 'Pause queue', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Resume queue', exact: true })).toBeVisible();
     const added = await post(request, `/queues/${queue}/jobs`, { name: 'held', data: {} });
     const id = String(added.body.id);
     await page.waitForTimeout(2_000);
     expect(await stateOf(request, id)()).toBe('waiting');
-    await page.getByRole('button', { name: 'Resume', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Resume queue', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Pause queue', exact: true })).toBeVisible();
     await expect.poll(stateOf(request, id)).toBe('completed');
   });
 
@@ -72,12 +88,12 @@ test('an operator runs a queue from the first job to the tick, and the panel agr
         queue,
         'doomed',
         { fail: true },
-        { 'Max attempts': '2', 'Backoff (ms)': '100' }
+        { 'Tries before it fails': '2', 'Wait between tries': '100' }
       );
       await expect.poll(stateOf(request, id), { timeout: 20_000 }).toBe('failed');
       await go(page, `/dlq?queue=${queue}`);
       await expect(
-        page.getByRole('heading', { name: 'Dead Letter Queue', level: 1 })
+        page.getByRole('heading', { name: 'Dead letter queue', level: 1 })
       ).toBeVisible();
       const entry = page.getByRole('row').filter({ hasText: id });
       await expect(entry).toContainText('max_attempts_exceeded');
@@ -106,19 +122,20 @@ test('an operator runs a queue from the first job to the tick, and the panel agr
     expect([done.status, done.body.count, done.body.done]).toEqual([200, 1, true]);
     expect((await read(request, `/jobs/${failed}`)).status).toBe(404);
     await go(page, `/dlq?queue=${queue}`);
-    await expect(page.getByText('No dead letter entries', { exact: true })).toBeVisible();
+    await expect(page.getByText('Nothing has failed', { exact: true })).toBeVisible();
   });
 
   await test.step('create a cron in the form, replace it, and delete it', async () => {
-    // The form asks the operator to confirm an upsert, and a removal, in the browser's own dialog.
-    page.on('dialog', (dialog) => void dialog.accept());
+    // The form asks the operator to confirm a new schedule, and a removal, in the page.
     await go(page, '/cron');
-    await expect(page.getByRole('heading', { name: 'Cron Manager', level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Cron jobs', level: 1 })).toBeVisible();
+    await openCreateForm(page, 'New schedule');
     await page.getByRole('textbox', { name: 'Name', exact: true }).fill(cron);
     await page.getByRole('textbox', { name: 'Queue', exact: true }).fill(`${queue}-cron`);
-    await page.getByRole('button', { name: 'every', exact: true }).click();
+    await page.getByRole('button', { name: 'Every so often', exact: true }).click();
     await page.getByLabel('Every (ms)').fill('1000');
-    await page.getByRole('button', { name: 'Submit upsert' }).click();
+    await page.getByRole('button', { name: 'Create schedule' }).click();
+    await answerQuestion(page, `Create the schedule "${cron}"?`, 'accept', 'Create schedule');
     const row = page.getByRole('row').filter({ hasText: cron });
     await expect(row).toBeVisible();
     // The tick fires it: the cron's executions count rises and its jobs appear on its queue.
@@ -130,7 +147,8 @@ test('an operator runs a queue from the first job to the tick, and the panel agr
     const counts = (await read(request, `/queues/${queue}-cron/counts`)).body.counts;
     expect(counts.waiting).toBeGreaterThan(0);
 
-    // The form refuses an existing name; a replace is an upsert, and it changes the timing.
+    // The form closed after the create. It refuses an existing name; a replace is an upsert, and it changes the timing.
+    await openCreateForm(page, 'New schedule');
     await page.getByRole('textbox', { name: 'Name', exact: true }).fill(cron);
     await expect(page.getByRole('button', { name: 'Name already exists' })).toBeDisabled();
     const replaced = await post(
@@ -143,6 +161,7 @@ test('an operator runs a queue from the first job to the tick, and the panel agr
     expect((await read(request, `/crons/${cron}`)).body.cron.repeatEvery).toBe(3_600_000);
 
     await page.getByRole('button', { name: `Delete cron ${cron}` }).click();
+    await answerQuestion(page, `Delete cron "${cron}"?`, 'accept', 'Delete cron');
     await expect.poll(async () => (await read(request, `/crons/${cron}`)).status).toBe(404);
   });
 
@@ -154,12 +173,12 @@ test('an operator runs a queue from the first job to the tick, and the panel agr
     expect(workers.length).toBeGreaterThan(0);
   });
 
-  await test.step('Transport and Deployment: the queue is there and the tick is young', async () => {
+  await test.step('Job delivery and Deployment: the queue is there and maintenance is young', async () => {
     await go(page, '/transport');
-    const table = page.getByRole('table', { name: 'Doorbell health per queue' });
+    const table = page.getByRole('table', { name: 'Notification health per queue' });
     await expect(table.getByRole('row', { name: new RegExp(`^${queue} `, 'u') })).toBeVisible();
     await go(page, '/deployment');
-    await expect(page.getByRole('heading', { name: 'Tick' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Maintenance' })).toBeVisible();
     await expect(page.locator('#main')).toContainText(/Last success[\s\S]*\(\d+s ago\)/u);
     const tick = (await read(request, '/deployment')).body.tick;
     expect(tick.state).toBe('ok');

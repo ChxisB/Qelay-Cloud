@@ -1,4 +1,5 @@
 import { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
+import { type ConfirmOptions, confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { toast } from '@/components/dashboard/stores/toastStore';
 import type { JobFull } from '@/lib/bqTypes';
 import { assertSuccessfulMutationResponse, useServerActionGuard } from '@/lib/useServerActionGuard';
@@ -33,9 +34,9 @@ export function useJobMutations({
     job: JobFull,
     label: string,
     operation: () => Promise<unknown>,
-    confirmText?: string
+    confirm?: ConfirmOptions
   ) => {
-    if (confirmText && !window.confirm(confirmText)) return;
+    if (confirm && !(await confirmInPage(confirm))) return;
     const lease = actionGuard.begin(`job:${job.id}`);
     if (!lease) return;
     setBusyIds((current) => new Set(current).add(job.id));
@@ -66,11 +67,11 @@ export function useJobMutations({
     label: string,
     operation: (job: JobFull) => Promise<unknown>,
     eligible: (job: JobFull) => boolean,
-    confirmText?: (count: number) => string
+    confirm?: (count: number) => ConfirmOptions
   ) => {
     const targets = rows.filter((job) => selected.has(job.id) && eligible(job));
     if (targets.length === 0) return;
-    if (confirmText && !window.confirm(confirmText(targets.length))) return;
+    if (confirm && !(await confirmInPage(confirm(targets.length)))) return;
     const lease = actionGuard.begin(['bulk', ...targets.map((job) => `job:${job.id}`)]);
     if (!lease) return;
     setBulkBusy(true);

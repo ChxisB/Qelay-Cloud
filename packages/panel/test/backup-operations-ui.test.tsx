@@ -5,6 +5,7 @@ import type { BackupRepository } from '../src/features/backups/application/Backu
 import { parseGeneratedEnvironment } from '../src/features/backups/domain/environmentRecord';
 import { BackupOperationsPanel } from '../src/features/backups/ui/BackupOperationsPanel';
 import type { DbStats } from '../src/lib/bqTypes';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 
 ensureDom();
@@ -45,10 +46,7 @@ describe('S3 backup operations', () => {
         return { success: true, message: 'Restore complete' };
       },
     });
-    const originalConfirm = window.confirm;
-    const originalPrompt = window.prompt;
-    window.confirm = () => true;
-    window.prompt = () => 'RESTORE';
+    const asked = answerConfirms();
     try {
       const host = render(
         createElement(BackupOperationsPanel, {
@@ -68,9 +66,49 @@ describe('S3 backup operations', () => {
         ['backup'],
         ['restore', 'backups/one.db', database],
       ]);
+      expect(asked.questions).toEqual([
+        { question: 'Apply the configuration?', confirmLabel: 'Apply configuration' },
+        { question: 'Create a backup now?', confirmLabel: 'Backup now' },
+        { question: 'Restore this backup?', confirmLabel: 'Restore', danger: true },
+      ]);
     } finally {
-      window.confirm = originalConfirm;
-      window.prompt = originalPrompt;
+      asked.stop();
+    }
+  });
+
+  test('sends nothing when the question is answered no', async () => {
+    const calls: unknown[] = [];
+    const repository = fakeRepository({
+      configure: async () => {
+        calls.push('configure');
+        return { configured: true, enabled: true };
+      },
+      backupNow: async () => {
+        calls.push('backup');
+        return { success: true, message: 'ok' };
+      },
+      restore: async () => {
+        calls.push('restore');
+        return { success: true, message: 'ok' };
+      },
+    });
+    const asked = answerConfirms(false);
+    try {
+      const host = render(
+        createElement(BackupOperationsPanel, {
+          repository,
+          environmentText: 'S3_BACKUP_ENABLED=true\nS3_BUCKET="production"',
+        })
+      );
+      await settle(3);
+      for (const label of ['Apply configuration', 'Backup now', 'Restore']) {
+        click(button(host, label));
+        await settle(3);
+      }
+      expect(asked.questions).toHaveLength(3);
+      expect(calls).toEqual([]);
+    } finally {
+      asked.stop();
     }
   });
 

@@ -13,7 +13,11 @@ import {
 } from '@/components/dashboard/stores/globalModalStore';
 import { useThemeStore } from '@/components/dashboard/stores/themeStore';
 import { visibleNav } from '@/components/layout/navConfig';
+import { SearchField } from '@/components/ui/SearchField';
 import { useCapabilities } from '@/lib/capabilities/useCapabilities';
+import { cn } from '@/lib/cn';
+import { usePresence } from '@/lib/usePresence';
+import { type Command, PaletteResults } from './CommandPaletteList';
 
 /**
  * Global command palette (Cmd/Ctrl-K). Fuzzy-searches every navigation
@@ -22,8 +26,6 @@ import { useCapabilities } from '@/lib/capabilities/useCapabilities';
  * to close. Mounted once in AppLayout. Opens on the hotkey or a
  * `command-palette:open` window event (dispatched by the Topbar trigger).
  */
-
-type Command = { id: string; label: string; hint: string; run: () => void };
 
 const DOCS_URL = 'https://chxisb.github.io/qelay-control-panel/docs/';
 const FOCUSABLE =
@@ -57,6 +59,7 @@ export function CommandPalette() {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const open = useGlobalModalStore((state) => state.active === 'command-palette');
+  const { mounted, leaving } = usePresence(open);
   const releaseModal = useGlobalModalStore((state) => state.release);
   const navigate = useNavigate();
   const toggleTheme = useThemeStore((s) => s.toggle);
@@ -71,15 +74,23 @@ export function CommandPalette() {
     const nav: Command[] = visibleNav(isPageAvailable).flatMap((group) =>
       group.items.map((item) => ({
         id: `nav:${item.to}`,
+        group: 'Pages',
         label: item.label,
         hint: group.section ?? 'Home',
         run: () => navigate(item.to),
       }))
     );
     const actions: Command[] = [
-      { id: 'act:theme', label: 'Toggle theme (dark / light)', hint: 'Action', run: toggleTheme },
+      {
+        id: 'act:theme',
+        group: 'Actions',
+        label: 'Toggle theme (dark / light)',
+        hint: 'Action',
+        run: toggleTheme,
+      },
       {
         id: 'act:docs',
+        group: 'Actions',
         label: 'Open documentation',
         hint: 'Action',
         run: () => window.open(DOCS_URL, '_blank', 'noopener'),
@@ -181,7 +192,7 @@ export function CommandPalette() {
     [close]
   );
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
@@ -200,7 +211,14 @@ export function CommandPalette() {
   };
 
   return (
-    <div ref={rootRef} className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[12vh]">
+    <div
+      ref={rootRef}
+      inert={leaving || undefined}
+      className={cn(
+        'fixed inset-0 z-50 flex items-start justify-center p-4 pt-[12vh]',
+        leaving && 'pointer-events-none'
+      )}
+    >
       {/* Backdrop as a real button so "click outside to close" is keyboard- and
           screen-reader-accessible. */}
       <button
@@ -208,7 +226,7 @@ export function CommandPalette() {
         tabIndex={-1}
         aria-label="Close command palette"
         onClick={close}
-        className="fixed inset-0 bg-black/50"
+        className={cn('fixed inset-0 bg-scrim', leaving ? 'motion-fade-out' : 'motion-fade')}
       />
       <div
         ref={dialogRef}
@@ -216,9 +234,12 @@ export function CommandPalette() {
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="relative z-10 w-full max-w-lg overflow-hidden rounded-card border border-line-strong bg-surface shadow-2xl"
+        className={cn(
+          'relative z-10 flex w-full max-w-[640px] flex-col overflow-hidden rounded-[24px] border border-line-strong bg-raised shadow-pop',
+          leaving ? 'motion-leave' : 'motion-drop'
+        )}
       >
-        <input
+        <SearchField
           ref={inputRef}
           role="combobox"
           value={query}
@@ -235,45 +256,16 @@ export function CommandPalette() {
           aria-activedescendant={filtered[active] ? `command-palette-option-${active}` : undefined}
           autoComplete="off"
           name="command-palette-search"
-          className="w-full border-b border-line bg-transparent px-4 py-3 text-sm text-fg outline-none placeholder:text-faint focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          shortcut="Esc"
+          containerClassName="m-3"
         />
-        <div
-          ref={listRef}
-          id="command-palette-results"
-          role="listbox"
-          className="max-h-80 overflow-y-auto overscroll-contain py-2"
-          aria-label="Results"
-        >
-          {filtered.length === 0 && (
-            <div role="presentation" className="px-4 py-6 text-center text-sm text-faint">
-              No matches
-            </div>
-          )}
-          {filtered.map((c, i) => (
-            <div key={c.id} role="presentation">
-              <button
-                type="button"
-                id={`command-palette-option-${i}`}
-                role="option"
-                aria-selected={i === active}
-                tabIndex={-1}
-                data-idx={i}
-                onMouseEnter={() => setActive(i)}
-                onClick={() => exec(c)}
-                className={`flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors ${
-                  i === active ? 'bg-selected text-fg' : 'text-muted'
-                }`}
-              >
-                <span className="truncate">{c.label}</span>
-                <span className="shrink-0 text-xs text-faint">{c.hint}</span>
-              </button>
-            </div>
-          ))}
-        </div>
-        <div className="flex items-center justify-between border-t border-line px-4 py-2 text-xs text-faint">
-          <span>↑↓ navigate · ↵ open · esc close</span>
-          <span className="font-mono">⌘K</span>
-        </div>
+        <PaletteResults
+          listRef={listRef}
+          commands={filtered}
+          active={active}
+          onHover={setActive}
+          onPick={exec}
+        />
       </div>
     </div>
   );

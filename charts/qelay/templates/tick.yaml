@@ -1,0 +1,79 @@
+{{- /* The tick is the API image with another entrypoint (docs/runbooks/deploy-gcp.md). */}}
+{{- $image := include "qelay.image" (dict "root" . "image" .Values.api.image) }}
+{{- $tick := list "bun" "/app/packages/maintenance/src/bin.ts" }}
+{{- if .Values.tick.loop.enabled }}
+---
+{{ include "qelay.deployment" (dict
+  "root" .
+  "component" "tick"
+  "replicas" .Values.tick.loop.replicas
+  "image" $image
+  "command" $tick
+  "args" (list "loop")
+  "env" (print (include "qelay.env" (dict "root" . "poolSize" .Values.tick.loop.poolSize)) (include "qelay.extraEnv" .Values.tick.loop.env))
+  "resources" .Values.tick.loop.resources) }}
+{{- end }}
+{{- if .Values.webhooks.sender.enabled }}
+---
+{{ include "qelay.deployment" (dict
+  "root" .
+  "component" "webhook-sender"
+  "replicas" .Values.webhooks.sender.replicas
+  "image" $image
+  "command" $tick
+  "args" (list "send")
+  "env" (print (include "qelay.env" (dict "root" . "poolSize" .Values.webhooks.sender.poolSize)) (include "qelay.extraEnv" .Values.webhooks.sender.env))
+  "resources" .Values.webhooks.sender.resources) }}
+{{- end }}
+{{- if .Values.tick.cron.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "qelay.fullname" . }}-tick
+  labels:
+    {{- include "qelay.labels" (dict "root" . "component" "tick-cron") | nindent 4 }}
+spec:
+  schedule: {{ .Values.tick.cron.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 55
+      template:
+        metadata:
+          labels:
+            {{- include "qelay.selector" (dict "root" . "component" "tick-cron") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "qelay.fullname" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: tick
+              image: {{ $image }}
+              imagePullPolicy: {{ .Values.imagePullPolicy }}
+              command: {{ toJson $tick }}
+              args: [run]
+              env:
+                {{- include "qelay.env" (dict "root" . "poolSize" .Values.tick.cron.poolSize) | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

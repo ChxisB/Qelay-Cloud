@@ -1,0 +1,128 @@
+# Minimal install (Postgres you already run; the secret holds its URL under the key `url`):
+#
+#   kubectl create secret generic qelay-db --from-literal=url='postgres://USER:PASSWORD@HOST:5432/DB'
+#   helm install qelay oci://ghcr.io/chxisb/charts/qelay --version X.Y.Z \
+#     --set database.existingSecret=qelay-db --set database.tls=unverified \
+#     --set oidc.issuer=https://idp.example.com --set oidc.audience=qelay --set oidc.jwksUrl=https://idp.example.com/jwks \
+#     --set panel.oidc.clientId=qelay-panel \
+#     --set ingress.enabled=true --set ingress.api.host=api.example.com --set ingress.panel.host=qelay.example.com
+#
+# Every setting a process reads is documented in docs/limits.md (configuration reference).
+
+imagePullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# QCLOUD_NAMESPACE: the tenant of every row. Not the Kubernetes namespace.
+queueNamespace: default
+
+database:
+  # The Secret that holds the connection string. Required. The chart never creates it, so no
+  # password is in the values or in the Helm release history.
+  existingSecret: ""
+  urlKey: url
+  # Key of a second URL for the migration job, when the main one goes through a pooler (DDL needs a direct connection).
+  directUrlKey: ""
+  pooler: none # none | transaction
+  # "unverified" (encrypted, not checked) or "off" (plaintext, only for a trusted private hop).
+  # Unset, a non-loopback host is refused at start. Conflicts with tlsCa.
+  tls: ""
+  # The CA bundle itself (PEM text, not a secret) to verify the server with.
+  tlsCa: ""
+
+transport:
+  # postgres: workers poll the database, no cloud account (fine to start; wake-ups are up to ~1 s late).
+  # gcp-pubsub / aws-sqs: the cloud queue rings the doorbell; give the pods cloud access through serviceAccount.annotations.
+  kind: postgres
+  gcpProject: ""
+  awsRegion: ""
+
+serviceAccount:
+  # Annotations for workload identity (GKE) or IRSA (EKS).
+  annotations: {}
+
+# What a token must satisfy. All three are required.
+oidc:
+  issuer: ""
+  audience: "" # comma separated
+  jwksUrl: ""
+  roleClaim: "" # default: roles
+  operatorRoles: "" # default: operator
+  viewerRoles: "" # default: viewer
+
+api:
+  image:
+    repository: ghcr.io/chxisb/qelay-api
+    tag: "" # default: the chart's appVersion
+  replicas: 1
+  poolSize: 2
+  # Exact origins; default: the panel's ingress host.
+  corsOrigins: ""
+  resources: {}
+  env: {} # extra QCLOUD_API_* variables
+
+panel:
+  enabled: true
+  image:
+    repository: ghcr.io/chxisb/qelay-panel
+    tag: ""
+  replicas: 1
+  # The API's public URL as the browser sees it; default: the API's ingress host.
+  apiBaseUrl: ""
+  oidc:
+    authority: "" # default: oidc.issuer
+    clientId: "" # required: a public client (authorization code with PKCE)
+    scope: ""
+    audience: ""
+  resources: {}
+  env: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  scheme: https
+  # Name of a TLS Secret covering both hosts (or one cert-manager makes). Empty: no tls block.
+  tlsSecretName: ""
+  # The API cannot be mounted under a path, so the API and the panel each need a host.
+  api:
+    host: ""
+  panel:
+    host: ""
+
+tick:
+  # `qcloud-tick loop`: a beat every second, one leader at a time. Without it a delayed job is up to a minute late.
+  loop:
+    enabled: true
+    replicas: 1
+    poolSize: 2
+    resources: {}
+    env: {} # extra QCLOUD_TICK_* variables
+  # `qcloud-tick run` once a minute: the cron source and the safety net if the loop is down (the Cloud Scheduler of this chart).
+  cron:
+    enabled: true
+    schedule: "* * * * *"
+    poolSize: 2
+
+webhooks:
+  # The key webhook secrets are sealed with: a Secret you create (kubectl create secret generic qelay-webhook --from-literal=key=$(openssl rand -hex 32)).
+  keySecret:
+    name: ""
+    key: key
+  # `qcloud-tick send`. Needs keySecret.
+  sender:
+    enabled: false
+    replicas: 2
+    poolSize: 2
+    resources: {}
+    env: {}
+
+# Your worker images (the chart ships none). Each gets the database, namespace and transport
+# settings as environment variables, and the chart's service account.
+#   - name: orders
+#     image: ghcr.io/me/orders-worker:1.2.3
+#     replicas: 2
+#     poolSize: 2
+#     args: []
+#     env: { LOG_LEVEL: info }
+#     resources: {}
+workers: []

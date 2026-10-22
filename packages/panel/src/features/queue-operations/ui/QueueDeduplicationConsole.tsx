@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/form';
 import type { QueueOperationsRepository } from '../application/QueueOperationsRepository';
@@ -21,13 +22,15 @@ export function QueueDeduplicationConsole({
   const valid = id.length > 0 && id.length <= 1024;
   const lookup = () =>
     run('Looking up deduplication key', () => repository.deduplicationJobId(queue, id), setOwner);
-  const remove = () => {
-    if (
-      !window.confirm(
-        `Remove deduplication key "${id}" from queue "${queue}"? The job is not deleted, but a later enqueue may reuse this key.`
-      )
-    )
-      return;
+  // `run` refuses when the connection or queue changed while the question was open.
+  const remove = async () => {
+    const yes = await confirmInPage({
+      question: 'Remove the deduplication key?',
+      detail: `Remove deduplication key "${id}" from queue "${queue}"? The job is not deleted, but a later enqueue may reuse this key.`,
+      confirmLabel: 'Remove key',
+      danger: true,
+    });
+    if (!yes) return;
     run(
       'Removing deduplication key',
       () => repository.removeDeduplicationKey(queue, id),
@@ -43,10 +46,10 @@ export function QueueDeduplicationConsole({
       aria-labelledby="queue-dedup-title"
       className="border-t border-line pt-4 xl:border-t-0"
     >
-      <h3 id="queue-dedup-title" className="text-sm font-semibold text-fg">
+      <h3 id="queue-dedup-title" className="text-[13px] font-bold text-fg">
         Deduplication registry
       </h3>
-      <p className="mt-1 mb-4 text-xs leading-5 text-faint">
+      <p className="mt-1 mb-4 text-[13px] leading-5 text-muted">
         Resolve an official deduplication ID to its current job, or release only the registry key.
       </p>
       <Field label="Deduplication ID">
@@ -72,12 +75,12 @@ export function QueueDeduplicationConsole({
         </Button>
       </div>
       {owner !== undefined && (
-        <p role="status" className="mt-3 break-all text-xs text-muted">
+        <p role="status" className="mt-3 break-all text-[13px] text-muted">
           {owner === null ? 'No active owner.' : `Current job: ${owner}`}
         </p>
       )}
       {receipt && (
-        <p role="status" className="mt-3 text-xs text-success">
+        <p role="status" className="mt-3 text-[13px] font-semibold text-success">
           {receipt}
         </p>
       )}

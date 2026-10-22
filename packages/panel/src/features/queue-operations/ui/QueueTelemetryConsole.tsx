@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { Button } from '@/components/ui/Button';
-import { Field, Input, Select } from '@/components/ui/form';
+import { Field, FieldAction, FormRow, Input, Select } from '@/components/ui/form';
 import type {
   QueueMetricsSnapshot,
   QueueOperationsRepository,
@@ -34,14 +35,16 @@ export function QueueTelemetryConsole({
       setMetrics
     );
   };
-  const trim = () => {
+  // `run` refuses when the connection or queue changed while the question was open.
+  const trim = async () => {
     if (maxLength === null) return;
-    if (
-      !window.confirm(
-        `Retain at most ${maxLength} lifecycle events for queue "${queue}"? Older journal events are permanently removed; metric buckets are unchanged.`
-      )
-    )
-      return;
+    const yes = await confirmInPage({
+      question: 'Trim the lifecycle journal?',
+      detail: `Retain at most ${maxLength} lifecycle events for queue "${queue}"? Older journal events are permanently removed; metric buckets are unchanged.`,
+      confirmLabel: 'Trim journal',
+      danger: true,
+    });
+    if (!yes) return;
     run(
       'Trimming lifecycle journal',
       () => repository.trimEvents(queue, maxLength),
@@ -54,10 +57,10 @@ export function QueueTelemetryConsole({
       aria-labelledby="queue-telemetry-title"
       className="border-t border-line pt-4 xl:border-t-0"
     >
-      <h3 id="queue-telemetry-title" className="text-sm font-semibold text-fg">
+      <h3 id="queue-telemetry-title" className="text-[13px] font-bold text-fg">
         Durable queue telemetry
       </h3>
-      <p className="mt-1 mb-4 text-xs leading-5 text-faint">
+      <p className="mt-1 mb-4 text-[13px] leading-5 text-muted">
         Read paged one-minute completion or failure buckets, and bound the lifecycle-event journal.
       </p>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -96,12 +99,12 @@ export function QueueTelemetryConsole({
         Read metrics
       </Button>
       {!range && (
-        <p role="alert" className="mt-2 text-xs text-danger">
+        <p role="alert" className="mt-2 text-[13px] font-semibold text-danger">
           Use integer buckets from 0 to 10000; end must be -1 or at least start.
         </p>
       )}
       {metrics && <MetricSummary metrics={metrics} />}
-      <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-line pt-4">
+      <FormRow className="mt-5 border-t border-line pt-4">
         <div className="min-w-48 flex-1">
           <Field label="Retain lifecycle events" hint="0 clears the queue journal">
             <Input
@@ -114,12 +117,14 @@ export function QueueTelemetryConsole({
             />
           </Field>
         </div>
-        <Button size="sm" disabled={maxLength === null || Boolean(busy)} onClick={trim}>
-          Trim journal
-        </Button>
-      </div>
+        <FieldAction>
+          <Button size="sm" disabled={maxLength === null || Boolean(busy)} onClick={trim}>
+            Trim journal
+          </Button>
+        </FieldAction>
+      </FormRow>
       {trimReceipt && (
-        <p role="status" className="mt-3 text-xs text-success">
+        <p role="status" className="mt-3 text-[13px] font-semibold text-success">
           {trimReceipt}
         </p>
       )}
@@ -135,8 +140,8 @@ function MetricSummary({ metrics }: { metrics: QueueMetricsSnapshot }) {
   }));
   const maximum = Math.max(1, ...buckets.map((bucket) => bucket.value));
   return (
-    <div className="mt-4 rounded-lg bg-surface-2 p-3">
-      <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-xs text-muted">
+    <div className="mt-4 rounded-control bg-surface-2 p-3">
+      <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[13px] text-muted">
         <span>Total terminal: {metrics.meta.count}</span>
         <span>Available buckets: {metrics.count}</span>
         <span>Latest bucket: {metrics.meta.prevCount}</span>
@@ -157,10 +162,10 @@ function MetricSummary({ metrics }: { metrics: QueueMetricsSnapshot }) {
           ))}
         </div>
       ) : (
-        <p className="mt-3 text-xs text-faint">No buckets in this range.</p>
+        <p className="mt-3 text-[13px] text-muted">No buckets in this range.</p>
       )}
       {metrics.data.length > buckets.length && (
-        <p className="mt-2 text-[11px] text-faint">Showing the first 120 returned buckets.</p>
+        <p className="mt-2 text-[13px] text-muted">Showing the first 120 returned buckets.</p>
       )}
     </div>
   );

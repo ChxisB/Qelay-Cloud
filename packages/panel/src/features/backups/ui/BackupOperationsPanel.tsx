@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConnectionStore } from '@/components/dashboard/stores/connectionStore';
+import { Banner } from '@/components/ui/Banner';
+import { Button } from '@/components/ui/Button';
+import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
 import { usePolledData } from '@/lib/usePolledData';
 import type {
   BackupItem,
@@ -12,6 +15,7 @@ import { createBackupRunnerCoordinator } from '../application/backupRunnerCoordi
 import { captureBackupRepository, loadBackupSnapshot } from '../application/backupSnapshot';
 import { parseGeneratedEnvironment } from '../domain/environmentRecord';
 import { bqBackupRepository } from '../infrastructure/bqBackupRepository';
+import { useScopedConfirm } from './useScopedConfirm';
 
 interface OperationScope {
   connectionIdentity: string;
@@ -104,72 +108,81 @@ export function BackupOperationsPanel({
       }
     }
   };
-  const apply = () => {
+  const latest = useRef(snapshot.data);
+  latest.current = snapshot.data;
+  const asked = useScopedConfirm(scopeRef, mounted);
+  const apply = async () => {
     if (!environmentText) return;
-    if (
-      !window.confirm('Apply this S3 configuration to the managed server? A restart is required.')
-    )
-      return;
-    void run('Configuration', (owner) =>
-      owner.configure(parseGeneratedEnvironment(environmentText))
-    );
+    const yes = await asked({
+      question: 'Apply the configuration?',
+      detail: 'Apply this S3 configuration to the managed server? A restart is required.',
+      confirmLabel: 'Apply configuration',
+    });
+    if (yes) {
+      void run('Configuration', (owner) =>
+        owner.configure(parseGeneratedEnvironment(environmentText))
+      );
+    }
   };
-  const backup = () => {
-    if (!window.confirm('Create a transactionally consistent S3 backup now?')) return;
-    void run('Backup', (owner) => owner.backupNow());
+  const backup = async () => {
+    const yes = await asked({
+      question: 'Create a backup now?',
+      detail: 'Create a transactionally consistent S3 backup now?',
+      confirmLabel: 'Backup now',
+    });
+    if (yes) void run('Backup', (owner) => owner.backupNow());
   };
-  const restore = (key: string) => {
+  const restore = async (key: string) => {
     const database = snapshot.data?.context?.database;
     if (!database || snapshot.data?.context?.serverStatus !== 'stopped') return;
-    if (window.prompt(`Type RESTORE to replace ${database.path} with ${key}`) !== 'RESTORE') return;
-    void run('Restore', (owner) => owner.restore(key, database));
+    const yes = await asked({
+      question: 'Restore this backup?',
+      detail: `Type RESTORE to replace ${database.path} with ${key}`,
+      confirmLabel: 'Restore',
+      danger: true,
+      typedWord: 'RESTORE',
+    });
+    // The server may have started while the question was open.
+    const now = latest.current?.context;
+    if (yes && now?.serverStatus === 'stopped' && now.database?.path === database.path) {
+      void run('Restore', (owner) => owner.restore(key, database));
+    }
   };
   const data = snapshot.data;
   return (
-    <section className="mt-6 overflow-hidden rounded-lg border border-line bg-surface">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
+    <section className="mt-6 overflow-hidden rounded-card border border-line bg-surface">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-4">
         <div>
-          <h2 className="text-sm font-semibold text-fg">Live backup operations</h2>
-          <p className="mt-1 text-xs text-faint">
+          <h2 className="m-0 text-lg font-bold text-fg">Live backup operations</h2>
+          <p className="m-0 mt-1 text-[13px] text-muted">
             Official Qelay backup CLI, executed by the local control agent.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={!environmentText || Boolean(busy)}
-            onClick={apply}
-            className="rounded-md border border-line px-3 py-2 text-xs text-muted disabled:opacity-40"
-          >
+          <Button size="sm" disabled={!environmentText || Boolean(busy)} onClick={apply}>
             Apply configuration
-          </button>
-          <button
-            type="button"
-            disabled={Boolean(busy)}
-            onClick={backup}
-            className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-fg disabled:opacity-40"
-          >
+          </Button>
+          <Button size="sm" variant="primary" disabled={Boolean(busy)} onClick={backup}>
             {busy === 'Backup' ? 'Backing up…' : 'Backup now'}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="sm"
             disabled={Boolean(busy) || snapshot.loading}
             onClick={() => void snapshot.refetch()}
-            className="rounded-md border border-line px-3 py-2 text-xs text-muted disabled:opacity-40"
           >
             Refresh
-          </button>
+          </Button>
         </div>
       </header>
       {data?.status && <BackupStatusStrip status={data.status} context={data.context} />}
       {error || data?.errors.length ? (
-        <div role="alert" className="border-b border-line px-4 py-3 text-xs text-danger">
-          {error || data?.errors.join(' · ')}
+        <div className="border-b border-line p-4">
+          <Banner tone="problem" title={error || data?.errors.join(' · ') || ''} />
         </div>
       ) : null}
       {notice && (
-        <div role="status" className="border-b border-line px-4 py-3 text-xs text-success">
-          {notice}
+        <div className="border-b border-line p-4">
+          <Banner tone="ok" title={notice} />
         </div>
       )}
       <BackupList
@@ -201,10 +214,10 @@ function BackupStatusStrip({
       {values.map(([label, value]) => (
         <div
           key={label}
-          className="border-b border-line px-4 py-3 last:border-b-0 xl:border-r xl:border-b-0"
+          className="border-b border-line px-4 py-3.5 last:border-b-0 xl:border-r xl:border-b-0"
         >
-          <dt className="text-[10px] uppercase tracking-wider text-faint">{label}</dt>
-          <dd className="mt-1 truncate text-xs text-fg" title={value}>
+          <dt className="text-[13px] font-semibold text-muted">{label}</dt>
+          <dd className="m-0 mt-1 truncate text-[13px] font-semibold text-fg" title={value}>
             {value}
           </dd>
         </div>
@@ -225,44 +238,48 @@ function BackupList({
   onRestore: (key: string) => void;
 }) {
   if (!rows.length)
-    return <p className="px-4 py-8 text-center text-sm text-muted">No backup objects returned.</p>;
+    return (
+      <p className="m-0 px-4 py-6 text-center text-[13px] text-muted">
+        No backup objects returned.
+      </p>
+    );
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[680px] text-left text-xs">
-        <thead className="border-b border-line eyebrow text-muted">
+    <TableScroll>
+      <Table className="min-w-[680px] text-left">
+        <THead>
           <tr>
-            <th className="px-4 py-2 font-semibold">Object key</th>
-            <th className="px-4 py-2 font-semibold">Size</th>
-            <th className="px-4 py-2 font-semibold">Created</th>
-            <th className="px-4 py-2 text-right font-semibold">Restore</th>
+            <Th>Object key</Th>
+            <Th>Size</Th>
+            <Th>Created</Th>
+            <Th right>Restore</Th>
           </tr>
-        </thead>
-        <tbody className="divide-y divide-line">
+        </THead>
+        <tbody>
           {rows.map((row) => (
-            <tr key={row.key}>
-              <td className="max-w-md truncate px-4 py-2.5 font-mono text-fg" title={row.key}>
+            <Tr key={row.key}>
+              <Td className="max-w-md truncate font-mono text-[13px]" title={row.key}>
                 {row.key}
-              </td>
-              <td className="px-4 py-2.5 text-muted">{row.size}</td>
-              <td className="px-4 py-2.5 text-muted">{row.date}</td>
-              <td className="px-4 py-2.5 text-right">
-                <button
-                  type="button"
+              </Td>
+              <Td className="text-[13px] text-muted">{row.size}</Td>
+              <Td className="text-[13px] text-muted">{row.date}</Td>
+              <Td className="text-right">
+                <Button
+                  size="sm"
+                  variant="danger"
                   disabled={!canRestore || busy}
                   title={
                     canRestore ? 'Restore this backup' : 'Stop the managed server before restore'
                   }
                   onClick={() => onRestore(row.key)}
-                  className="rounded-md border border-danger/40 px-2.5 py-1.5 text-danger disabled:opacity-35"
                 >
                   Restore
-                </button>
-              </td>
-            </tr>
+                </Button>
+              </Td>
+            </Tr>
           ))}
         </tbody>
-      </table>
-    </div>
+      </Table>
+    </TableScroll>
   );
 }
 

@@ -28,8 +28,8 @@ export function JobLogsView(props: JobLogsViewProps) {
         title="Logs"
         action={
           <div className="flex items-center gap-2">
-            <span className="font-mono text-xs text-faint">{count}</span>
-            <Button size="sm" variant="ghost" disabled={loading || busy} onClick={props.load}>
+            <span className="font-mono text-[13px] text-muted">{count}</span>
+            <Button size="sm" disabled={loading || busy} onClick={props.load}>
               Refresh
             </Button>
             <Button
@@ -43,24 +43,33 @@ export function JobLogsView(props: JobLogsViewProps) {
           </div>
         }
       />
-      {error && <p className="mb-2 text-xs text-danger">{error}</p>}
+      {error && <p className="mb-3 text-[13px] font-semibold text-danger">{error}</p>}
       {logs.length === 0 ? (
-        <p className="text-xs text-faint">No log lines recorded for this job.</p>
+        <p className="text-[13px] text-muted">No log lines recorded for this job.</p>
       ) : (
-        <ol className="flex max-h-64 flex-col gap-1 overflow-auto rounded-lg bg-surface-2 p-3">
-          {logs.map((line, index) => (
-            <li
-              // oxlint-disable-next-line react/no-array-index-key -- append-only server log, stable order
-              key={index}
-              className="whitespace-pre-wrap break-words font-mono text-xs text-muted"
-            >
-              {typeof line === 'string' ? line : JSON.stringify(line)}
-            </li>
-          ))}
-        </ol>
+        // A scroll area must take the keyboard, so the dark log is a named, focusable region.
+        <div
+          role="region"
+          aria-label="Job log lines"
+          // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a scroll area must take the keyboard
+          tabIndex={0}
+          className="max-h-64 overflow-auto rounded-control bg-log-bg px-3.5 py-3"
+        >
+          <ol className="flex flex-col gap-1">
+            {logs.map((line, index) => (
+              <li
+                // oxlint-disable-next-line react/no-array-index-key -- append-only server log, stable order
+                key={index}
+                className="whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-log-fg"
+              >
+                {typeof line === 'string' ? line : JSON.stringify(line)}
+              </li>
+            ))}
+          </ol>
+        </div>
       )}
       <form
-        className="mt-3 flex gap-2"
+        className="mt-4 flex flex-wrap gap-2"
         onSubmit={(event) => {
           event.preventDefault();
           const submitted = event.currentTarget.elements.namedItem(
@@ -82,22 +91,23 @@ export function JobLogsView(props: JobLogsViewProps) {
             props.setMessage(event.currentTarget.value);
           }}
           placeholder="Add a log line…"
-          className="h-8 flex-1 text-xs"
+          className="min-w-48 flex-1"
         />
-        <Select
-          aria-label="Log level"
-          name="job-log-level"
-          value={level}
-          onChange={(event) => {
-            draftRevision.current += 1;
-            props.setLevel(event.target.value as LogLevel);
-          }}
-          className="h-8 w-24 text-xs"
-        >
-          <option value="info">info</option>
-          <option value="warn">warn</option>
-          <option value="error">error</option>
-        </Select>
+        <div className="w-28">
+          <Select
+            aria-label="Log level"
+            name="job-log-level"
+            value={level}
+            onChange={(event) => {
+              draftRevision.current += 1;
+              props.setLevel(event.target.value as LogLevel);
+            }}
+          >
+            <option value="info">info</option>
+            <option value="warn">warn</option>
+            <option value="error">error</option>
+          </Select>
+        </div>
         <Button type="submit" size="sm" disabled={busy || message.trim() === ''}>
           Add
         </Button>

@@ -113,7 +113,7 @@ describe('async feedback semantics', () => {
 });
 
 describe('focus and copy-button feedback', () => {
-  test('interactive UI components use a solid violet focus outline', () => {
+  test('interactive UI components use a solid 2px focus outline', () => {
     const { host, unmount } = render(
       createElement(
         'div',

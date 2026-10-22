@@ -30,15 +30,25 @@ export function ConfigActions({
     <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-line pt-4">
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 basis-40">
         {pending && !saved && (
-          <span className="text-xs text-warning">Restart to apply changes</span>
+          <span role="status" className="text-[13px] font-bold text-warning">
+            Restart to apply changes
+          </span>
         )}
-        {saved && <span className="text-xs text-success">Saved</span>}
+        {saved && (
+          <span role="status" className="text-[13px] font-bold text-success">
+            Saved
+          </span>
+        )}
         {conflict && (
-          <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onReload}>
+          <Button type="button" size="sm" disabled={busy} onClick={onReload}>
             Reload latest
           </Button>
         )}
-        {error && <span className="text-xs text-danger">{error}</span>}
+        {error && (
+          <span role="alert" className="text-[13px] font-bold text-danger">
+            {error}
+          </span>
+        )}
       </div>
       <div className="ml-auto flex flex-wrap items-center gap-2.5">
         {/* One orange action: Save & restart while the server runs, else Save config. */}

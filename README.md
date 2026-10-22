@@ -34,6 +34,7 @@ This is release **1.0.0, not yet published** (the package is `0.0.0` until the o
 | --- | --- |
 | Run it in five minutes, on your machine | [Quickstart: local](docs/quickstart-local.md) |
 | Run it on Google Cloud or AWS | [Quickstart: GCP](docs/quickstart-gcp.md), [Quickstart: AWS](docs/quickstart-aws.md) |
+| Run it on Kubernetes | [Quickstart: Kubernetes (Helm)](docs/quickstart-kubernetes.md) |
 | Understand how it works | [Concepts](docs/concepts.md), then [Architecture](docs/architecture.md) |
 | Move an app that uses Qelay | [Moving from Qelay](docs/migration.md), then [compat.md](docs/compat.md) |
 | Operate it | [Operations](docs/operations.md), [limits](docs/limits.md), [settings](docs/reference/configuration.md) |
@@ -48,8 +49,8 @@ This is release **1.0.0, not yet published** (the package is `0.0.0` until the o
   ([how late, per hosting mode](docs/limits.md#1-delay-precision-by-hosting-mode)).
 - **A bounded cost.** The connection budget is a formula, and Terraform refuses a plan that breaks it
   ([operations](docs/operations.md#connection-budget)).
-- **A control panel and API** for queues, jobs, flows, workflows, workers, the dead-letter queue, cron and webhooks, signed in
-  with your OpenID Connect provider ([routes](docs/reference/routes.md)).
+- **A control panel and API** for queues, jobs, flows, workflows, workers, the dead-letter queue, cron and an event gateway (webhooks, and "when this happens, add a job"
+  routes), signed in with your OpenID Connect provider ([routes](docs/reference/routes.md), [event gateway](docs/event-gateway.md)).
 
 ## Licence
 

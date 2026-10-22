@@ -48,12 +48,16 @@ export async function addThroughForm(
   options: Record<string, string> = {}
 ): Promise<string> {
   await go(page, '/add-job');
-  await expect(page.getByRole('heading', { name: 'Add Job', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add job', level: 1 })).toBeVisible();
   await page.getByLabel('Queue', { exact: true }).fill(queue);
   await page.getByLabel('Job name', { exact: true }).fill(name);
   await page.getByLabel('Data (JSON)').fill(JSON.stringify(data));
   for (const [label, value] of Object.entries(options)) {
-    await page.getByLabel(label, { exact: true }).fill(value);
+    const field = page.getByLabel(label, { exact: true });
+    // Some options sit behind "More options"; a closed <details> cannot be filled.
+    if (!(await field.isVisible()))
+      await page.locator('summary', { hasText: 'More options' }).click();
+    await field.fill(value);
   }
   const accepted = page.waitForResponse(
     (r) => r.url().endsWith(`/api/queues/${queue}/jobs`) && r.request().method() === 'POST'

@@ -9,7 +9,11 @@ import { PROGRESS_STATEMENTS } from './ddl/progress';
 import { TICK_STATEMENTS } from './ddl/tick';
 import { TICK_STATE_STATEMENTS } from './ddl/tickState';
 import { TUNING_STATEMENTS } from './ddl/tuning';
+import { WEBHOOK_DESTINATION_STATEMENTS } from './ddl/webhookDestinations';
+import { WEBHOOK_DESTINATION_TABLE_STATEMENTS } from './ddl/webhookDestinationTable';
+import { WEBHOOK_ISSUE_STATEMENTS } from './ddl/webhookIssues';
 import { WEBHOOK_PAUSE_STATEMENTS } from './ddl/webhookPause';
+import { WEBHOOK_RULE_STATEMENTS } from './ddl/webhookRules';
 import { WEBHOOK_STATEMENTS } from './ddl/webhooks';
 import { WEBHOOK_WRITER_STATEMENTS } from './ddl/webhookWriter';
 import { WORKFLOW_DEFINITION_STATEMENTS } from './ddl/workflowDefinitions';
@@ -55,6 +59,10 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 13, name: 'webhook delivery partitions', statements: DELIVERY_PARTITION_STATEMENTS },
   { version: 14, name: 'webhook delivery writer', statements: WEBHOOK_WRITER_STATEMENTS },
   { version: 15, name: 'webhook pause and rotation', statements: WEBHOOK_PAUSE_STATEMENTS },
+  { version: 16, name: 'webhook destinations', statements: WEBHOOK_DESTINATION_STATEMENTS },
+  { version: 17, name: 'webhook rules', statements: WEBHOOK_RULE_STATEMENTS },
+  { version: 18, name: 'webhook issues', statements: WEBHOOK_ISSUE_STATEMENTS },
+  { version: 19, name: 'saved destinations', statements: WEBHOOK_DESTINATION_TABLE_STATEMENTS },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

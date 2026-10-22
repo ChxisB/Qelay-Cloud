@@ -209,6 +209,11 @@ TABLE qcloud_tick_state
   leader_expires_at bigint NOT NULL DEFAULT 0
   last_success_at bigint
   last_failure_at bigint
+TABLE qcloud_webhook_dedupe
+  namespace text NOT NULL
+  webhook_id text NOT NULL
+  key text NOT NULL
+  until bigint NOT NULL
 TABLE qcloud_webhook_deliveries
   id bigint NOT NULL DEFAULT nextval('qcloud_webhook_deliveries_id_seq'::regclass)
   namespace text NOT NULL
@@ -227,6 +232,25 @@ TABLE qcloud_webhook_deliveries
   history jsonb NOT NULL DEFAULT '[]'::jsonb
   created_at bigint NOT NULL
   finished_at bigint
+TABLE qcloud_webhook_destinations
+  namespace text NOT NULL
+  id text NOT NULL
+  name text NOT NULL
+  kind text NOT NULL
+  url text
+  target text
+  created_by text NOT NULL
+  created_at bigint NOT NULL
+  updated_at bigint NOT NULL
+TABLE qcloud_webhook_issues
+  id bigint NOT NULL DEFAULT nextval('qcloud_webhook_issues_id_seq'::regclass)
+  namespace text NOT NULL
+  webhook_id text NOT NULL
+  status text NOT NULL
+  kind text NOT NULL
+  opened_at bigint NOT NULL
+  updated_at bigint NOT NULL
+  updated_by text
 TABLE qcloud_webhook_writers
   namespace text NOT NULL
   commit_seq bigint NOT NULL
@@ -258,6 +282,13 @@ TABLE qcloud_webhooks
   disabled_at bigint
   secret_previous_sealed text
   secret_previous_until bigint
+  destination text NOT NULL DEFAULT 'http'::text
+  target text
+  name text
+  description text
+  delay_ms bigint
+  dedupe jsonb
+  destination_id text
 TABLE qcloud_workers
   namespace text NOT NULL
   id text NOT NULL
@@ -349,12 +380,25 @@ CONSTRAINT qcloud_queue_state.qcloud_queue_state_pkey PRIMARY KEY (namespace, qu
 CONSTRAINT qcloud_repeat_links.qcloud_repeat_links_pkey PRIMARY KEY (namespace, original_id)
 CONSTRAINT qcloud_schema_migrations.qcloud_schema_migrations_pkey PRIMARY KEY (version)
 CONSTRAINT qcloud_tick_state.qcloud_tick_state_pkey PRIMARY KEY (namespace)
+CONSTRAINT qcloud_webhook_dedupe.qcloud_webhook_dedupe_namespace_webhook_id_fkey FOREIGN KEY (namespace, webhook_id) REFERENCES qcloud_webhooks(namespace, id) ON DELETE CASCADE
+CONSTRAINT qcloud_webhook_dedupe.qcloud_webhook_dedupe_pkey PRIMARY KEY (namespace, webhook_id, key)
 CONSTRAINT qcloud_webhook_deliveries.qcloud_webhook_deliveries_namespace_webhook_id_fkey FOREIGN KEY (namespace, webhook_id) REFERENCES qcloud_webhooks(namespace, id) ON DELETE CASCADE
 CONSTRAINT qcloud_webhook_deliveries.qcloud_webhook_deliveries_pkey PRIMARY KEY (id)
 CONSTRAINT qcloud_webhook_deliveries.qcloud_webhook_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sending'::text, 'delivered'::text, 'failed'::text])))
+CONSTRAINT qcloud_webhook_destinations.qcloud_webhook_destinations_check CHECK (((kind = 'http'::text) = (url IS NOT NULL)))
+CONSTRAINT qcloud_webhook_destinations.qcloud_webhook_destinations_check1 CHECK (((kind = 'queue'::text) = (target IS NOT NULL)))
+CONSTRAINT qcloud_webhook_destinations.qcloud_webhook_destinations_kind_check CHECK ((kind = ANY (ARRAY['http'::text, 'queue'::text])))
+CONSTRAINT qcloud_webhook_destinations.qcloud_webhook_destinations_pkey PRIMARY KEY (namespace, id)
+CONSTRAINT qcloud_webhook_issues.qcloud_webhook_issues_namespace_webhook_id_fkey FOREIGN KEY (namespace, webhook_id) REFERENCES qcloud_webhooks(namespace, id) ON DELETE CASCADE
+CONSTRAINT qcloud_webhook_issues.qcloud_webhook_issues_pkey PRIMARY KEY (id)
+CONSTRAINT qcloud_webhook_issues.qcloud_webhook_issues_status_check CHECK ((status = ANY (ARRAY['open'::text, 'acknowledged'::text, 'resolved'::text, 'ignored'::text])))
 CONSTRAINT qcloud_webhook_writers.qcloud_webhook_writers_pkey PRIMARY KEY (namespace)
+CONSTRAINT qcloud_webhooks.qcloud_webhooks_delay_ms_check CHECK (((delay_ms IS NULL) OR (delay_ms > 0)))
+CONSTRAINT qcloud_webhooks.qcloud_webhooks_destination_check CHECK ((destination = ANY (ARRAY['http'::text, 'queue'::text])))
+CONSTRAINT qcloud_webhooks.qcloud_webhooks_destination_fk FOREIGN KEY (namespace, destination_id) REFERENCES qcloud_webhook_destinations(namespace, id) ON DELETE RESTRICT
 CONSTRAINT qcloud_webhooks.qcloud_webhooks_events_check CHECK ((cardinality(events) >= 1))
 CONSTRAINT qcloud_webhooks.qcloud_webhooks_pkey PRIMARY KEY (namespace, id)
+CONSTRAINT qcloud_webhooks.qcloud_webhooks_target_check CHECK (((destination = 'queue'::text) = (target IS NOT NULL)))
 CONSTRAINT qcloud_workers.qcloud_workers_pkey PRIMARY KEY (namespace, id)
 CONSTRAINT qcloud_workflow_definitions.qcloud_workflow_definitions_pkey PRIMARY KEY (namespace, name, hash)
 CONSTRAINT qcloud_workflow_executions.qcloud_workflow_executions_pkey PRIMARY KEY (namespace, id)
@@ -424,13 +468,22 @@ CREATE UNIQUE INDEX qcloud_repeat_links_pkey ON qcloud_repeat_links USING btree 
 CREATE INDEX qcloud_repeat_links_successor_idx ON qcloud_repeat_links USING btree (namespace, successor_id)
 CREATE UNIQUE INDEX qcloud_schema_migrations_pkey ON qcloud_schema_migrations USING btree (version)
 CREATE UNIQUE INDEX qcloud_tick_state_pkey ON qcloud_tick_state USING btree (namespace)
+CREATE UNIQUE INDEX qcloud_webhook_dedupe_pkey ON qcloud_webhook_dedupe USING btree (namespace, webhook_id, key)
+CREATE INDEX qcloud_webhook_dedupe_until_idx ON qcloud_webhook_dedupe USING btree (namespace, until)
 CREATE INDEX qcloud_webhook_deliveries_due_idx ON qcloud_webhook_deliveries USING btree (namespace, webhook_id, next_attempt_at, id) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]))
 CREATE UNIQUE INDEX qcloud_webhook_deliveries_event_idx ON qcloud_webhook_deliveries USING btree (namespace, webhook_id, event_id) WHERE (event_id IS NOT NULL)
 CREATE INDEX qcloud_webhook_deliveries_finished_idx ON qcloud_webhook_deliveries USING btree (namespace, finished_at) WHERE (status = ANY (ARRAY['delivered'::text, 'failed'::text]))
 CREATE INDEX qcloud_webhook_deliveries_history_idx ON qcloud_webhook_deliveries USING btree (namespace, webhook_id, id DESC)
 CREATE UNIQUE INDEX qcloud_webhook_deliveries_pkey ON qcloud_webhook_deliveries USING btree (id)
 CREATE INDEX qcloud_webhook_deliveries_stale_idx ON qcloud_webhook_deliveries USING btree (namespace, next_attempt_at) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]))
+CREATE UNIQUE INDEX qcloud_webhook_destinations_name_idx ON qcloud_webhook_destinations USING btree (namespace, name)
+CREATE UNIQUE INDEX qcloud_webhook_destinations_pkey ON qcloud_webhook_destinations USING btree (namespace, id)
+CREATE UNIQUE INDEX qcloud_webhook_issues_live_idx ON qcloud_webhook_issues USING btree (namespace, webhook_id) WHERE (status = ANY (ARRAY['open'::text, 'acknowledged'::text, 'ignored'::text]))
+CREATE UNIQUE INDEX qcloud_webhook_issues_pkey ON qcloud_webhook_issues USING btree (id)
+CREATE INDEX qcloud_webhook_issues_resolved_idx ON qcloud_webhook_issues USING btree (namespace, updated_at) WHERE (status = 'resolved'::text)
+CREATE INDEX qcloud_webhook_issues_status_idx ON qcloud_webhook_issues USING btree (namespace, status, id DESC)
 CREATE UNIQUE INDEX qcloud_webhook_writers_pkey ON qcloud_webhook_writers USING btree (namespace)
+CREATE INDEX qcloud_webhooks_destination_idx ON qcloud_webhooks USING btree (namespace, destination_id) WHERE (destination_id IS NOT NULL)
 CREATE UNIQUE INDEX qcloud_webhooks_pkey ON qcloud_webhooks USING btree (namespace, id)
 CREATE UNIQUE INDEX qcloud_workers_pkey ON qcloud_workers USING btree (namespace, id)
 CREATE UNIQUE INDEX qcloud_workflow_definitions_pkey ON qcloud_workflow_definitions USING btree (namespace, name, hash)
@@ -458,6 +511,7 @@ SEQUENCE qcloud_events_id_seq bigint start 1 min 1 max 9223372036854775807 incre
 SEQUENCE qcloud_group_order_seq bigint start 1 min 1 max 9223372036854775807 increment 1 cycle f cache 1
 SEQUENCE qcloud_job_logs_id_seq bigint start 1 min 1 max 9223372036854775807 increment 1 cycle f cache 1
 SEQUENCE qcloud_webhook_deliveries_id_seq bigint start 1 min 1 max 9223372036854775807 increment 1 cycle f cache 1
+SEQUENCE qcloud_webhook_issues_id_seq bigint start 1 min 1 max 9223372036854775807 increment 1 cycle f cache 1
 FUNCTION qcloud_assign_event_commit() RETURNS trigger LANGUAGE plpgsql
 
 DECLARE

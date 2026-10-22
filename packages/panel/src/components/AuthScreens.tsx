@@ -1,18 +1,37 @@
+import type { ReactNode } from 'react';
+import { QelayLogo } from '@/components/brand/QelayLogo';
+import { Banner } from '@/components/ui/Banner';
+import { Button } from '@/components/ui/Button';
 import { getActiveSession } from '@/lib/auth/activeSession';
 import { useAuthStore } from '@/lib/auth/authStore';
 
-const card =
-  'w-full max-w-md rounded-card border border-line-strong bg-surface p-6 shadow-2xl text-fg';
-const button =
-  'rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
-
-function Frame({ children }: { children: React.ReactNode }) {
+/**
+ * One screen is one card on the page, with the brand lockup and the screen's own h1. The card rises once;
+ * when the screen changes under it, its text (keyed by the title) fades in again.
+ */
+function Frame({ title, children }: { title: string; children: ReactNode }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-bg p-4">
-      <section className={card}>{children}</section>
+      <section
+        aria-labelledby="auth-title"
+        className="motion-arrive flex w-full max-w-md flex-col items-stretch gap-4 rounded-card border border-line bg-surface p-8 text-fg shadow-panel"
+      >
+        <QelayLogo />
+        <div key={title} className="motion-fade flex flex-col items-stretch gap-4">
+          <h1
+            id="auth-title"
+            className="m-0 mt-2 text-[20px] font-bold leading-[1.1] tracking-[-0.03em]"
+          >
+            {title}
+          </h1>
+          {children}
+        </div>
+      </section>
     </main>
   );
 }
+
+const TEXT = 'm-0 text-[13px] text-muted';
 
 /** What the page shows while the sign-in is not in a usable state. */
 export function SignInScreen() {
@@ -22,34 +41,41 @@ export function SignInScreen() {
 
   if (status === 'redirecting') {
     return (
-      <Frame>
-        <h1 className="text-lg font-semibold">Signing you in</h1>
-        <p role="status" className="mt-2 text-sm text-muted">
+      <Frame title="Signing you in">
+        <p role="status" className={TEXT}>
           Redirecting to your identity provider…
         </p>
+        <div aria-hidden="true" className="flex flex-col gap-2.5">
+          {['w-full', 'w-[82%]', 'w-[60%]'].map((width) => (
+            <span
+              key={width}
+              className={`block h-3.5 rounded-[8px] bg-slate-tint motion-safe:animate-pulse ${width}`}
+            />
+          ))}
+        </div>
       </Frame>
     );
   }
   if (status === 'signed-out') {
     return (
-      <Frame>
-        <h1 className="text-lg font-semibold">You are signed out</h1>
-        <p className="mt-2 text-sm text-muted">Sign in again to use the control panel.</p>
-        <button type="button" className={`${button} mt-4`} onClick={signInAgain}>
+      <Frame title="You are signed out">
+        <p className={TEXT}>Sign in again to use the control panel.</p>
+        <Button variant="primary" onClick={signInAgain}>
           Sign in
-        </button>
+        </Button>
+        <p className="m-0 text-[13px] text-muted">
+          Your access token stays in memory for this tab. It is never saved in the browser's storage
+          or put in a web address.
+        </p>
       </Frame>
     );
   }
   return (
-    <Frame>
-      <h1 className="text-lg font-semibold">Sign-in problem</h1>
-      <p role="alert" className="mt-2 text-sm text-muted">
-        {error ?? 'Sign-in did not complete.'}
-      </p>
-      <button type="button" className={`${button} mt-4`} onClick={signInAgain}>
+    <Frame title="Sign-in problem">
+      <Banner title={error ?? 'Sign-in did not complete.'} />
+      <Button variant="primary" onClick={signInAgain}>
         Sign in again
-      </button>
+      </Button>
     </Frame>
   );
 }
@@ -57,12 +83,11 @@ export function SignInScreen() {
 /** `config.json` is there and wrong. Nothing else on the page can be trusted to point anywhere. */
 export function ConfigErrorScreen({ message }: { message: string }) {
   return (
-    <Frame>
-      <h1 className="text-lg font-semibold">The panel is not configured correctly</h1>
-      <p role="alert" className="mt-2 break-words text-sm text-muted">
-        {message}
-      </p>
-      <p className="mt-2 text-sm text-muted">
+    <Frame title="The panel is not configured correctly">
+      <div className="break-words">
+        <Banner title={message} />
+      </div>
+      <p className={TEXT}>
         Ask the person who deployed the panel to fix <span className="font-mono">config.json</span>.
       </p>
     </Frame>

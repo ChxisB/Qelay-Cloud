@@ -14,7 +14,7 @@ const STATUS_TEXT: Record<string, string> = {
 /** What a run did to undo itself: how many steps it could undo and how it went. */
 export function CompensationView({ compensation }: { compensation: WorkflowCompensation }) {
   if (compensation.status === 'none' && compensation.eligible === 0) {
-    return <p className="text-xs text-faint">No step of this run can be rolled back.</p>;
+    return <p className="text-xs text-muted">No step of this run can be rolled back.</p>;
   }
   return (
     <div className="space-y-2">
@@ -33,11 +33,14 @@ export function CompensationView({ compensation }: { compensation: WorkflowCompe
       {compensation.failures.length > 0 && (
         <ul aria-label="Steps that could not be undone" className="space-y-1 text-xs">
           {compensation.failures.map((failure) => (
-            <li key={failure.step} className="rounded-lg border border-danger/30 p-2">
+            <li
+              key={failure.step}
+              className="rounded-control border border-line bg-danger-tint p-3"
+            >
               <span translate="no" className="font-mono text-fg">
                 {failure.step}
               </span>
-              {failure.error && <p className="mt-1 break-words text-danger">{failure.error}</p>}
+              {failure.error && <p className="mt-1 break-words text-fg">{failure.error}</p>}
             </li>
           ))}
         </ul>
@@ -49,8 +52,8 @@ export function CompensationView({ compensation }: { compensation: WorkflowCompe
 function Count({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex gap-1">
-      <dt className="text-faint">{label}</dt>
-      <dd className="tabular-nums">{formatNumber(value)}</dd>
+      <dt className="text-muted">{label}</dt>
+      <dd className="tnum font-bold text-fg">{formatNumber(value)}</dd>
     </div>
   );
 }

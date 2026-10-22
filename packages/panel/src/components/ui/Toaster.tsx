@@ -1,43 +1,63 @@
 import { useEffect } from 'react';
 import { type Toast, useToastStore } from '@/components/dashboard/stores/toastStore';
 import { cn } from '@/lib/cn';
+import { useLeavers } from '@/lib/useLeavers';
+import { IconButton } from './Button';
 import { IconClose } from './icons';
+import { StatusGlyph, type StateRole } from './StatusBadge';
 
-const LEVEL_STYLES: Record<Toast['level'], { bar: string; title: string }> = {
-  success: { bar: 'bg-success', title: 'text-success' },
-  error: { bar: 'bg-danger-fill', title: 'text-danger' },
-  info: { bar: 'bg-state-active-fg', title: 'text-state-active-fg' },
+// The glyph says what happened, the title says it in words; neither relies on colour alone.
+const LEVEL_ROLE: Record<Toast['level'], StateRole> = {
+  success: 'completed',
+  error: 'failed',
+  info: 'active',
 };
 
-function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => void }) {
+function ToastCard({
+  toast,
+  leaving,
+  dismiss,
+}: {
+  toast: Toast;
+  leaving: boolean;
+  dismiss: (id: number) => void;
+}) {
   // Depend on the stable store `dismiss` + this toast's id/ttl — NOT a freshly
   // built closure — so an unrelated toast being added/removed doesn't reset this
   // one's auto-dismiss timer.
   useEffect(() => {
+    if (leaving) return;
     const t = window.setTimeout(() => dismiss(toast.id), toast.ttlMs);
     return () => window.clearTimeout(t);
-  }, [toast.id, toast.ttlMs, dismiss]);
+  }, [toast.id, toast.ttlMs, dismiss, leaving]);
 
-  const style = LEVEL_STYLES[toast.level];
   return (
-    <div className="pointer-events-auto flex w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-card border border-line bg-surface shadow-lg">
-      <span className={cn('w-1 shrink-0', style.bar)} aria-hidden="true" />
-      <div className="flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5">
-        <div className="min-w-0 flex-1">
-          <div className={cn('text-sm font-medium', style.title)}>{toast.title}</div>
-          {toast.detail && (
-            <div className="mt-0.5 break-words text-xs text-muted">{toast.detail}</div>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => dismiss(toast.id)}
-          aria-label="Dismiss notification"
-          className="-mr-1 shrink-0 rounded p-0.5 text-faint hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <IconClose className="size-4" />
-        </button>
+    <div
+      role={toast.level === 'error' ? 'alert' : 'status'}
+      // A toast on its way out can no longer be reached or clicked.
+      inert={leaving || undefined}
+      className={cn(
+        'flex w-[420px] max-w-[calc(100vw-2rem)] items-center gap-3 rounded-[18px] border border-line-strong bg-surface-2 py-3.5 pl-4 pr-2.5 shadow-pop',
+        leaving ? 'motion-leave pointer-events-none' : 'motion-arrive pointer-events-auto'
+      )}
+    >
+      <StatusGlyph state={LEVEL_ROLE[toast.level]} />
+      <div className="min-w-0 flex-1 font-bold text-fg">
+        {toast.title}
+        {toast.detail && (
+          <small className="block break-words text-[13px] font-medium text-muted">
+            {toast.detail}
+          </small>
+        )}
       </div>
+      <IconButton
+        size="sm"
+        variant="ghost"
+        onClick={() => dismiss(toast.id)}
+        aria-label="Dismiss notification"
+      >
+        <IconClose className="size-4" />
+      </IconButton>
     </div>
   );
 }
@@ -49,6 +69,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
 export function Toaster() {
   const toasts = useToastStore((s) => s.toasts);
   const dismiss = useToastStore((s) => s.dismiss);
+  const rows = useLeavers(toasts);
   // The live region stays mounted even when empty: screen readers generally
   // ignore content inserted together with a brand-new live region, so the
   // first toast would otherwise go unannounced.
@@ -58,8 +79,8 @@ export function Toaster() {
       aria-label="Notifications"
       aria-live="polite"
     >
-      {toasts.map((t) => (
-        <ToastCard key={t.id} toast={t} dismiss={dismiss} />
+      {rows.map(({ item, leaving }) => (
+        <ToastCard key={item.id} toast={item} leaving={leaving} dismiss={dismiss} />
       ))}
     </section>
   );

@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
+import type { ConfirmOptions } from '@/components/dashboard/stores/confirmStore';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { Disclosure } from '@/components/ui/Disclosure';
 import { Input, Toggle } from '@/components/ui/form';
 import { bq } from '@/lib/bq';
 import type { JobFull } from '@/lib/bqTypes';
@@ -11,8 +13,9 @@ import {
   FLOW_DLQ_RETRY_UNAVAILABLE,
 } from '@/lib/flowMutationSafety';
 import { actionGates } from '@/lib/jobActions';
+import { PROMOTE_THIS_JOB } from '../jobsPro/promoteConfirm';
 
-type Act = (label: string, fn: () => Promise<unknown>, confirmMsg?: string) => void;
+type Act = (label: string, fn: () => Promise<unknown>, confirm?: ConfirmOptions) => void;
 
 const MAX_DELAY_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -60,6 +63,42 @@ export function parseFailureStack(
   return { ok: true, ...(stack.length ? { stack } : {}) };
 }
 
+const SWITCHED_OFF: Record<string, string> = {
+  failed: 'Retrying, cancelling and deleting this job from here is switched off on this server.',
+  completed:
+    'Running this job again, cancelling it and deleting it from here is switched off on this server.',
+  active: "This job is running now, so apart from its progress it can't be changed from here.",
+};
+
+const ACTIVE_REASON =
+  'Active-job state changes are unavailable: Qelay cannot stop the worker that is already processing this job, so retrying, delaying, discarding or failing it here could run side effects twice.';
+
+/** Says once what is switched off for this job; the exact reasons are behind "Why?". */
+function UnavailableNote({ state }: { state?: string }) {
+  const reason =
+    state === 'failed'
+      ? FLOW_DLQ_RETRY_UNAVAILABLE
+      : state === 'completed'
+        ? FLOW_COMPLETED_REQUEUE_UNAVAILABLE
+        : state === 'active'
+          ? ACTIVE_REASON
+          : null;
+  return (
+    <div role="note">
+      <p className="text-[13px] text-muted">
+        {(state && SWITCHED_OFF[state]) ??
+          'Cancelling and deleting jobs from here is switched off on this server.'}
+      </p>
+      <Disclosure summary="Why?">
+        <div className="flex flex-col gap-2 text-[13px] text-muted">
+          {reason && <p>{reason}</p>}
+          <p>Cancel/delete/discard: {FLOW_DELETION_UNAVAILABLE}</p>
+        </div>
+      </Disclosure>
+    </div>
+  );
+}
+
 /**
  * State-gated action rail for a single job. Reads the shared actionGates() so it
  * never drifts from JobsPro on what's legal, and routes every mutation through
@@ -70,14 +109,12 @@ export function parseFailureStack(
 export function JobActionsPanel({ job, busy, act }: { job: JobFull; busy: boolean; act: Act }) {
   const canOperate = useCanOperate();
   const gates = actionGates(job.state);
-  const hasAnyAction =
-    gates.promote || gates.setPriority || gates.setDelay || job.state === 'active';
 
   if (!canOperate) {
     return (
       <Card>
         <CardHeader title="Actions" />
-        <p role="note" className="text-xs text-faint">
+        <p role="note" className="text-[13px] text-muted">
           Your role can look at jobs but not change them.
         </p>
       </Card>
@@ -87,50 +124,26 @@ export function JobActionsPanel({ job, busy, act }: { job: JobFull; busy: boolea
   return (
     <Card>
       <CardHeader title="Actions" />
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {gates.promote && (
           <Button
             size="sm"
             disabled={busy}
-            onClick={() => act('Promote', () => bq.promoteJob(job.id, job.version))}
+            onClick={() =>
+              act('Promote', () => bq.promoteJob(job.id, job.version), PROMOTE_THIS_JOB)
+            }
           >
             Promote (run now)
           </Button>
         )}
-        {job.state === 'failed' && (
-          <p
-            role="note"
-            className="rounded-lg border border-warning/30 bg-warning/5 p-2 text-xs text-warning"
-          >
-            {FLOW_DLQ_RETRY_UNAVAILABLE}
-          </p>
-        )}
-        {job.state === 'completed' && (
-          <p
-            role="note"
-            className="rounded-lg border border-warning/30 bg-warning/5 p-2 text-xs text-warning"
-          >
-            {FLOW_COMPLETED_REQUEUE_UNAVAILABLE}
-          </p>
-        )}
         {job.state === 'active' && (
-          <>
-            <p
-              role="note"
-              className="rounded-lg border border-warning/30 bg-warning/5 p-2 text-xs text-warning"
-            >
-              Active-job state changes are unavailable: Qelay cannot stop the worker that is already
-              processing this job, so retrying, delaying, discarding or failing it here could run
-              side effects twice.
-            </p>
-            <InlineNumber
-              label="Set progress (0–100)"
-              cta="Progress"
-              kind="progress"
-              disabled={busy}
-              onSubmit={(n) => act('Progress', () => bq.setJobProgress(job.id, n))}
-            />
-          </>
+          <InlineNumber
+            label="Set progress (0–100)"
+            cta="Progress"
+            kind="progress"
+            disabled={busy}
+            onSubmit={(n) => act('Progress', () => bq.setJobProgress(job.id, n))}
+          />
         )}
         {gates.setPriority && (
           <PriorityAction
@@ -149,14 +162,7 @@ export function JobActionsPanel({ job, busy, act }: { job: JobFull; busy: boolea
             onSubmit={(n) => act('Delay', () => bq.changeDelay(job.id, n, job.version))}
           />
         )}
-        <p role="note" className="text-xs text-faint">
-          Cancel/delete/discard: {FLOW_DELETION_UNAVAILABLE}
-        </p>
-        {!hasAnyAction && (
-          <p className="text-xs text-faint">
-            No actions available for a job in state "{job.state ?? 'unknown'}".
-          </p>
-        )}
+        <UnavailableNote state={job.state} />
       </div>
     </Card>
   );
@@ -176,11 +182,13 @@ function InlineNumber({
   onSubmit: (n: number) => void;
 }) {
   const [v, setV] = useState('');
+  const errorId = useId();
   const parsed = parseJobActionNumber(v, kind);
+  const invalid = !parsed.ok && v.trim() !== '';
   return (
     // A real <form> so Enter in the field submits, same as clicking the button.
     <form
-      className="flex gap-2"
+      className="flex flex-wrap items-center gap-2"
       onSubmit={(e) => {
         e.preventDefault();
         if (!disabled && parsed.ok) onSubmit(parsed.value);
@@ -196,13 +204,15 @@ function InlineNumber({
         onChange={(e) => setV(e.target.value)}
         placeholder={label}
         aria-label={label}
-        className="h-8 text-xs"
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={invalid ? errorId : undefined}
+        className="min-w-32 flex-1"
       />
       <Button type="submit" size="sm" disabled={disabled || !parsed.ok}>
         {cta}
       </Button>
       {!parsed.ok && v.trim() && (
-        <span role="alert" className="self-center text-[11px] text-danger">
+        <span id={errorId} role="alert" className="w-full text-[13px] font-semibold text-danger">
           {parsed.msg}
         </span>
       )}
@@ -219,7 +229,9 @@ function PriorityAction({
 }) {
   const [v, setV] = useState('');
   const [lifo, setLifo] = useState(false);
+  const errorId = useId();
   const parsed = parseJobActionNumber(v, 'priority');
+  const invalid = !parsed.ok && v.trim() !== '';
   return (
     <form
       className="flex flex-wrap items-center gap-2"
@@ -238,17 +250,19 @@ function PriorityAction({
         onChange={(e) => setV(e.target.value)}
         placeholder="Set priority"
         aria-label="Set priority"
-        className="h-8 min-w-28 flex-1 text-xs"
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={invalid ? errorId : undefined}
+        className="min-w-32 flex-1"
       />
       <div className="flex items-center gap-1.5">
         <Toggle checked={lifo} onChange={setLifo} label="Place first among equal priorities" />
-        <span className="text-xs text-muted">LIFO</span>
+        <span className="text-[13px] text-muted">LIFO</span>
       </div>
       <Button type="submit" size="sm" disabled={disabled || !parsed.ok}>
         Set
       </Button>
       {!parsed.ok && v.trim() && (
-        <span role="alert" className="w-full text-[11px] text-danger">
+        <span id={errorId} role="alert" className="w-full text-[13px] font-semibold text-danger">
           {parsed.msg}
         </span>
       )}

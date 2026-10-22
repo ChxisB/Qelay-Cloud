@@ -44,19 +44,28 @@ describe('parseCapabilities', () => {
 
 describe('page gating', () => {
   test('the hidden server concepts are closed, including everything beneath them', () => {
-    for (const path of ['/server', '/server/logs', '/database', '/s3', '/s3-classic', '/fleet']) {
+    for (const path of ['/server', '/server/logs', '/database', '/s3', '/fleet']) {
       expect(isPageAvailable(path, CLOUD)).toBe(false);
     }
   });
 
   test('features that are off close their pages and their sub-pages', () => {
-    for (const path of ['/flows', '/workflows', '/workflows/executions', '/webhooks']) {
+    for (const path of [
+      '/flows',
+      '/workflows',
+      '/workflows/executions',
+      '/events-gateway',
+      '/events-gateway/events',
+      '/events-gateway/destinations',
+      '/events-gateway/connections/hook-1',
+      '/events-gateway/connections/hook-1/metrics',
+    ]) {
       expect(isPageAvailable(path, CLOUD)).toBe(false);
     }
     const flowsOn = { ...CLOUD, features: { ...CLOUD.features, flows: true, workflows: true } };
     expect(isPageAvailable('/flows', flowsOn)).toBe(true);
     expect(isPageAvailable('/workflows/waiting', flowsOn)).toBe(true);
-    expect(isPageAvailable('/webhooks', flowsOn)).toBe(false);
+    expect(isPageAvailable('/events-gateway/issues', flowsOn)).toBe(false);
   });
 
   test('the pages a job queue always has are never closed', () => {
@@ -78,7 +87,7 @@ describe('page gating', () => {
 
   test('pages that exist to change things are for operators, and a viewer is turned away', () => {
     const viewer: Capabilities = { ...CLOUD, principal: { role: 'viewer' } };
-    for (const path of ['/add-job', '/jobs/bulk-add', '/queue-control', '/benchmark']) {
+    for (const path of ['/add-job', '/jobs/bulk-add', '/benchmark']) {
       expect(isGatedPage(path)).toBe(true);
       expect(isPageAvailable(path, CLOUD)).toBe(true);
       expect(needsOperator(path, CLOUD)).toBe(false);
@@ -91,10 +100,24 @@ describe('page gating', () => {
     for (const path of ['/job', '/jobs', '/queues', '/dlq', '/cron']) {
       expect(isPageAvailable(path, viewer)).toBe(true);
     }
+    // The event gateway, every tab of it, is an operator's when the deployment has it.
+    const gatewayOn = { ...CLOUD, features: { ...CLOUD.features, webhooks: true } };
+    const gatewayViewer = { ...gatewayOn, principal: { role: 'viewer' as const } };
+    for (const path of [
+      '/events-gateway',
+      '/events-gateway/events',
+      '/events-gateway/issues',
+      '/events-gateway/destinations',
+      '/events-gateway/connections/hook-1',
+      '/events-gateway/connections/hook-1/metrics',
+    ]) {
+      expect(isPageAvailable(path, gatewayOn)).toBe(true);
+      expect(isPageAvailable(path, gatewayViewer)).toBe(false);
+      expect(needsOperator(path, gatewayViewer)).toBe(true);
+    }
     // A page the deployment closes stays closed for an operator too, and is not "operator" news.
-    expect(needsOperator('/webhooks', viewer)).toBe(false);
-    expect(isPageAvailable('/webhooks', CLOUD)).toBe(false);
-    expect(needsOperator('/dlq-control', viewer)).toBe(true);
+    expect(needsOperator('/events-gateway', viewer)).toBe(false);
+    expect(isPageAvailable('/events-gateway', CLOUD)).toBe(false);
   });
 
   test('a path that only starts with a closed name is not caught by it', () => {
@@ -106,7 +129,6 @@ describe('page gating', () => {
   test('DLQ and cron follow their feature flags', () => {
     const off = { ...CLOUD, features: { ...CLOUD.features, dlq: false, cron: false } };
     expect(isPageAvailable('/dlq', off)).toBe(false);
-    expect(isPageAvailable('/dlq-control', off)).toBe(false);
     expect(isPageAvailable('/cron', off)).toBe(false);
     expect(isPageAvailable('/cron-manager', off)).toBe(false);
     expect(isPageAvailable('/dlq', CLOUD)).toBe(true);
@@ -133,7 +155,7 @@ describe('page gating', () => {
       '/fleet',
       '/flows',
       '/workflows',
-      '/webhooks',
+      '/events-gateway',
     ]) {
       expect(isPageAvailable(path, DEMO_CAPABILITIES)).toBe(true);
     }

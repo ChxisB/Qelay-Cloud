@@ -1,4 +1,26 @@
-import { Link } from 'react-router-dom';
+import { EmptyState } from '@/components/ui/feedback';
+import { LinkButton } from '@/components/ui/LinkButton';
+
+const overview = (
+  <LinkButton to="/" size="sm">
+    Back to overview
+  </LinkButton>
+);
+
+function Glyph({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {children}
+    </svg>
+  );
+}
 
 /**
  * A page this deployment does not serve (its server concept does not exist here, or its feature is
@@ -6,36 +28,35 @@ import { Link } from 'react-router-dom';
  */
 export function NotAvailable({ name }: { name: string }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-      <h1 className="text-xl font-semibold text-fg">Not available in this deployment</h1>
-      <p className="max-w-md text-sm text-muted">
-        {name} is not part of this deployment, so there is nothing to show here.
-      </p>
-      <Link
-        to="/"
-        className="rounded-lg border border-line bg-surface-2 px-4 py-2 text-sm font-medium text-fg hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        Back to Overview
-      </Link>
-    </div>
+    <EmptyState
+      icon={
+        <Glyph>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M5.6 5.6l12.8 12.8" />
+        </Glyph>
+      }
+      headingLevel={1}
+      title="Not available in this deployment"
+      hint={`${name} is not part of this deployment, so there is nothing to show here.`}
+      action={overview}
+    />
   );
 }
 
 /** A page that exists to change things, reached by a signed-in caller whose role may only look. */
 export function OperatorOnly() {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-      <h1 className="text-xl font-semibold text-fg">Operator role needed</h1>
-      <p className="max-w-md text-sm text-muted">
-        This page changes things, and your role can look but not change. Ask an administrator for
-        the operator role if you need it.
-      </p>
-      <Link
-        to="/"
-        className="rounded-lg border border-line bg-surface-2 px-4 py-2 text-sm font-medium text-fg hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        Back to Overview
-      </Link>
-    </div>
+    <EmptyState
+      icon={
+        <Glyph>
+          <rect x="5" y="11" width="14" height="9" rx="2" />
+          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+        </Glyph>
+      }
+      headingLevel={1}
+      title="Operator role needed"
+      hint="This page changes things, and your role can look but not change. Ask an administrator for the operator role if you need it."
+      action={overview}
+    />
   );
 }

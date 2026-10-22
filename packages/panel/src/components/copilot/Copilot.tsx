@@ -1,10 +1,13 @@
 import { Component, type ReactNode, Suspense, useEffect, useRef } from 'react';
 import { useCopilotStore } from '@/components/dashboard/stores/copilotStore';
 import {
+  holdsModal,
   mayRestoreModalFocus,
   useGlobalModalStore,
 } from '@/components/dashboard/stores/globalModalStore';
+import { Button } from '@/components/ui/Button';
 import { resetFailedLazyImports, retryableLazy } from '@/lib/retryableLazy';
+import { usePresence } from '@/lib/usePresence';
 
 /**
  * Copilot entry point. This module is intentionally light — it only pulls in the
@@ -99,15 +102,14 @@ export class CopilotBoundary extends Component<
         aria-modal="true"
         aria-label="Copilot failed to load"
         tabIndex={-1}
-        className="fixed inset-y-0 right-0 z-[60] flex w-full max-w-md flex-col items-center justify-center gap-3 border-l border-line bg-surface px-6 text-center"
+        className="fixed inset-y-0 right-0 z-[60] flex w-full max-w-[580px] flex-col items-center justify-center gap-3 border-l border-line-strong bg-surface px-4 text-center"
       >
         <p className="text-sm text-fg">Copilot failed to load.</p>
         <p className="text-xs text-muted">
           The panel is loaded on demand; the request failed. If the control panel was just
           redeployed, reload the page. The rest of the control panel is unaffected.
         </p>
-        <button
-          type="button"
+        <Button
           onClick={() => {
             // The next open fetches the panel chunk again instead of
             // re-throwing the cached failure.
@@ -115,10 +117,9 @@ export class CopilotBoundary extends Component<
             this.setState({ failed: false });
             this.props.onClose();
           }}
-          className="rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg"
         >
           Close
-        </button>
+        </Button>
       </div>
     );
   }
@@ -127,8 +128,10 @@ export class CopilotBoundary extends Component<
 export function Copilot() {
   const open = useCopilotStore((s) => s.open);
   const setOpen = useCopilotStore((s) => s.setOpen);
-  const activeModal = useGlobalModalStore((state) => state.active);
-  const visible = open && activeModal === 'copilot';
+  // Also true while a confirm is up over the panel: it stays on screen, inert, and gets the shell back.
+  const holds = useGlobalModalStore(holdsModal('copilot'));
+  const visible = open && holds;
+  const { mounted, leaving } = usePresence(visible);
   const modalRootRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const fabRef = useRef<HTMLButtonElement>(null);
@@ -139,12 +142,12 @@ export function Copilot() {
   useEffect(() => {
     const modal = useGlobalModalStore.getState();
     if (open) {
-      if (activeModal === 'copilot') return;
+      if (holds) return;
       if (!modal.request('copilot')) setOpen(false);
       return;
     }
     modal.release('copilot');
-  }, [open, activeModal, setOpen]);
+  }, [open, holds, setOpen]);
 
   useEffect(
     () => () => {
@@ -165,6 +168,8 @@ export function Copilot() {
       (first ?? dialog ?? root).focus();
     });
     const onKey = (e: KeyboardEvent) => {
+      // A confirm over the panel owns the keyboard.
+      if (useGlobalModalStore.getState().active === 'confirm') return;
       if (e.key === 'Escape') {
         e.preventDefault();
         setOpen(false);
@@ -208,14 +213,14 @@ export function Copilot() {
             openerRef.current = event.currentTarget;
             if (useGlobalModalStore.getState().request('copilot')) setOpen(true);
           }}
-          className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full border border-line bg-surface px-4 py-2.5 text-sm font-medium text-fg shadow-lg transition-colors hover:border-link/50 hover:text-link focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="fixed bottom-5 right-5 z-40 flex min-h-8 items-center gap-2 rounded-full border border-line-strong bg-raised px-4 text-sm font-bold text-fg shadow-pop transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           aria-label="Open Copilot"
         >
           <SparkleIcon className="size-4 text-link" />
           Copilot
         </button>
       )}
-      {visible && (
+      {mounted && (
         <div ref={modalRootRef} tabIndex={-1} className="contents">
           <CopilotBoundary onClose={() => setOpen(false)}>
             <Suspense
@@ -225,13 +230,13 @@ export function Copilot() {
                   aria-modal="true"
                   aria-label="Loading Copilot"
                   tabIndex={-1}
-                  className="fixed inset-y-0 right-0 z-[60] flex w-full max-w-md items-center justify-center border-l border-line bg-surface text-sm text-muted"
+                  className="fixed inset-y-0 right-0 z-[60] flex w-full max-w-[580px] items-center justify-center border-l border-line-strong bg-surface text-sm text-muted"
                 >
                   Loading Copilot…
                 </div>
               }
             >
-              <CopilotPanel />
+              <CopilotPanel leaving={leaving} />
             </Suspense>
           </CopilotBoundary>
         </div>

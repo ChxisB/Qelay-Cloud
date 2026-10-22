@@ -3,10 +3,11 @@ import {
   alertConnectionIdentity,
   ConnectionBadge,
   createElement,
-  DlqControl,
+  DlqPro,
   describe,
   expect,
   installTestHooks,
+  MemoryRouter,
   ProcessLogs,
   render,
   settle,
@@ -84,7 +85,9 @@ describe('honest connection and process-log states', () => {
       }
       return Promise.resolve(Response.json({ error: 'unexpected request' }, { status: 500 }));
     }) as typeof fetch;
-    const { host, unmount } = render(createElement(DlqControl));
+    const { host, unmount } = render(
+      createElement(MemoryRouter, { initialEntries: ['/dlq?queue=email'] }, createElement(DlqPro))
+    );
     await settle(50);
 
     expect(host.textContent).toContain('DLQ statistics are unavailable');

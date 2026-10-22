@@ -25,12 +25,12 @@ export function WorkflowOverview({ workflows, workflowName, state, onSelect }: P
               aria-pressed={workflowName === workflow.name && state === ''}
               onClick={() => onSelect(workflow.name, '')}
               translate="no"
-              className="break-all text-left font-mono text-sm font-semibold text-fg underline decoration-dotted hover:decoration-solid"
+              className="min-h-8 break-all rounded-control text-left font-mono text-sm font-bold text-link underline decoration-dotted hover:decoration-solid aria-pressed:bg-selected"
             >
               {workflow.name}
             </button>
-            <span className="shrink-0 text-xs tabular-nums text-faint">
-              {formatNumber(workflow.total)} runs
+            <span className="shrink-0 text-[13px] tnum text-muted">
+              {formatNumber(workflow.total)} {workflow.total === 1 ? 'run' : 'runs'}
             </span>
           </div>
           <ul aria-label={`${workflow.name} runs by state`} className="flex flex-wrap gap-2">
@@ -40,12 +40,10 @@ export function WorkflowOverview({ workflows, workflowName, state, onSelect }: P
                   type="button"
                   aria-pressed={workflowName === workflow.name && state === s}
                   onClick={() => onSelect(workflow.name, s)}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line px-2 py-0.5 text-xs hover:border-line-strong"
+                  className="inline-flex min-h-8 items-center gap-1.5 rounded-full px-1.5 text-xs hover:bg-hover aria-pressed:bg-selected"
                 >
                   <StatusBadge status={s} />
-                  <span className="tabular-nums text-muted">
-                    {formatNumber(workflow.counts[s])}
-                  </span>
+                  <span className="tnum font-bold text-fg">{formatNumber(workflow.counts[s])}</span>
                 </button>
               </li>
             ))}
@@ -54,13 +52,13 @@ export function WorkflowOverview({ workflows, workflowName, state, onSelect }: P
             <p
               key={warning.hash}
               role="note"
-              className="rounded-lg border border-warning/30 p-2 text-xs text-warning"
+              className="rounded-control bg-state-waiting-bg px-3 py-2 text-xs font-semibold text-state-waiting-fg"
             >
               {warning.message}
             </p>
           ))}
           <details>
-            <summary className="cursor-pointer text-xs text-faint">
+            <summary className="cursor-pointer text-xs font-bold text-muted">
               Versions announced by workers ({workflow.definitions.length})
             </summary>
             <ul className="mt-2 space-y-1 text-xs text-muted">
@@ -70,14 +68,14 @@ export function WorkflowOverview({ workflows, workflowName, state, onSelect }: P
                     {definition.hash.slice(0, 12)}
                   </span>
                   <span>{definition.served ? 'served' : 'no worker serves it'}</span>
-                  <span className="tabular-nums">{definition.liveRuns} live</span>
-                  <span className="text-faint">
-                    seen {formatRelativeTime(definition.lastSeenAt)} ago
+                  <span className="tnum">{definition.liveRuns} live</span>
+                  <span className="text-muted">
+                    seen {formatRelativeTime(definition.lastSeenAt)}
                   </span>
                 </li>
               ))}
               {workflow.definitions.length === 0 && (
-                <li className="text-faint">No worker has announced this workflow.</li>
+                <li className="text-muted">No worker has announced this workflow.</li>
               )}
             </ul>
           </details>

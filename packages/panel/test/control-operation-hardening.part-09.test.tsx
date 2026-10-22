@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { Diagnostics } from '../src/pages/control/Diagnostics';
 import { useQueueDepth } from '../src/pages/control/queueDetail/useQueueDepth';
@@ -67,7 +68,7 @@ describe('diagnostic action ownership', () => {
       if (url.pathname === '/ping' && url.hostname === 'server-a.test') return ping;
       return Promise.resolve(diagnosticResponse(url.pathname));
     }) as typeof fetch;
-    const view = render(createElement(Diagnostics));
+    const view = render(createElement(MemoryRouter, null, createElement(Diagnostics)));
     await settle(10);
     click(view.host, 'Ping');
     await settle(1);
@@ -99,7 +100,7 @@ describe('diagnostic action ownership', () => {
       }
       return Promise.resolve(diagnosticResponse(path));
     }) as typeof fetch;
-    const view = render(createElement(Diagnostics));
+    const view = render(createElement(MemoryRouter, null, createElement(Diagnostics)));
     await settle(10);
     invokeTwice(button(view.host, 'Compact (GC)'));
     await settle(10);

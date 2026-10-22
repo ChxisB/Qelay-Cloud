@@ -144,7 +144,7 @@ export function buildCronBody(
   if (invalidQueue) return { ok: false, msg: invalidQueue };
   const jobName = values.jobName?.trim() || 'default';
   if (jobName.length > 256) {
-    return { ok: false, msg: 'Spawned job name must be 256 characters or fewer' };
+    return { ok: false, msg: 'Job name must be 256 characters or fewer' };
   }
 
   let data: unknown = {};
@@ -168,19 +168,19 @@ export function buildCronBody(
   };
   if (values.mode === 'cron') {
     const schedule = values.schedule.trim();
-    if (!schedule) return { ok: false, msg: 'Cron expression required' };
+    if (!schedule) return { ok: false, msg: 'Enter a cron expression, for example 0 9 * * *' };
     const parsedSchedule = nextCronRuns(schedule, 1, now);
     if (!parsedSchedule.valid) {
       return {
         ok: false,
-        msg: `Cron expression is not supported by Qelay: ${parsedSchedule.error ?? 'invalid syntax'}`,
+        msg: `That cron expression is not supported: ${parsedSchedule.error ?? 'invalid syntax'}`,
       };
     }
     body.schedule = schedule;
   } else {
     const interval = parseOptionalWhole(values.every, 'Interval', 1, MAX_DELAY_MS);
     if (!interval.ok || interval.value === undefined) {
-      return { ok: false, msg: interval.ok ? 'Interval is required' : interval.msg };
+      return { ok: false, msg: interval.ok ? 'Enter how often to run' : interval.msg };
     }
     body.repeatEvery = interval.value;
   }
@@ -188,12 +188,15 @@ export function buildCronBody(
   const timezone = values.timezone.trim();
   if (timezone) {
     if (values.mode !== 'cron') {
-      return { ok: false, msg: 'Timezone applies only to cron expressions, not intervals' };
+      return {
+        ok: false,
+        msg: 'A timezone only applies to cron expressions, not to "Every so often"',
+      };
     }
     try {
       new Intl.DateTimeFormat('en', { timeZone: timezone }).format(now);
     } catch {
-      return { ok: false, msg: 'Timezone must be a valid IANA timezone' };
+      return { ok: false, msg: 'Timezone must look like Europe/London' };
     }
     body.timezone = timezone;
   }
@@ -203,7 +206,7 @@ export function buildCronBody(
   if (priority.value !== undefined) body.priority = priority.value;
   const maxLimit = parseOptionalWhole(
     values.maxLimit,
-    'Max executions',
+    'Stop after this many runs',
     1,
     Number.MAX_SAFE_INTEGER
   );
@@ -212,20 +215,26 @@ export function buildCronBody(
 
   const uniqueKey = values.uniqueKey.trim();
   if (uniqueKey.length > 1024) {
-    return { ok: false, msg: 'Unique key must be 1024 characters or fewer' };
+    return { ok: false, msg: 'Duplicate key must be 1024 characters or fewer' };
   }
   if (uniqueKey) body.uniqueKey = uniqueKey;
-  const dedupTtl = parseOptionalWhole(values.dedupTtl, 'Dedup TTL', 1, MAX_DELAY_MS);
+  const dedupTtl = parseOptionalWhole(values.dedupTtl, 'Remember the key for', 1, MAX_DELAY_MS);
   if (!dedupTtl.ok) return dedupTtl;
   const hasDedup = dedupTtl.value !== undefined || values.dedupExtend || values.dedupReplace;
   if (values.dedupExtend && values.dedupReplace) {
-    return { ok: false, msg: 'Dedup extend and replace are mutually exclusive' };
+    return {
+      ok: false,
+      msg: 'Choose either restarting the wait or replacing the waiting job, not both',
+    };
   }
   if (values.dedupExtend && dedupTtl.value === undefined) {
-    return { ok: false, msg: 'Dedup extend requires a TTL' };
+    return { ok: false, msg: 'Restarting the wait needs a value for "Remember the key for"' };
   }
   if (hasDedup && !uniqueKey && !values.preventOverlap) {
-    return { ok: false, msg: 'Dedup options require a unique key or Prevent overlap' };
+    return {
+      ok: false,
+      msg: 'The duplicate settings need a duplicate key, or "Skip a run if the last one is still going" turned on',
+    };
   }
   if (hasDedup) {
     body.dedup = {
@@ -247,29 +256,29 @@ export function buildCronBody(
   }> = [
     {
       raw: values.jobMaxAttempts,
-      label: 'Spawned-job max attempts',
+      label: 'Tries',
       min: 1,
       max: 1000,
       key: 'maxAttempts',
     },
     {
       raw: values.jobBackoff,
-      label: 'Spawned-job backoff',
+      label: 'Wait between tries',
       min: 0,
       max: MAX_DURATION_MS,
       key: 'backoff',
     },
     {
       raw: values.jobTimeout,
-      label: 'Spawned-job timeout',
+      label: 'Give up after',
       min: 0,
       max: MAX_DURATION_MS,
       key: 'timeout',
     },
-    { raw: values.jobDelay, label: 'Spawned-job delay', min: 0, max: MAX_DELAY_MS, key: 'delay' },
+    { raw: values.jobDelay, label: 'Start after a delay', min: 0, max: MAX_DELAY_MS, key: 'delay' },
     {
       raw: values.jobStallTimeout,
-      label: 'Spawned-job stall timeout',
+      label: 'Treat as stuck after',
       min: 0,
       max: MAX_DURATION_MS,
       key: 'stallTimeout',

@@ -10,9 +10,11 @@ import {
 } from '@/components/dashboard/stores/globalModalStore';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { RouteGate } from '@/components/RouteGate';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toaster } from '@/components/ui/Toaster';
 import { useCapabilitiesLoader } from '@/lib/capabilities/useCapabilities';
 import { cn } from '@/lib/cn';
+import { settlePageTransition } from '@/lib/pageTransition';
 import { useRouteScrollReset } from '@/lib/useRouteScrollReset';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
@@ -39,6 +41,9 @@ export function AppLayout() {
   // cannot restore a nested scroll container for us, so cached lazy routes used
   // to inherit the previous page's offset and open halfway down the content.
   useRouteScrollReset(mainRef, locationKey);
+
+  // A page change that pageTransition.ts is holding the old picture for ends once the new location has rendered.
+  useEffect(() => settlePageTransition(), [locationKey]);
 
   // Close the drawer whenever the route changes (tapping a nav item navigates).
   // Close the mobile navigation whenever the route changes.
@@ -193,7 +198,7 @@ export function AppLayout() {
             className={cn(
               // pb-24 clears the fixed Copilot FAB (bottom-right) so it never
               // covers the last row / pagination controls on a scrolled page.
-              'flex-1 px-4 pt-5 pb-24 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring sm:px-6 lg:px-8 lg:pt-6',
+              'flex-1 px-4 pt-4 pb-24 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring lg:px-6 lg:pt-5',
               // Lock content scroll while the drawer overlays it below lg.
               navVisible ? 'overflow-hidden' : 'overflow-y-auto'
             )}
@@ -212,6 +217,7 @@ export function AppLayout() {
           </main>
         </div>
         <CommandPalette />
+        <ConfirmDialog />
         <AuthGate />
         {/* Off in every official build; `VITE_ENABLE_COPILOT=1 bun run build` opts in.
             Inline so the bundler drops the Copilot and its AI SDK chunk entirely. */}

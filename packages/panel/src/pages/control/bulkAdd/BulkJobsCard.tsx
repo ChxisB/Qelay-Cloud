@@ -1,6 +1,8 @@
 import type { ChangeEvent } from 'react';
+import { Banner } from '@/components/ui/Banner';
+import { buttonClass } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
-import { SegmentedControl } from '@/components/ui/form';
+import { SegmentedControl, Textarea } from '@/components/ui/form';
 import { BULK_SAMPLE, MAX_BULK_INPUT_CHARS, MAX_JOBS } from './constants';
 import type { BulkFormValues, SetBulkFormValue } from './formTypes';
 
@@ -25,20 +27,28 @@ export function BulkJobsCard({
     <Card className="lg:col-span-2">
       <CardHeader
         title="Jobs"
+        sub="Paste a JSON list, one JSON object, or one JSON object per line."
         action={
-          <label className="cursor-pointer rounded-lg border border-line px-3 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-fg">
+          // The input is visually hidden, not display:none, so the keyboard can reach it.
+          <label
+            className={buttonClass(
+              'default',
+              'sm',
+              'cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring'
+            )}
+          >
             Upload file
             <input
               type="file"
               name="jobs-file"
               accept=".json,.ndjson,.txt,application/json"
               onChange={onFile}
-              className="hidden"
+              className="sr-only"
             />
           </label>
         }
       />
-      <textarea
+      <Textarea
         name="jobs-json"
         value={values.text}
         onChange={(event) => {
@@ -50,28 +60,30 @@ export function BulkJobsCard({
         rows={16}
         placeholder={BULK_SAMPLE}
         aria-label="Jobs JSON"
-        className="w-full rounded-lg border border-line bg-surface-2 p-3 font-mono text-xs text-fg placeholder:text-faint focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
+        aria-invalid={parseError || parsedCount > MAX_JOBS ? true : undefined}
+        aria-describedby="jobs-json-status"
+        className="font-mono text-[13px] leading-relaxed"
       />
       <fieldset className="mt-3 flex flex-wrap items-center gap-3">
-        <legend className="sr-only">Import interpretation</legend>
-        <span aria-hidden="true" className="text-xs font-medium text-faint">
-          Interpret each item as
+        <legend className="sr-only">How to read each item</legend>
+        <span aria-hidden="true" className="text-[13px] font-semibold text-muted">
+          Each item is
         </span>
         <SegmentedControl
           options={['spec', 'raw'] as const}
           value={values.mode}
           onChange={(mode) => setValue('mode', mode)}
+          label="How to read each item"
+          format={(mode) => (mode === 'spec' ? 'A job with options' : 'Just the data')}
+          asWritten
         />
-        <span className="text-xs text-faint">
+        <span className="text-[13px] text-muted">
           {values.mode === 'spec'
-            ? 'job spec: an object with a "data" key sets options from its sibling fields.'
-            : 'raw data: the whole item becomes the job payload, untouched.'}
+            ? 'An object with a "data" key. Its other fields, such as priority, are the job\'s options.'
+            : 'The whole item is sent to the worker as it is.'}
         </span>
       </fieldset>
-      <p className="mt-2 text-xs text-faint">
-        Accepts a JSON array, a single object, or newline-delimited JSON.
-      </p>
-      <div className="mt-2 text-sm">
+      <div id="jobs-json-status" className="mt-3 text-[13px] font-semibold">
         {parseError ? (
           <span role="alert" className="text-danger">
             {parseError}
@@ -83,14 +95,16 @@ export function BulkJobsCard({
         ) : parsedCount > 0 ? (
           <span className="text-success">{parsedCount} job(s) parsed ✓</span>
         ) : (
-          <span className="text-faint">Nothing parsed yet.</span>
+          <span className="text-muted">Nothing parsed yet.</span>
         )}
       </div>
       {!parseError && parsedCount > 0 && !validation.ok && (
-        <p role="alert" className="mt-2 text-xs text-danger">
-          Import blocked — {validation.msg}. Fix the spec or switch to “raw” when the whole object
-          is job data.
-        </p>
+        <div className="mt-4">
+          <Banner tone="problem" title="Import blocked">
+            {validation.msg}. Fix the item, or switch to “Just the data” when the whole object is
+            the job's data.
+          </Banner>
+        </div>
       )}
     </Card>
   );

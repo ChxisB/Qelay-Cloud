@@ -42,7 +42,7 @@ export function FilterBar({
           ))}
         </Select>
       </div>
-      <div className="w-32">
+      <div className="w-36">
         <Select
           value={op}
           aria-label="Filter operator"
@@ -63,17 +63,19 @@ export function FilterBar({
         aria-label="Filter value"
         name="database-filter-value"
         autoComplete="off"
-        placeholder="value — Enter to filter"
+        placeholder="Type a value, press Enter"
       />
       <Button size="sm" onClick={apply} disabled={!value.trim()}>
         Filter
       </Button>
       {filter && (
-        <Button size="sm" variant="ghost" onClick={clear}>
+        <Button size="sm" onClick={clear}>
           Clear
         </Button>
       )}
-      <span className="text-[11px] text-faint">filters the whole table, server-side</span>
+      <span className="text-[13px] text-muted">
+        Searches every row in the table, not just this page.
+      </span>
     </div>
   );
 }

@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { Benchmark } from '../src/pages/control/Benchmark';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = window.confirm;
+let asked: ReturnType<typeof answerConfirms> | null = null;
 const realFileReader = globalThis.FileReader;
 const realWindowFileReader = window.FileReader;
 const realJsonParse = JSON.parse;
@@ -154,7 +156,8 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
+  asked?.stop();
+  asked = null;
   globalThis.FileReader = realFileReader;
   window.FileReader = realWindowFileReader;
   Object.defineProperty(JSON, 'parse', {
@@ -174,7 +177,7 @@ describe('Benchmark telemetry target ownership', () => {
   test('keeps counts and DOM labels pinned to server A after Settings retargets to B', async () => {
     const overview = deferred<Response>();
     const calls: Array<{ url: string; auth: string | null }> = [];
-    globalThis.window.confirm = () => true;
+    asked = answerConfirms();
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, auth: new Headers(init?.headers).get('authorization') });
@@ -188,7 +191,7 @@ describe('Benchmark telemetry target ownership', () => {
       return Promise.resolve(json({ ok: false, error: `unexpected ${url}` }, 500));
     }) as typeof fetch;
 
-    const view = render(createElement(Benchmark));
+    const view = render(createElement(MemoryRouter, null, createElement(Benchmark)));
     await settle(15);
     clickButton(view.host, 'Run benchmark');
     await settle(10);

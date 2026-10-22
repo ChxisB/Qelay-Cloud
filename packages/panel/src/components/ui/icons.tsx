@@ -232,3 +232,10 @@ export const IconSliders = (p: IconProps) => (
     <circle cx="9" cy="17" r="2" />
   </Icon>
 );
+export const IconMore = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="5" cy="12" r="1.2" />
+    <circle cx="12" cy="12" r="1.2" />
+    <circle cx="19" cy="12" r="1.2" />
+  </Icon>
+);

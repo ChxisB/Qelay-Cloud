@@ -5,6 +5,7 @@ import type { BackupRepository } from '../src/features/backups/application/Backu
 import { createBackupRunnerCoordinator } from '../src/features/backups/application/backupRunnerCoordinator';
 import { BackupOperationsPanel } from '../src/features/backups/ui/BackupOperationsPanel';
 import type { DbStats } from '../src/lib/bqTypes';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom } from './domSetup';
 
 ensureDom();
@@ -127,10 +128,7 @@ describe('S3 backup runner coordination', () => {
       configure: async () => ({ configured: true, enabled: true }),
       restoreContext: async () => ({ serverStatus: 'stopped', database }),
     };
-    const originalConfirm = window.confirm;
-    const originalPrompt = window.prompt;
-    window.confirm = () => true;
-    window.prompt = () => 'RESTORE';
+    const asked = answerConfirms();
 
     try {
       const host = render(createElement(BackupOperationsPanel, { pollIntervalMs: 5, repository }));
@@ -170,8 +168,7 @@ describe('S3 backup runner coordination', () => {
       await waitFor(() => button(host, 'Backup now').disabled === false);
       expect(conflicts).toBe(0);
     } finally {
-      window.confirm = originalConfirm;
-      window.prompt = originalPrompt;
+      asked.stop();
     }
   });
 });

@@ -43,7 +43,7 @@ export async function resetTables(t: TestStore): Promise<void> {
     qcloud_metric_buckets, qcloud_metric_totals, qcloud_job_logs, qcloud_dependencies,
     qcloud_flow_failures, qcloud_events, qcloud_event_commits, qcloud_event_prune_watermarks,
     qcloud_event_retention_state, qcloud_event_retention_deltas, qcloud_group_state, qcloud_crons,
-    qcloud_workers, qcloud_audit, qcloud_webhooks, qcloud_webhook_writers, qcloud_deliveries, qcloud_webhook_deliveries,
+    qcloud_workers, qcloud_audit, qcloud_webhooks, qcloud_webhook_destinations, qcloud_webhook_dedupe, qcloud_webhook_issues, qcloud_webhook_writers, qcloud_deliveries, qcloud_webhook_deliveries,
     qcloud_workflow_executions, qcloud_workflow_executions_archive, qcloud_workflow_definitions`;
   rewind(t);
 }

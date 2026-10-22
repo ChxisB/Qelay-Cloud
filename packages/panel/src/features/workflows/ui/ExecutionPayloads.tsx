@@ -8,16 +8,16 @@ import { PayloadView } from './PayloadView';
 export function ExecutionPayloads({ execution }: { execution: WorkflowExecution }) {
   return (
     <div className="space-y-5">
-      <p className="text-xs text-faint">
+      <p className="text-xs text-muted">
         These values are shown to everyone who can open this page. Large values are cut at a size
         limit.
       </p>
       <section aria-label="Input" className="space-y-1">
-        <h3 className="text-xs font-medium text-fg">Input</h3>
+        <h3 className="text-sm font-bold text-fg">Input</h3>
         <PayloadView value={execution.input} truncated={execution.inputTruncated} label="Input" />
       </section>
       <section aria-label="Output" className="space-y-1">
-        <h3 className="text-xs font-medium text-fg">
+        <h3 className="text-sm font-bold text-fg">
           Output
           {execution.output ? (
             <>
@@ -39,8 +39,8 @@ export function ExecutionPayloads({ execution }: { execution: WorkflowExecution 
         />
       </section>
       <section aria-label="Signal payloads" className="space-y-2">
-        <h3 className="text-xs font-medium text-fg">Signals ({execution.signals.total})</h3>
-        {execution.signals.items.length === 0 && <p className="text-xs text-faint">None.</p>}
+        <h3 className="text-sm font-bold text-fg">Signals ({execution.signals.total})</h3>
+        {execution.signals.items.length === 0 && <p className="text-xs text-muted">None.</p>}
         {execution.signals.items.map((signal) => (
           <div key={signal.event} className="space-y-1">
             <div translate="no" className="font-mono text-xs text-muted">
@@ -55,7 +55,7 @@ export function ExecutionPayloads({ execution }: { execution: WorkflowExecution 
           </div>
         ))}
         {execution.signals.total > execution.signals.items.length && (
-          <p className="text-xs text-faint">
+          <p className="text-xs text-muted">
             {execution.signals.total - execution.signals.items.length} more not shown.
           </p>
         )}

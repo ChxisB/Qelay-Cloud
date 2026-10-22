@@ -108,37 +108,37 @@ export function doorbellVerdict(queue: TransportQueue, lateAfterMs: number): Doo
   if (store.paused) {
     return {
       kind: 'held',
-      text: 'Paused: its jobs are held on purpose and the tick does not ring them.',
+      text: 'Paused: its jobs are held on purpose and maintenance does not tell workers about them.',
     };
   }
   if ((queue.deadLetterDepth ?? 0) > 0) {
     return {
       kind: 'poison',
-      text: `${figure(queue.deadLetterDepth)} poison doorbell${queue.deadLetterDepth === 1 ? '' : 's'}: the broker gave up delivering them. The jobs stay in the database; redriving is a runbook step.`,
+      text: `${figure(queue.deadLetterDepth)} failed notification${queue.deadLetterDepth === 1 ? '' : 's'}: the queue service gave up delivering ${queue.deadLetterDepth === 1 ? 'it' : 'them'}. The jobs stay in the database; sending them again is a runbook step.`,
     };
   }
   if (store.notRung > 0 && (store.oldestNotRungAgeMs ?? 0) >= lateAfterMs) {
     return {
       kind: 'tick-behind',
-      text: `${figure(store.notRung)} claimable job${store.notRung === 1 ? ' has' : 's have'} no doorbell, the oldest for ${span(store.oldestNotRungAgeMs)}: the tick is behind.`,
+      text: `Workers have not been told about ${figure(store.notRung)} job${store.notRung === 1 ? '' : 's'} that ${store.notRung === 1 ? 'is' : 'are'} ready to run, the oldest for ${span(store.oldestNotRungAgeMs)}: maintenance is behind.`,
     };
   }
   if (store.notRung > 0) {
     return {
       kind: 'ok',
-      text: `${figure(store.notRung)} claimable job${store.notRung === 1 ? '' : 's'} waiting for the next tick to ring them.`,
+      text: `${figure(store.notRung)} ready-to-run job${store.notRung === 1 ? '' : 's'} waiting for the next maintenance run to tell workers.`,
     };
   }
   if (store.reRingDue > 0) {
     return {
       kind: 'backlog',
-      text: 'More jobs than workers: older doorbells are still waiting at the broker and the tick rings them again. Normal for a backlog.',
+      text: 'More jobs than workers: older notifications are still waiting in the queue service and maintenance sends them again. Normal for a backlog.',
     };
   }
   if (queue.doorbellDepth === null && queue.deadLetterDepth === null) {
-    return { kind: 'unknown', text: 'The broker did not answer: its numbers are unknown.' };
+    return { kind: 'unknown', text: 'The queue service did not answer: its numbers are unknown.' };
   }
-  return { kind: 'ok', text: 'Nothing waiting for a doorbell.' };
+  return { kind: 'ok', text: 'Nothing waiting to be notified.' };
 }
 
 /** Tone of a queue's verdict, for its row. */

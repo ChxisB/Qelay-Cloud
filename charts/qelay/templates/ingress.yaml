@@ -1,0 +1,40 @@
+{{- if .Values.ingress.enabled }}
+{{- $root := . }}
+{{- $hosts := dict "api" .Values.ingress.api.host }}
+{{- if .Values.panel.enabled }}{{- $_ := set $hosts "panel" .Values.ingress.panel.host }}{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "qelay.fullname" . }}
+  labels:
+    {{- include "qelay.labels" (dict "root" . "component" "ingress") | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tlsSecretName }}
+  tls:
+    - secretName: {{ . }}
+      hosts:
+        {{- range $component, $host := $hosts }}
+        - {{ required (printf "ingress.%s.host is required" $component) $host }}
+        {{- end }}
+  {{- end }}
+  rules:
+    {{- range $component, $host := $hosts }}
+    - host: {{ required (printf "ingress.%s.host is required" $component) $host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "qelay.fullname" $root }}-{{ $component }}
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

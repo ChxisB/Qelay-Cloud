@@ -57,12 +57,12 @@ export function checkCluster(plan: Planner, checks: Checks): void {
     checks.ok('one cluster', db !== undefined && more.length === 0);
     const a = after(db);
     checks.ok('the class, storage and IOPS asked for', get(a, 'db_cluster_instance_class') === 'db.m6gd.large' && get(a, 'storage_type') === 'io1' && get(a, 'iops') === 3000);
-    checks.ok('PostgreSQL 16', get(a, 'engine') === 'postgres' && String(get(a, 'engine_version')).startsWith('16'));
+    checks.ok('PostgreSQL 18', get(a, 'engine') === 'postgres' && String(get(a, 'engine_version')).startsWith('18'));
     checks.ok('encrypted, protected from deletion, a final snapshot, backups kept', get(a, 'storage_encrypted') === true && get(a, 'deletion_protection') === true && get(a, 'skip_final_snapshot') === false && Number(get(a, 'backup_retention_period')) >= 1);
     checks.ok('no IAM database authentication', get(a, 'iam_database_authentication_enabled') === false);
     const [group] = ofType(p, 'aws_rds_cluster_parameter_group');
     const parameter = (name: string) => (attr(group, 'parameter') as unknown[] | undefined)?.find((x) => get(x, 'name') === name);
-    checks.ok('the cluster group is postgres16 with the budget\'s max_connections at the next reboot and TLS forced', attr(group, 'family') === 'postgres16' && get(parameter('max_connections'), 'value') === '100' && get(parameter('max_connections'), 'apply_method') === 'pending-reboot' && get(parameter('rds.force_ssl'), 'value') === '1');
+    checks.ok('the cluster group is postgres18 with the budget\'s max_connections at the next reboot and TLS forced', attr(group, 'family') === 'postgres18' && get(parameter('max_connections'), 'value') === '100' && get(parameter('max_connections'), 'apply_method') === 'pending-reboot' && get(parameter('rds.force_ssl'), 'value') === '1');
     checks.ok('the cluster group sets the same session timeouts', ['statement_timeout', 'lock_timeout', 'idle_in_transaction_session_timeout'].every((name) => get(parameter(name), 'apply_method') === 'immediate') && get(parameter('statement_timeout'), 'value') === '30000');
     const alarm = ofType(p, 'aws_cloudwatch_metric_alarm').find((c) => c.name === 'database_cpu');
     checks.ok('the database alarms follow the cluster dimension', get(attr(alarm, 'dimensions'), 'DBClusterIdentifier') !== undefined && get(attr(alarm, 'dimensions'), 'DBInstanceIdentifier') === undefined, JSON.stringify(attr(alarm, 'dimensions')));

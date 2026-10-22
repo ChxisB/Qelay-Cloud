@@ -43,7 +43,7 @@ export function JobBackoff({ job }: { job: JobFull }) {
     return (
       <Card>
         <CardHeader title="Backoff" />
-        <p className="text-xs text-faint">
+        <p className="text-[13px] text-muted">
           No retries configured (max attempts = {maxAttempts || 1}).
         </p>
       </Card>
@@ -54,7 +54,7 @@ export function JobBackoff({ job }: { job: JobFull }) {
     return (
       <Card>
         <CardHeader title="Backoff schedule" />
-        <p className="text-xs text-faint">
+        <p className="text-[13px] text-muted">
           Max attempts reached — no further retries will be scheduled.
         </p>
       </Card>
@@ -74,28 +74,28 @@ export function JobBackoff({ job }: { job: JobFull }) {
       <CardHeader
         title="Backoff schedule"
         action={
-          <span className="text-xs capitalize text-faint">
+          <span className="text-[13px] capitalize text-muted">
             {typeLabel}
             {cfg?.maxDelay ? ` · cap ${formatDuration(cfg.maxDelay)}` : ''}
           </span>
         }
       />
-      <ul className="flex flex-col gap-1.5">
+      <ul className="flex flex-col gap-2">
         {rows.map((r) => (
-          <li key={r.attempt} className="flex items-center justify-between text-sm">
+          <li key={r.attempt} className="flex items-center justify-between text-[13px]">
             <span className="text-muted">
               Attempt {r.attempt} / {maxAttempts}
             </span>
-            <span className="font-mono text-xs text-fg">~{formatDuration(r.delayMs)}</span>
+            <span className="font-mono text-[13px] text-fg">~{formatDuration(r.delayMs)}</span>
           </li>
         ))}
       </ul>
       {remaining > MAX_ROWS && (
-        <p className="mt-2 text-[11px] text-faint">
+        <p className="mt-3 text-[13px] text-muted">
           Showing next {MAX_ROWS} of {remaining} remaining attempts.
         </p>
       )}
-      <p className="mt-2 text-[11px] text-faint">
+      <p className="mt-3 text-[13px] text-muted">
         Approximate — the server applies ±{cfg?.type === 'fixed' ? '20' : '50'}% jitter at retry
         time, capped at {formatDuration(cfg?.maxDelay ?? DEFAULT_MAX_BACKOFF)}.
       </p>

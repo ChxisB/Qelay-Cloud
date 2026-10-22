@@ -23,9 +23,9 @@ variable "client_security_group_ids" {
 }
 
 variable "engine_version" {
-  description = "PostgreSQL version. \"16\" lets RDS pick the newest minor; auto_minor_version_upgrade then keeps it current in the maintenance window."
+  description = "PostgreSQL version. \"18\" lets RDS pick the newest minor; auto_minor_version_upgrade then keeps it current in the maintenance window."
   type        = string
-  default     = "16"
+  default     = "18"
 }
 
 variable "instance_class" {

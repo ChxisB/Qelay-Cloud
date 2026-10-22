@@ -3,7 +3,7 @@ export const EMBEDDED_CONFIG = `{
     "qelay": {
       "command": "bun",
       "args": ["/absolute/path/qelay-mcp-runtime/node_modules/.bin/qelay-mcp"],
-      "env": { "DATA_PATH": "./data/bunq.db" }
+      "env": { "DATA_PATH": "./data/qelay.db" }
     }
   }
 }`;

@@ -29,11 +29,7 @@ import {
   useClampedPage as useClampedPageCron,
   useTransientFlag,
 } from '../src/pages/control/CronManager';
-import {
-  buildWebhookBody,
-  displayWebhookUrl,
-  useClampedPage as useClampedPageHooks,
-} from '../src/pages/control/Webhooks';
+import { buildWebhookBody, displayWebhookUrl } from '../src/pages/control/webhooks/model';
 import { renderHook, settle } from './domSetup';
 
 const cronValues = (overrides: Partial<CronFormValues> = {}): CronFormValues => ({
@@ -95,7 +91,6 @@ export {
   specWouldDropValues,
   test,
   useClampedPageCron,
-  useClampedPageHooks,
   useTransientFlag,
   validateBulkItems,
 };

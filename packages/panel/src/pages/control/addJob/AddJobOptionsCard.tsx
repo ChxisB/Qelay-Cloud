@@ -1,7 +1,16 @@
+import { useState } from 'react';
 import { Card, CardHeader } from '@/components/ui/Card';
-import { Field, Input, Select, Toggle } from '@/components/ui/form';
+import { Disclosure } from '@/components/ui/Disclosure';
+import { Field, Input, Select } from '@/components/ui/form';
+import { AddJobAdvanced } from './AddJobAdvanced';
+import { NumberField, TextField, ToggleRow } from './AddJobFields';
 import type { AddJobFormValues, SetAddJobValue } from './formModel';
-import { MAX_DELAY_MS, MAX_DURATION_MS, MAX_GROUP_PRIORITY } from './options';
+import { MAX_DELAY_MS, MAX_DURATION_MS, MAX_GROUP_PRIORITY, OPTION_LABELS } from './options';
+
+// Sized by the card, not the viewport: at lg the two cards sit side by side and each is narrow.
+const FIELD_GRID = 'grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-4';
+
+const filled = (...fields: Array<string | boolean>) => fields.some(Boolean);
 
 export function AddJobOptionsCard({
   values,
@@ -10,22 +19,50 @@ export function AddJobOptionsCard({
   values: AddJobFormValues;
   setValue: SetAddJobValue;
 }) {
+  const grouped = Boolean(values.groupId.trim());
+  // A job cloned with these set must show them, so each block starts open only when it has something in it.
+  const [moreOpen] = useState(() =>
+    filled(
+      values.backoff,
+      values.backoffType,
+      values.timeout,
+      values.ttl,
+      values.jobId,
+      values.removeOnComplete,
+      values.removeOnFail,
+      values.lifo
+    )
+  );
+  const [advancedOpen] = useState(() =>
+    filled(
+      values.tags,
+      values.groupId,
+      values.groupMaxSize,
+      values.uniqueKey,
+      values.dependsOn,
+      values.repeatText
+    )
+  );
   return (
     <Card>
-      <CardHeader title="Options" />
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+      <CardHeader
+        title="Options"
+        sub="All optional. Leave a box empty to use the server's default."
+      />
+      <div className={FIELD_GRID}>
         <NumberField
-          label={values.groupId.trim() ? 'Group priority' : 'Priority'}
-          hint={values.groupId.trim() ? '0 is highest within this group' : undefined}
+          label={grouped ? 'Group priority' : 'Priority'}
+          hint={grouped ? '0 is highest within this group' : undefined}
           name="priority"
           value={values.priority}
-          min={values.groupId.trim() ? 0 : -1_000_000}
-          max={values.groupId.trim() ? MAX_GROUP_PRIORITY : 1_000_000}
+          min={grouped ? 0 : -1_000_000}
+          max={grouped ? MAX_GROUP_PRIORITY : 1_000_000}
           placeholder="0"
           onChange={(value) => setValue('priority', value)}
         />
         <NumberField
-          label="Delay (ms)"
+          label={OPTION_LABELS.delay}
+          hint="In milliseconds. 60000 is one minute."
           name="delay"
           value={values.delay}
           min={0}
@@ -37,9 +74,7 @@ export function AddJobOptionsCard({
         <Field
           label="Run at"
           hint={
-            values.runAt.trim()
-              ? 'Overrides Delay — derived from this time (local time).'
-              : '(local time)'
+            values.runAt.trim() ? 'Your local time. This replaces the wait.' : 'Your local time.'
           }
         >
           <Input
@@ -50,8 +85,7 @@ export function AddJobOptionsCard({
           />
         </Field>
         <NumberField
-          label="Max attempts"
-          hint="blank = server default"
+          label={OPTION_LABELS.maxAttempts}
           name="max-attempts"
           value={values.maxAttempts}
           min={1}
@@ -59,235 +93,86 @@ export function AddJobOptionsCard({
           placeholder="3"
           onChange={(value) => setValue('maxAttempts', value)}
         />
-        <NumberField
-          label="Backoff (ms)"
-          hint="blank = server default"
-          name="backoff"
-          value={values.backoff}
-          min={0}
-          max={MAX_DURATION_MS}
-          placeholder="1000"
-          onChange={(value) => setValue('backoff', value)}
-        />
-        <Field label="Backoff strategy" hint="flat delay unless set">
-          <Select
-            name="backoff-strategy"
-            value={values.backoffType}
-            onChange={(event) =>
-              setValue('backoffType', event.target.value as AddJobFormValues['backoffType'])
-            }
-          >
-            <option value="">flat</option>
-            <option value="fixed">fixed</option>
-            <option value="exponential">exponential</option>
-          </Select>
-        </Field>
-        <NumberField
-          label="Timeout (ms)"
-          name="timeout"
-          value={values.timeout}
-          min={0}
-          max={MAX_DURATION_MS}
-          placeholder="—"
-          onChange={(value) => setValue('timeout', value)}
-        />
-        <NumberField
-          label="TTL (ms)"
-          hint="blank = no expiry"
-          name="ttl"
-          value={values.ttl}
-          min={0}
-          max={MAX_DELAY_MS}
-          placeholder="—"
-          onChange={(value) => setValue('ttl', value)}
-        />
-        <Field label="Custom job ID">
-          <Input
+      </div>
+      <Disclosure
+        summary="More options"
+        className="mt-4 border-t border-line pt-2"
+        defaultOpen={moreOpen}
+      >
+        <div className={FIELD_GRID}>
+          <NumberField
+            label={OPTION_LABELS.backoff}
+            hint="In milliseconds."
+            name="backoff"
+            value={values.backoff}
+            min={0}
+            max={MAX_DURATION_MS}
+            placeholder="1000"
+            onChange={(value) => setValue('backoff', value)}
+          />
+          <Field label={OPTION_LABELS.backoffType}>
+            <Select
+              name="backoff-strategy"
+              value={values.backoffType}
+              onChange={(event) =>
+                setValue('backoffType', event.target.value as AddJobFormValues['backoffType'])
+              }
+            >
+              <option value="">Default (flat)</option>
+              <option value="fixed">Fixed</option>
+              <option value="exponential">Exponential (grows each time)</option>
+            </Select>
+          </Field>
+          <NumberField
+            label={OPTION_LABELS.timeout}
+            hint="In milliseconds. Empty is no limit."
+            name="timeout"
+            value={values.timeout}
+            min={0}
+            max={MAX_DURATION_MS}
+            placeholder="—"
+            onChange={(value) => setValue('timeout', value)}
+          />
+          <NumberField
+            label={OPTION_LABELS.ttl}
+            hint="In milliseconds. Empty is never."
+            name="ttl"
+            value={values.ttl}
+            min={0}
+            max={MAX_DELAY_MS}
+            placeholder="—"
+            onChange={(value) => setValue('ttl', value)}
+          />
+          <TextField
+            label="Your own job ID"
+            hint="Optional. Use it to avoid adding the same job twice."
             name="custom-job-id"
             value={values.jobId}
-            onChange={(event) => setValue('jobId', event.target.value)}
             placeholder="idempotency key"
+            onChange={(value) => setValue('jobId', value)}
           />
-        </Field>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-6">
-        <ToggleRow
-          label="removeOnComplete"
-          checked={values.removeOnComplete}
-          onChange={(checked) => setValue('removeOnComplete', checked)}
-        />
-        <ToggleRow
-          label="removeOnFail"
-          checked={values.removeOnFail}
-          onChange={(checked) => setValue('removeOnFail', checked)}
-        />
-        <ToggleRow
-          label="durable"
-          checked={values.durable}
-          onChange={(checked) => setValue('durable', checked)}
-        />
-        <ToggleRow
-          label="lifo"
-          checked={values.lifo}
-          onChange={(checked) => setValue('lifo', checked)}
-        />
-      </div>
-      <AdvancedOptions values={values} setValue={setValue} />
-    </Card>
-  );
-}
-
-function AdvancedOptions({
-  values,
-  setValue,
-}: {
-  values: AddJobFormValues;
-  setValue: SetAddJobValue;
-}) {
-  return (
-    <div className="mt-4 border-t border-line pt-4">
-      <div className="mb-3 text-[11px] uppercase tracking-wider text-faint">Advanced</div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-        <TextField
-          label="Tags"
-          hint="comma-separated"
-          name="tags"
-          value={values.tags}
-          placeholder="email, urgent"
-          onChange={(value) => setValue('tags', value)}
-        />
-        <TextField
-          label="Group ID"
-          name="group-id"
-          value={values.groupId}
-          placeholder="—"
-          onChange={(value) => setValue('groupId', value)}
-        />
-        <NumberField
-          label="Group max size"
-          hint="Atomic pending-job cap (2.9.3)"
-          name="group-max-size"
-          value={values.groupMaxSize}
-          min={1}
-          max={Number.MAX_SAFE_INTEGER}
-          placeholder="—"
-          onChange={(value) => setValue('groupMaxSize', value)}
-        />
-        <TextField
-          label="Unique key"
-          hint="dedup key"
-          name="unique-key"
-          value={values.uniqueKey}
-          placeholder="—"
-          onChange={(value) => setValue('uniqueKey', value)}
-        />
-        <TextField
-          label="Depends on"
-          hint="parent job ids, comma-separated"
-          name="depends-on"
-          value={values.dependsOn}
-          placeholder="job-id-1, job-id-2"
-          onChange={(value) => setValue('dependsOn', value)}
-        />
-        <div className="col-span-2 md:col-span-3">
-          <Field
-            label="Repeat policy (JSON)"
-            hint='v2.9.3-safe form: e.g. {"every":60000,"limit":10}. Use Cron Manager for cron patterns.'
-          >
-            <textarea
-              name="repeat-policy"
-              value={values.repeatText}
-              onChange={(event) => setValue('repeatText', event.target.value)}
-              rows={2}
-              spellCheck={false}
-              placeholder='{"every": 60000}'
-              className="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-xs text-fg placeholder:text-faint focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
-            />
-          </Field>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function TextField({
-  label,
-  hint,
-  name,
-  value,
-  placeholder,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  name: string;
-  value: string;
-  placeholder: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Field label={label} hint={hint}>
-      <Input
-        name={name}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-      />
-    </Field>
-  );
-}
-
-function NumberField({
-  label,
-  hint,
-  name,
-  value,
-  min,
-  max,
-  placeholder,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  name: string;
-  value: string;
-  min: number;
-  max: number;
-  placeholder: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Field label={label} hint={hint}>
-      <Input
-        type="number"
-        min={min}
-        max={max}
-        step={1}
-        name={name}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        disabled={disabled}
-      />
-    </Field>
-  );
-}
-
-function ToggleRow({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <Toggle checked={checked} onChange={onChange} label={label} />
-      <span className="font-mono text-xs text-muted">{label}</span>
-    </div>
+        <div className="mt-4 flex flex-col gap-1">
+          <ToggleRow
+            label="Delete it when it finishes"
+            checked={values.removeOnComplete}
+            onChange={(checked) => setValue('removeOnComplete', checked)}
+          />
+          <ToggleRow
+            label="Delete it if it fails"
+            checked={values.removeOnFail}
+            onChange={(checked) => setValue('removeOnFail', checked)}
+          />
+          <ToggleRow
+            label="Run the newest first"
+            checked={values.lifo}
+            onChange={(checked) => setValue('lifo', checked)}
+          />
+        </div>
+        <div className="mt-2 border-t border-line pt-2">
+          <AddJobAdvanced values={values} setValue={setValue} defaultOpen={advancedOpen} />
+        </div>
+      </Disclosure>
+    </Card>
   );
 }

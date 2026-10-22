@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { formatNumber } from '../src/lib/format';
 import { Benchmark } from '../src/pages/control/Benchmark';
 import { percentile } from '../src/pages/control/benchmark/engine';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 
 // Regression tests for the benchmark audit fixes. Each one fails against the
@@ -13,11 +15,15 @@ import { ensureDom, settle } from './domSetup';
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window?.confirm;
+let asked: ReturnType<typeof answerConfirms>;
+
+beforeEach(() => {
+  asked = answerConfirms();
+});
 
 afterEach(() => {
   globalThis.fetch = realFetch;
-  if (realConfirm) globalThis.window.confirm = realConfirm;
+  asked.stop();
   useConnectionStore.setState({ baseUrl: '/api', token: '' });
 });
 
@@ -33,7 +39,7 @@ function renderBenchmark(): Rendered {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
-  act(() => root.render(createElement(Benchmark)));
+  act(() => root.render(createElement(MemoryRouter, null, createElement(Benchmark))));
   return {
     container,
     unmount: () => {
@@ -121,7 +127,6 @@ describe('engine.percentile — nearest rank', () => {
 describe('Benchmark — Clean queue verification', () => {
   test('a failed per-state clean is reported as unverified, not as "0 jobs remain"', async () => {
     useConnectionStore.setState({ baseUrl: 'http://srv', token: '' });
-    globalThis.window.confirm = () => true;
     // 'waiting' clean fails; the rest succeed; counts then still shows 5000 waiting.
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -155,7 +160,6 @@ describe('Benchmark — Clean queue verification', () => {
 
   test('leftover jobs after a clean that reported success are surfaced', async () => {
     useConnectionStore.setState({ baseUrl: 'http://srv', token: '' });
-    globalThis.window.confirm = () => true;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/clean')) return json({ ok: true, count: 0 });
@@ -183,7 +187,6 @@ describe('Benchmark — Clean queue verification', () => {
 
   test('a genuinely empty queue still reports the green success', async () => {
     useConnectionStore.setState({ baseUrl: 'http://srv', token: '' });
-    globalThis.window.confirm = () => true;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/clean')) return json({ ok: true, count: 12 });
@@ -211,7 +214,6 @@ describe('Benchmark — Clean queue verification', () => {
 describe('Benchmark — Run/Clean interlock', () => {
   test('Run benchmark is disabled while a clean is in flight', async () => {
     useConnectionStore.setState({ baseUrl: 'http://srv', token: '' });
-    globalThis.window.confirm = () => true;
     let releaseClean: (() => void) | null = null;
     const cleanGate = new Promise<void>((resolve) => {
       releaseClean = resolve;

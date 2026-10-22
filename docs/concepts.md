@@ -30,6 +30,26 @@ Three consequences you will meet:
 - **The cloud dead-letter queue holds poison bells only.** It is a metric to alert on, never a place to replay from. A job
   that failed for good is in Qelay's own dead-letter queue, a row you can list in the panel.
 
+### The same things, in plain words
+
+The design, the runbooks and the API say **doorbell**, **tick** and **broker**. The panel says the same things in plainer
+words, so someone who has never read the design can follow it.
+
+| Panel says | Design and API say | What it is |
+| --- | --- | --- |
+| **Worker notification** | doorbell, bell | A message that tells workers "a job may be ready". It carries no job data. |
+| **Ready to run** | claimable | A job a worker could take now: waiting (priority or not), or delayed and due. |
+| **Not notified** | no doorbell, not rung (`notRung`) | A job that is ready to run but whose worker notification was never sent. |
+| **Queue service** | broker, transport | Google Pub/Sub or Amazon SQS, whichever carries the notifications. |
+| **Picked up** | in flight | A notification a worker has taken and not yet confirmed. |
+| **Failed notifications** | poison doorbells, the broker's dead-letter queue | Notifications the queue service gave up delivering. The jobs are safe in Postgres. |
+| **Maintenance** | tick | The recurring run that repairs stuck work, fires cron, promotes delayed jobs and re-sends lost notifications. |
+| **Job delivery** (page) | Transport (`/transport`) | The page that sets the database's figures beside the queue service's. |
+
+The panel's **Dead Letter Queue** page is different: it lists jobs that used up their attempts, a row in Postgres. Failed
+notifications are only the queue service's note that it could not wake a worker. API routes, field names, metric names and
+alert names keep the design's words.
+
 ## A job's life
 
 ```
@@ -93,6 +113,14 @@ one tick interval, and a crashed worker's job is claimable again within its leas
   are rows in Postgres behind a version fence, and each step is an ordinary job on one internal queue, so it rides the same
   claim, retry and bell path. The Control API holds no workflow definitions and runs no engine: workers announce the
   definitions they serve and an operator action is a version-checked write followed by a job a worker executes.
+
+The panel shows both on **one Flows page**, because both are "things that run in order"; the two engines underneath stay
+separate. Every flow could be written as a workflow, not the other way round, and merging the engines would rewrite the
+flow's one-transaction write for nothing the page needs.
+
+"When this event happens, do that" is neither: it is a **route** of the [event gateway](event-gateway.md), from one
+queue's job events to a URL or to a job in another queue. It is opt-in per route (an event with no route does
+nothing), and a route that starts a workflow is a queue route whose worker calls `startWorkflow`.
 
 ## Namespaces, queues and the panel
 

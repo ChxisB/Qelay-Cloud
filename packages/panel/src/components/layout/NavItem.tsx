@@ -1,42 +1,35 @@
-import { NavLink } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/cn';
-import type { NavItemDef } from './navConfig';
+import { startPageTransition } from '@/lib/pageTransition';
+import { stagger } from '@/lib/stagger';
+import { type NavItemDef, isNavCurrent } from './navConfig';
+import { NavIcon } from './NavIcon';
 
 /**
- * Shared row geometry for sidebar links and the footer theme toggle: 36px tall, 10px radius,
- * 14px / 500, icon 18px. Hover and focus are the same everywhere in the shell.
+ * One sidebar link: a 32px row. The current page is a coral wash, a heavier label and a
+ * coral icon, and `aria-current` is set, so colour is never the only signal. An item that
+ * stands for several pages (`also`) is current on each of them, which `NavLink` cannot say.
+ * Where the sidebar measures the row, one shared highlight slides to it and the row's own wash is
+ * dropped (motion.css); `index` is its place in a group that has just opened.
  */
-export const NAV_ROW =
-  'flex h-9 w-full items-center gap-3 rounded-control px-3 text-sm font-medium text-muted transition-colors ' +
-  'hover:bg-hover hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
-
-export function NavItem({ to, label, icon: Icon, end }: NavItemDef) {
+export function NavItem({ index, ...item }: NavItemDef & { index?: number }) {
+  const { pathname } = useLocation();
+  const isActive = isNavCurrent(item, pathname);
   return (
-    <NavLink
-      to={to}
-      end={end}
-      className={({ isActive }) =>
-        cn(
-          NAV_ROW,
-          'relative',
-          // Active: filled row, 600 weight, and a violet bar on the left edge. In light mode the
-          // fill is white with a 1px line so the row still reads on the grey sidebar.
-          isActive && 'bg-hover font-semibold text-fg light:bg-surface light:ring-1 light:ring-line'
-        )
-      }
-    >
-      {({ isActive }) => (
-        <>
-          {isActive && (
-            <span
-              aria-hidden="true"
-              className="absolute inset-y-2 left-0 w-[3px] rounded-[2px] bg-ring"
-            />
-          )}
-          <Icon className="size-[18px] shrink-0" />
-          <span className="truncate">{label}</span>
-        </>
+    <Link
+      to={item.to}
+      aria-current={isActive ? 'page' : undefined}
+      onClick={(event) => startPageTransition(event, isActive)}
+      style={index === undefined ? undefined : stagger(index)}
+      className={cn(
+        'relative flex min-h-8 items-center gap-2.5 rounded-control px-2.5 text-sm transition-colors duration-(--duration-hover) ease-settle',
+        isActive
+          ? 'bg-selected font-semibold text-fg'
+          : 'font-medium text-muted hover:bg-hover hover:text-fg'
       )}
-    </NavLink>
+    >
+      <NavIcon d={item.icon} className={cn('size-4', isActive && 'text-hl')} />
+      <span className="truncate">{item.label}</span>
+    </Link>
   );
 }

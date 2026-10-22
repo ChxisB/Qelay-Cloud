@@ -1,15 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { act, createElement } from 'react';
-import { createRoot } from 'react-dom/client';
-import { MemoryRouter } from 'react-router-dom';
+import { act } from 'react';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import type { QueueOperationsRepository } from '../src/features/queue-operations/application/QueueOperationsRepository';
-import { QueueOperationsPanel } from '../src/features/queue-operations/ui/QueueOperationsPanel';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 import { repositoryOf } from './queue-operations-ui.repository';
+import {
+  button,
+  click,
+  input,
+  mounted,
+  panel,
+  render,
+  setValue,
+} from './queue-operations-ui.support';
 
-const mounted = new Set<() => void>();
-let originalConfirm: typeof window.confirm;
+let asked: ReturnType<typeof answerConfirms>;
 let originalConnection: ReturnType<typeof useConnectionStore.getState>;
 
 beforeEach(() => {
@@ -21,13 +27,12 @@ beforeEach(() => {
     token: '',
     agentToken: '',
   });
-  originalConfirm = window.confirm;
-  window.confirm = () => true;
+  asked = answerConfirms();
 });
 
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
-  window.confirm = originalConfirm;
+  asked.stop();
   useConnectionStore.setState(originalConnection, true);
 });
 
@@ -105,6 +110,33 @@ describe('Queue SDK operations UI', () => {
     expect(calls).toContain('remove:orders:invoice:7');
     expect(calls).toContain('metrics:orders:completed:0:29');
     expect(calls).toContain('trim:orders:1000');
+    expect(asked.questions).toEqual([
+      { question: 'Remove the deduplication key?', confirmLabel: 'Remove key', danger: true },
+      { question: 'Trim the lifecycle journal?', confirmLabel: 'Trim journal', danger: true },
+    ]);
+  });
+
+  test('removes no key and trims no journal when the question is answered no', async () => {
+    asked.stop();
+    asked = answerConfirms(false);
+    const calls: string[] = [];
+    const { host } = render(panel({ queue: 'orders', repository: repositoryOf(calls) }));
+    await settle(10);
+    setValue(input(host, 'queue-sdk-deduplication-id'), 'invoice:7');
+    click(host, 'Find owner');
+    await settle(5);
+    click(host, 'Remove key');
+    await settle(5);
+    click(host, 'Read metrics');
+    await settle(5);
+    click(host, 'Trim journal');
+    await settle(5);
+    expect(asked.questions).toHaveLength(2);
+    expect(calls.some((call) => call.startsWith('remove:') || call.startsWith('trim:'))).toBe(
+      false
+    );
+    expect(host.textContent).not.toContain('Deduplication key removed');
+    expect(host.textContent).not.toContain('lifecycle events removed');
   });
 
   test('same-tick duplicate actions are suppressed by the shared UI mutex', async () => {
@@ -220,62 +252,3 @@ describe('Queue SDK operations UI', () => {
     expect(host.textContent).not.toContain('PausedYes');
   });
 });
-
-function panel(properties: Parameters<typeof QueueOperationsPanel>[0]) {
-  return createElement(MemoryRouter, null, createElement(QueueOperationsPanel, properties));
-}
-
-function render(element: ReturnType<typeof createElement>) {
-  const host = document.createElement('div');
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  act(() => root.render(element));
-  const unmount = () => {
-    if (!mounted.delete(unmount)) return;
-    act(() => root.unmount());
-    host.remove();
-  };
-  mounted.add(unmount);
-  return {
-    host,
-    unmount,
-    rerender: (next: ReturnType<typeof createElement>) => act(() => root.render(next)),
-  };
-}
-
-function input(host: HTMLElement, name: string): HTMLInputElement {
-  const found = host.querySelector(`[name="${name}"]`);
-  if (!(found instanceof window.HTMLInputElement)) throw new Error(`Missing input ${name}`);
-  return found;
-}
-
-function setValue(element: HTMLInputElement, value: string): void {
-  act(() => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(
-      element,
-      value
-    );
-    const propsKey = Object.getOwnPropertyNames(element).find((key) =>
-      key.startsWith('__reactProps$')
-    );
-    const props = propsKey
-      ? ((element as unknown as Record<string, unknown>)[propsKey] as {
-          onChange?: (event: { target: HTMLInputElement; currentTarget: HTMLInputElement }) => void;
-        })
-      : null;
-    if (!props?.onChange) throw new Error('Controlled input has no React onChange handler');
-    props.onChange({ target: element, currentTarget: element });
-  });
-}
-
-function button(host: HTMLElement, text: string): HTMLButtonElement {
-  const found = [...host.querySelectorAll('button')].find((entry) =>
-    entry.textContent?.includes(text)
-  );
-  if (!found) throw new Error(`Missing button ${text}`);
-  return found;
-}
-
-function click(host: HTMLElement, text: string): void {
-  act(() => button(host, text).click());
-}

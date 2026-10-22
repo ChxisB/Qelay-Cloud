@@ -45,10 +45,10 @@ describe('brand copy guard', () => {
     expect(count(/Light Mode|Dark Mode/g)).toEqual({});
   });
 
-  test('the footer repo link points at the fork, not upstream', () => {
+  test('the footer links nowhere upstream and carries no install pitch', () => {
     const footer = readFileSync(join(SRC, 'components/layout/SidebarFooter.tsx'), 'utf8');
-    expect(footer).toContain("'https://github.com/ChxisB/qelay-control-panel'");
-    expect(footer).not.toContain('github.com/egeominotti');
+    expect(footer).not.toContain('github.com/');
+    expect(footer).not.toContain('bunx qelay-control-panel');
   });
 
   test('the assistant introduces itself as the Qelay assistant', () => {

@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import {
   act,
   clickText,
@@ -89,7 +90,9 @@ describe('Diagnostics — partial source failures stay explicit', () => {
       return Promise.resolve(json({ ok: false, error: 'unexpected request' }, 500));
     }) as typeof fetch;
 
-    const { container, unmount } = render(createElement(Diagnostics));
+    const { container, unmount } = render(
+      createElement(MemoryRouter, null, createElement(Diagnostics))
+    );
     await settle(10);
     const text = container.textContent ?? '';
     expect(text).toContain('Storage diagnostics unavailable — disk probe down');
@@ -122,7 +125,9 @@ describe('Diagnostics — ping is last-to-START-wins', () => {
       return Promise.resolve(json({ ok: true, data: {} }));
     }) as typeof fetch;
 
-    const { container, unmount } = render(createElement(Diagnostics));
+    const { container, unmount } = render(
+      createElement(MemoryRouter, null, createElement(Diagnostics))
+    );
     await settle(5);
 
     clickText(container, 'Ping'); // probe 1 — hangs

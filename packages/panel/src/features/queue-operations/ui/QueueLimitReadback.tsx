@@ -10,11 +10,11 @@ export function QueueLimitReadback({
   error: string;
 }) {
   if (loading && !snapshot) {
-    return <p className="text-sm text-muted">Reading broker limit state...</p>;
+    return <p className="text-[13px] text-muted">Reading broker limit state...</p>;
   }
   if (error && !snapshot) {
     return (
-      <p role="alert" className="text-sm text-danger">
+      <p role="alert" className="text-[13px] font-semibold text-danger">
         {error}
       </p>
     );
@@ -24,7 +24,7 @@ export function QueueLimitReadback({
   return (
     <div>
       {error && (
-        <p role="alert" className="mb-3 text-xs text-warning">
+        <p role="alert" className="mb-3 text-[13px] font-semibold text-warning">
           Refresh failed. Showing the last successful limit snapshot: {error}
         </p>
       )}
@@ -50,8 +50,8 @@ export function QueueLimitReadback({
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 border-l-2 border-line pl-3">
-      <dt className="text-[11px] font-medium text-faint">{label}</dt>
-      <dd className="mt-1 break-words font-mono text-sm text-fg">{value}</dd>
+      <dt className="text-[13px] font-semibold text-muted">{label}</dt>
+      <dd className="mt-1 break-words font-mono text-[13px] text-fg">{value}</dd>
     </div>
   );
 }

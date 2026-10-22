@@ -188,6 +188,17 @@ export function mountFlows(element: ReactElement, path = '/flows') {
   return { host, search: () => where.search, text: () => host.textContent ?? '', unmount };
 }
 
+/**
+ * The jobs of a flow start as a graph on a wide screen and as the list on a narrow one. The page tests that
+ * read the list (a tree with its keys) run narrow; a test of the graph sets a wide screen.
+ */
+export function setScreenWidth(width: number): void {
+  ensureDom();
+  (window as unknown as { happyDOM: { setViewport: (size: object) => void } }).happyDOM.setViewport(
+    { width, height: 800 }
+  );
+}
+
 export function connectTo(baseUrl = 'http://server-a.test'): void {
   useConnectionStore.setState({ baseUrl, token: 'flow-token', agentToken: '', refreshMs: 60_000 });
 }

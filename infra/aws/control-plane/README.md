@@ -57,7 +57,7 @@ additional_principal_arns = ["arn:aws:iam::<account id>:role/<name>-api-task"]
 
 with this root's `name`. The role does not exist when the data plane is applied, which is fine: a deny with an ARN condition
 holds for a role created later. If the ARN is missing or misspelled the API starts, `/health` answers, and every call to a
-queue is denied (the Transport page shows the error). A `check` in `main.tf` asserts, at plan time, that this root makes a
+queue is denied (the Job delivery page shows the error). A `check` in `main.tf` asserts, at plan time, that this root makes a
 role with exactly that name and the default path.
 
 ## Variables
@@ -84,7 +84,7 @@ role with exactly that name and the default path.
 | `shutdown_grace_seconds` | 8 | How long the API drains before it exits; the container's `stopTimeout` is this plus 10 s. |
 | `api_cpu`, `api_memory`, `panel_instances`, `panel_cpu`, `panel_memory`, `migrate_cpu`, `migrate_memory` | 512/1024, 2, 256/512, 512/1024 | Fargate sizes (valid pairs only). |
 | `extra_cors_origins`, `panel_csp_connect_extra` | `[]` | Exact origins beyond the panel's own: another front end calling the API; an AI provider the panel may connect to. |
-| `monitoring_read` | true | Let the API read the queues' CloudWatch metrics (`cloudwatch:GetMetricData`, the only wildcard resource). Off: ages on the Transport page are blank. |
+| `monitoring_read` | true | Let the API read the queues' CloudWatch metrics (`cloudwatch:GetMetricData`, the only wildcard resource). Off: ages on the Job delivery page are blank. |
 | `alert_api_errors`, `api_errors_per_minute` | true, 5 | The alarm on the API's own 5xx answers (target group), and how many a minute for five minutes make it fire. An unproven default; never seen to fire on a real account. |
 | `alarm_actions`, `runbook_base_url` | `[]`, `docs/runbooks` | Where the alarm notifies (empty: it shows state and tells nobody), and where its description's runbook link points. |
 | `fleet` | null | The workers' size, for the Deployment page's connection budget. Null: the page reports no fleet. |
@@ -211,7 +211,7 @@ Nothing here has been applied, and no AWS account was contacted (the lock file's
    timeout for 600 s, and that a rollover cuts streams only at the grace.
 4. **The API's queue access** through the data plane's deny policies: a deny that names a role ARN is assumed to admit a role
    created later, and `aws:PrincipalArn` of an assumed role is assumed to be the role's ARN. Both are unproven.
-5. **CloudWatch metric names and dimensions** the Transport page reads (`ApproximateAgeOfOldestMessage`, the queue-name
+5. **CloudWatch metric names and dimensions** the Job delivery page reads (`ApproximateAgeOfOldestMessage`, the queue-name
    dimension), and how long they lag (about five minutes).
 6. **The RDS CA bundle** (region bundle by value, ≤ 16,000 characters) against a real instance, and, behind RDS Proxy, the
    bundle with the Amazon roots added.

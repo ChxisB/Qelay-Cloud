@@ -1,5 +1,5 @@
 import { Card, CardHeader } from '@/components/ui/Card';
-import { Field, Input } from '@/components/ui/form';
+import { Field, Input, Textarea } from '@/components/ui/form';
 import { MAX_JOB_DATA_CHARS, parseJobData } from './data';
 import type { AddJobFormValues, SetAddJobValue } from './formModel';
 
@@ -22,7 +22,7 @@ export function AddJobCard({
 }) {
   return (
     <Card>
-      <CardHeader title="Job" />
+      <CardHeader title="Job" sub="Which queue gets the job, and the data it carries." />
       <div className="flex flex-col gap-4">
         <Field label="Queue">
           <Input
@@ -42,7 +42,7 @@ export function AddJobCard({
         </Field>
         <Field
           label="Job name"
-          hint="Worker routing name in Qelay; separate from the JSON payload."
+          hint="Workers can pick jobs by this name. It is not part of the data."
         >
           <Input
             name="job-name"
@@ -54,40 +54,45 @@ export function AddJobCard({
           />
         </Field>
         {queueDiscoveryError && (
-          <p role="status" className="-mt-2 text-xs text-warning">
+          <p role="status" className="-mt-2 text-[13px] font-semibold text-warning">
             Existing queue suggestions unavailable — {queueDiscoveryError.message}. You can still
             enter a queue name manually.{' '}
             <button
               type="button"
               onClick={onRetryQueues}
-              className="font-medium underline underline-offset-2 hover:text-fg"
+              className="font-bold underline underline-offset-2 hover:text-fg"
             >
               Retry
             </button>
           </p>
         )}
-        <div>
-          <Field label="Data (JSON)">
-            <textarea
-              name="job-data"
-              value={values.dataText}
-              onChange={(event) => setValue('dataText', event.target.value)}
-              onBlur={() => {
-                const parsed = parseJobData(values.dataText);
-                setJsonError(parsed.ok ? null : parsed.msg);
-              }}
-              maxLength={MAX_JOB_DATA_CHARS}
-              spellCheck={false}
-              rows={7}
-              className="w-full rounded-lg border border-line bg-surface-2 p-3 font-mono text-sm text-fg focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
-            />
-          </Field>
+        <Field
+          label="Data (JSON)"
+          hint="The information the worker receives, written as JSON."
+          htmlFor="job-data"
+        >
+          <Textarea
+            id="job-data"
+            name="job-data"
+            value={values.dataText}
+            onChange={(event) => setValue('dataText', event.target.value)}
+            onBlur={() => {
+              const parsed = parseJobData(values.dataText);
+              setJsonError(parsed.ok ? null : parsed.msg);
+            }}
+            maxLength={MAX_JOB_DATA_CHARS}
+            spellCheck={false}
+            rows={9}
+            aria-invalid={jsonError ? true : undefined}
+            aria-describedby={jsonError ? 'job-data-error' : undefined}
+            className="font-mono text-[13px] leading-relaxed"
+          />
           {jsonError && (
-            <p role="alert" className="mt-2 text-xs text-danger">
+            <p id="job-data-error" role="alert" className="text-[12px] font-semibold text-danger">
               {jsonError}
             </p>
           )}
-        </div>
+        </Field>
       </div>
     </Card>
   );

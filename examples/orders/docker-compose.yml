@@ -7,7 +7,7 @@
 #   docker compose -f examples/orders/docker-compose.yml down -v
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     ports:
       - '127.0.0.1:55452:5432'
     environment:

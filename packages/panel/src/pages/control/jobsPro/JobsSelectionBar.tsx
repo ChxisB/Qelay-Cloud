@@ -21,7 +21,11 @@ export function JobsSelectionBar({
   onClear: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 rounded-control border border-ring/35 bg-selected px-3.5 py-2.5">
+    <div
+      role="group"
+      aria-label="Selected jobs"
+      className="motion-drop flex flex-wrap items-center gap-x-3.5 gap-y-2.5 rounded-control border border-ring/35 bg-selected px-3.5 py-2.5"
+    >
       <span className="text-[13px] font-semibold tnum">
         {selectionLabel(selectedVisible, selectedTotal)}
       </span>

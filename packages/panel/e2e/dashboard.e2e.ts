@@ -1,11 +1,12 @@
-import type { Dialog, Page } from '@playwright/test';
 import { E2E_APP_URL, E2E_BASE_PATH, E2E_ORIGIN, E2E_SERVER_TOKEN } from './config';
 import {
+  answerQuestion,
   control,
   expect,
   expectAccessible,
   expectNoBrowserErrors,
   openAuthentication,
+  openCreateForm,
   test,
   unlockDashboard,
 } from './fixtures';
@@ -49,18 +50,22 @@ test('authenticates, keeps every route under BASE_PATH, and navigates the full s
     );
   // Server control, the SQLite database, S3 backup and fleet are not part of this deployment, so
   // they are not in the sidebar. Flows, webhooks and workflows are: the store supports them.
-  expect(hrefs.length).toBeGreaterThan(15);
+  expect(hrefs.length).toBeGreaterThan(10);
+  // Health opens Deployment; System opens the first of its pages this deployment has (the MCP bridge).
+  expect(hrefs).toContain(`${E2E_BASE_PATH}/deployment`);
+  expect(hrefs).toContain(`${E2E_BASE_PATH}/mcp`);
   for (const closed of ['/server', '/database', '/s3', '/fleet']) {
     expect(hrefs).not.toContain(`${E2E_BASE_PATH}${closed}`);
   }
-  expect(hrefs).toContain(`${E2E_BASE_PATH}/workflows`);
+  expect(hrefs).toContain(`${E2E_BASE_PATH}/flows`);
+  expect(hrefs).not.toContain(`${E2E_BASE_PATH}/workflows`);
   expect(hrefs.every((href) => href.startsWith(E2E_BASE_PATH))).toBe(true);
 
   for (const href of [...new Set(hrefs)]) {
     await page.locator(`#app-nav nav a[href="${href}"]`).click();
     await expect(page).toHaveURL(`${E2E_ORIGIN}${href}`);
     await expect(page.locator('#main h1').first()).toBeVisible();
-    await expect(page.getByText('This page does not exist.')).toHaveCount(0);
+    await expect(page.getByText('That page does not exist')).toHaveCount(0);
   }
 
   expectNoBrowserErrors(browserErrors);
@@ -97,40 +102,36 @@ test('requires confirmation before creating and deleting a real cron', async ({
   browserErrors,
 }, testInfo) => {
   await unlockDashboard(page);
-  await page.locator('#app-nav').getByRole('link', { name: 'Cron Jobs' }).click();
-  await expect(page.getByRole('heading', { name: 'Cron Manager' })).toBeVisible();
+  await page.locator('#app-nav').getByRole('link', { name: 'Cron jobs' }).click();
+  await expect(page.getByRole('heading', { name: 'Cron jobs' })).toBeVisible();
 
+  await openCreateForm(page, 'New schedule');
   const cronName = `browser-e2e-${testInfo.project.name}-${testInfo.retry}`;
   const queueName = `cron-${testInfo.project.name}-${testInfo.retry}`;
   await page.getByLabel('Name', { exact: true }).fill(cronName);
   await page.getByLabel('Queue', { exact: true }).fill(queueName);
   await page.getByLabel('Cron expression').fill('0 9 * * *');
 
-  const submit = page.getByRole('button', { name: 'Submit upsert' });
-  await answerConfirmation(
-    page,
-    () => submit.click(),
-    'dismiss',
-    `Submit an upsert for cron "${cronName}"`
-  );
+  const submit = page.getByRole('button', { name: 'Create schedule' });
+  const createQuestion = `Create the schedule "${cronName}"?`;
+  await submit.click();
+  await answerQuestion(page, createQuestion, 'dismiss', 'Create schedule');
   await expect(page.getByRole('row').filter({ hasText: cronName })).toHaveCount(0);
 
   const created = page.waitForResponse(
     (response) =>
       response.url() === `${E2E_APP_URL}/api/crons` && response.request().method() === 'POST'
   );
-  await answerConfirmation(
-    page,
-    () => submit.click(),
-    'accept',
-    `Submit an upsert for cron "${cronName}"`
-  );
+  await submit.click();
+  await answerQuestion(page, createQuestion, 'accept', 'Create schedule');
   expect((await created).ok()).toBe(true);
   const row = page.getByRole('row').filter({ hasText: cronName });
   await expect(row).toBeVisible();
 
   const remove = row.getByRole('button', { name: `Delete cron ${cronName}` });
-  await answerConfirmation(page, () => remove.click(), 'dismiss', `Delete cron "${cronName}"`);
+  const deleteQuestion = `Delete cron "${cronName}"?`;
+  await remove.click();
+  await answerQuestion(page, deleteQuestion, 'dismiss', 'Delete cron');
   await expect(row).toBeVisible();
 
   const deleted = page.waitForResponse(
@@ -138,7 +139,8 @@ test('requires confirmation before creating and deleting a real cron', async ({
       response.url() === `${E2E_APP_URL}/api/crons/${cronName}` &&
       response.request().method() === 'DELETE'
   );
-  await answerConfirmation(page, () => remove.click(), 'accept', `Delete cron "${cronName}"`);
+  await remove.click();
+  await answerQuestion(page, deleteQuestion, 'accept', 'Delete cron');
   expect((await deleted).ok()).toBe(true);
   await expect(row).toHaveCount(0);
   expectNoBrowserErrors(browserErrors);
@@ -152,12 +154,12 @@ test('has no automated WCAG A/AA violations in critical states', async ({
   await expectAccessible(page, testInfo, 'authentication');
   await page.getByLabel('Bearer token').fill(E2E_SERVER_TOKEN);
   await page.getByRole('button', { name: 'Unlock' }).click();
-  await expect(page.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
   await expectAccessible(page, testInfo, 'overview');
 
   const criticalRoutes = [
     ['Queues', 'Queues'],
-    ['Cron Jobs', 'Cron Manager'],
+    ['Cron jobs', 'Cron jobs'],
     ['Settings', 'Settings'],
   ] as const;
   for (const [linkName, heading] of criticalRoutes) {
@@ -171,23 +173,3 @@ test('has no automated WCAG A/AA violations in critical states', async ({
 
   expectNoBrowserErrors(browserErrors);
 });
-
-async function answerConfirmation(
-  page: Page,
-  action: () => Promise<void>,
-  answer: 'accept' | 'dismiss',
-  expectedMessage: string
-): Promise<void> {
-  const dialogPromise = page.waitForEvent('dialog');
-  const actionPromise = action();
-  const dialog = await dialogPromise;
-  expect(dialog.type()).toBe('confirm');
-  expect(dialog.message()).toContain(expectedMessage);
-  await settleDialog(dialog, answer);
-  await actionPromise;
-}
-
-async function settleDialog(dialog: Dialog, answer: 'accept' | 'dismiss'): Promise<void> {
-  if (answer === 'accept') await dialog.accept();
-  else await dialog.dismiss();
-}

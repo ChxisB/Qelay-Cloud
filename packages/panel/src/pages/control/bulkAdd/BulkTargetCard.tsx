@@ -1,6 +1,9 @@
+import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Field, Input } from '@/components/ui/form';
+import { NumberField } from '../addJob/AddJobFields';
+import { OPTION_LABELS } from '../addJob/options';
 import { MAX_DURATION_MS, MAX_JOBS } from './constants';
 import type { BulkFormValues, BulkResult, SetBulkFormValue } from './formTypes';
 
@@ -31,7 +34,7 @@ export function BulkTargetCard({
 }) {
   return (
     <Card>
-      <CardHeader title="Target & defaults" />
+      <CardHeader title="Send to" sub="Pick the queue the jobs go into." />
       <div className="flex flex-col gap-4">
         <Field label="Queue">
           <Input
@@ -50,20 +53,23 @@ export function BulkTargetCard({
           </datalist>
         </Field>
         {queueDiscoveryError && (
-          <p role="status" className="-mt-2 text-xs text-warning">
+          <p role="status" className="-mt-2 text-[13px] font-semibold text-warning">
             Existing queue suggestions unavailable — {queueDiscoveryError.message}. You can still
             enter a queue name manually.{' '}
             <button
               type="button"
               onClick={onRetryQueues}
-              className="font-medium underline underline-offset-2 hover:text-fg"
+              className="font-bold underline underline-offset-2 hover:text-fg"
             >
               Retry
             </button>
           </p>
         )}
-        <p className="-mt-2 text-xs text-faint">Defaults below fill any field an item omits.</p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="border-t border-line pt-4">
+          <h3 className="text-[13px] font-bold text-fg">Defaults for every job</h3>
+          <p className="mt-1 text-[13px] text-muted">Used when a job does not set its own.</p>
+        </div>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-4">
           <NumberField
             label="Priority"
             name="default-priority"
@@ -74,7 +80,7 @@ export function BulkTargetCard({
             onChange={(value) => setValue('priority', value)}
           />
           <NumberField
-            label="Max attempts"
+            label={OPTION_LABELS.maxAttempts}
             name="default-max-attempts"
             value={values.maxAttempts}
             min={1}
@@ -83,7 +89,8 @@ export function BulkTargetCard({
             onChange={(value) => setValue('maxAttempts', value)}
           />
           <NumberField
-            label="Backoff (ms)"
+            label={OPTION_LABELS.backoff}
+            hint="In milliseconds."
             name="default-backoff"
             value={values.backoff}
             min={0}
@@ -92,7 +99,8 @@ export function BulkTargetCard({
             onChange={(value) => setValue('backoff', value)}
           />
           <NumberField
-            label="Timeout (ms)"
+            label={OPTION_LABELS.timeout}
+            hint="In milliseconds."
             name="default-timeout"
             value={values.timeout}
             min={0}
@@ -117,47 +125,14 @@ export function BulkTargetCard({
           </Button>
         </div>
         {result && (
-          <span
-            role={result.ok ? 'status' : 'alert'}
-            className={result.ok ? 'text-sm text-success' : 'text-sm text-danger'}
+          <Banner
+            tone={result.ok ? 'ok' : 'problem'}
+            title={result.ok ? 'Import accepted' : 'The import did not go through'}
           >
             {result.msg}
-          </span>
+          </Banner>
         )}
       </div>
     </Card>
-  );
-}
-
-function NumberField({
-  label,
-  name,
-  value,
-  min,
-  max,
-  placeholder,
-  onChange,
-}: {
-  label: string;
-  name: string;
-  value: string;
-  min: number;
-  max: number;
-  placeholder: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Field label={label}>
-      <Input
-        type="number"
-        min={min}
-        max={max}
-        step={1}
-        name={name}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-      />
-    </Field>
   );
 }

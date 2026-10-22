@@ -73,10 +73,15 @@ test('workflow: an operator finds a waiting run, sends the signal it awaits, and
   const id = await startRun(request, 'e2e-approval', { order: 'A-1' });
   await unlockDashboard(page);
 
-  await clickNavLink(page, page.locator(`#app-nav nav a[href="${OPERATOR.basePath}/workflows"]`));
+  // One sidebar item, "Flows", and a switch on the page between job flows and workflow runs.
+  await clickNavLink(page, page.locator(`#app-nav nav a[href="${OPERATOR.basePath}/flows"]`));
+  await page
+    .getByRole('navigation', { name: 'Kind of flow' })
+    .getByRole('link', { name: 'Workflow runs' })
+    .click();
   await expect(page).toHaveURL(`${OPERATOR.appUrl}/workflows`);
   await expect(
-    page.locator('#main').getByRole('heading', { name: 'Workflows', level: 1 })
+    page.locator('#main').getByRole('heading', { name: 'Flows', level: 1 })
   ).toBeVisible();
   // The workers announced their definitions, so the page lists them as served.
   await expect(page.locator('#main').getByText('e2e-approval').first()).toBeVisible();
@@ -183,6 +188,15 @@ test('workflow: a rollback that cannot finish is retried once its cause is fixed
     'Retry rollback',
     'Abandon rollback…',
   ]);
+  // The definition shows where it stopped, and the way back.
+  await tab(page, 'Definition').click();
+  await expect(execution(page, id).getByRole('note')).toContainText('The rollback is stuck');
+  await expect(
+    execution(page, id)
+      .getByRole('list', { name: 'Nodes of the workflow' })
+      .locator('[aria-current="step"]')
+  ).toHaveCount(1);
+  await tab(page, 'Summary').click();
 
   const repaired = await request.post(`${E2E_CONTROL_URL}/workflow/repair`, {
     headers: controlHeaders,

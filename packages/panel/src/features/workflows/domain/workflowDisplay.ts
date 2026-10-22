@@ -139,6 +139,25 @@ export function describeNode(node: Record<string, unknown>): NodeDescription {
   }
 }
 
+/** Every step name a graph node holds, as a plain list (`describeNode().steps` words a branch for reading). */
+export function nodeStepNames(node: Record<string, unknown>): string[] {
+  switch (node.type) {
+    case 'step':
+    case 'forEach':
+      return stepName(node.step);
+    case 'parallel':
+    case 'doUntil':
+    case 'doWhile':
+      return stepNames(node.steps);
+    case 'branch':
+      return (Array.isArray(node.paths) ? node.paths.filter(isRecord) : []).flatMap((path) =>
+        stepNames(path.steps)
+      );
+    default:
+      return [];
+  }
+}
+
 const LIVE = new Set(['running', 'waiting', 'compensating', 'compensation-stuck']);
 
 /** The run is still going, or waits for an operator: it has a place in its definition. */

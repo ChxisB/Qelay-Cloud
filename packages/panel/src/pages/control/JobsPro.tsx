@@ -25,6 +25,7 @@ import {
   matchesFilter,
   stateCount,
 } from './jobsPro/model';
+import { promoteConfirm } from './jobsPro/promoteConfirm';
 import { useJobMutations } from './jobsPro/useJobMutations';
 import { useJobsPage } from './jobsPro/useJobsPage';
 
@@ -121,7 +122,7 @@ export function JobsPro() {
   // Targets are pre-filtered to eligible rows by runBulk, so each fn is a direct
   // call — no per-job state guard needed (it can never receive an ineligible job).
   const bulkPromote = () =>
-    runBulk('Promote', (j) => bq.promoteJob(j.id, j.version), eligibleFor.promote);
+    runBulk('Promote', (j) => bq.promoteJob(j.id, j.version), eligibleFor.promote, promoteConfirm);
 
   const headline = queue
     ? jobsHeadline(queue, status, count)
@@ -135,14 +136,17 @@ export function JobsPro() {
         title="Jobs"
         description={<JobsHeadline text={headline} updatedAt={queue ? updatedAt : null} />}
         actions={
-          canOperate ? (
-            <>
-              <LinkButton to="/jobs/bulk-add">Bulk add</LinkButton>
-              <LinkButton to="/add-job" variant="primary">
-                <IconPlus className="size-4" /> Add job
-              </LinkButton>
-            </>
-          ) : undefined
+          <>
+            <LinkButton to="/job">Find by ID</LinkButton>
+            {canOperate && (
+              <>
+                <LinkButton to="/jobs/bulk-add">Bulk add</LinkButton>
+                <LinkButton to="/add-job" variant="primary">
+                  <IconPlus className="size-4" /> Add job
+                </LinkButton>
+              </>
+            )}
+          </>
         }
       />
 
@@ -231,7 +235,7 @@ export function JobsPro() {
             hasNext={hasNext}
             onToggleAll={toggleAll}
             onToggle={toggle}
-            onRun={(job, label, operation) => void runOne(job, label, operation)}
+            onRun={(...args) => void runOne(...args)}
             onPage={setPage}
           />
         )}

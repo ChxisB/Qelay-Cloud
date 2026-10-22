@@ -37,7 +37,17 @@ const EXPECTED_PATHS = [
   '/queue-control',
   '/cron-manager',
   '/dlq-control',
+  '/events-gateway',
+  '/events-gateway/events',
+  '/events-gateway/metrics',
+  '/events-gateway/issues',
+  '/events-gateway/destinations',
+  '/events-gateway/connections/new',
+  '/events-gateway/connections/:id',
+  '/events-gateway/connections/:id/metrics',
+  '/events-gateway/connections/:id/settings',
   '/webhooks',
+  '/webhooks/:id',
   '/diagnostics',
   '/alerts',
   '/transport',
@@ -60,7 +70,7 @@ function childrenOf(node: ReactElement): ReactElement[] {
 }
 
 describe('application route contract', () => {
-  test('registers every documented direct, classic, workflow and fallback route exactly once', () => {
+  test('registers every documented direct, legacy, workflow and fallback route exactly once', () => {
     const tree = App();
     expect(tree.type).toBe(Routes);
     const layout = childrenOf(tree)[0];

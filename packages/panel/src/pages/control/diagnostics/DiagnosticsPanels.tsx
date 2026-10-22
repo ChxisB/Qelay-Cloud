@@ -2,6 +2,8 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { StatusDot } from '@/components/ui/StatusBadge';
+import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
+import { Wash } from '@/components/ui/Wash';
 import { bq } from '@/lib/bq';
 import { formatNumber } from '@/lib/format';
 import type { MetricsResponse, ReadinessResponse, StatsResponse } from '@/lib/types';
@@ -55,9 +57,9 @@ function readinessProbe(value: ReadinessResponse | null, error: string | null): 
 function ProbeRow({ path, state }: { path: string; state: ProbeState }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line py-2.5 last:border-0">
-      <code className="w-20 shrink-0 font-mono text-xs text-fg">{path}</code>
+      <code className="w-20 shrink-0 font-mono text-[13px] text-fg">{path}</code>
       <StatusDot label={state.label} tone={state.tone} />
-      <span className="min-w-0 flex-1 text-right text-xs text-faint">{state.detail}</span>
+      <span className="min-w-0 flex-1 text-right text-[13px] text-muted">{state.detail}</span>
     </div>
   );
 }
@@ -68,7 +70,7 @@ export function EndpointDiagnostics({ snapshot }: { snapshot: EndpointSnapshot }
     <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader title="Orchestrator probes" />
-        <p className="mb-2 text-xs text-muted">
+        <p className="mb-2 text-[13px] text-muted">
           Native Qelay liveness and persistence-readiness endpoints.
         </p>
         <div>
@@ -92,7 +94,7 @@ export function EndpointDiagnostics({ snapshot }: { snapshot: EndpointSnapshot }
         ) : (
           <p className="text-sm text-muted">No metrics response yet.</p>
         )}
-        <p className="mt-3 font-mono text-xs text-faint">GET /metrics · application/json</p>
+        <p className="mt-3 font-mono text-[13px] text-muted">GET /metrics · application/json</p>
       </Card>
     </div>
   );
@@ -119,34 +121,35 @@ export function HeapPanel({
       />
       {!heap ? (
         <p className="text-sm text-muted">
-          On-demand <code className="font-mono text-xs">bun:jsc</code> heap breakdown (forces a GC
-          first). Use it to spot which internal object type is growing when chasing a leak.
+          On-demand <code className="font-mono text-[13px]">bun:jsc</code> heap breakdown (forces a
+          GC first). Use it to spot which internal object type is growing when chasing a leak.
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="motion-arrive grid grid-cols-1 gap-6 lg:grid-cols-2">
           <div className="grid grid-cols-3 gap-4">
             <Mini k="Objects" v={formatNumber(heap.heap?.objectCount ?? 0)} />
             <Mini k="Protected" v={formatNumber(heap.heap?.protectedCount ?? 0)} />
             <Mini k="Global" v={formatNumber(heap.heap?.globalCount ?? 0)} />
           </div>
           <div>
-            <div className="mb-2 text-[11px] uppercase tracking-wider text-faint">
-              Top object types
-            </div>
-            <div className="max-h-52 overflow-y-auto rounded-lg border border-line">
-              <table className="w-full text-xs">
+            <TableScroll className="max-h-64 overflow-y-auto rounded-card border border-line">
+              <Table>
+                <THead sticky>
+                  <tr>
+                    <Th>Top object types</Th>
+                    <Th right>Count</Th>
+                  </tr>
+                </THead>
                 <tbody>
                   {(heap.topObjectTypes ?? []).map((item) => (
-                    <tr key={item.type} className="border-b border-line last:border-0">
-                      <td className="px-3 py-1.5 font-mono text-muted">{item.type}</td>
-                      <td className="px-3 py-1.5 text-right tnum text-fg">
-                        {formatNumber(item.count)}
-                      </td>
-                    </tr>
+                    <Tr key={item.type} dense>
+                      <Td className="font-mono text-[13px] text-muted">{item.type}</Td>
+                      <Td className="text-right tnum">{formatNumber(item.count)}</Td>
+                    </Tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
+              </Table>
+            </TableScroll>
           </div>
         </div>
       )}
@@ -161,10 +164,10 @@ export function PrometheusPanel() {
       <CardHeader title="Prometheus" />
       <p className="mb-3 text-sm text-muted">
         Scrape endpoint (text exposition) for Grafana / Alertmanager. Auth is required only if the
-        server sets <code className="font-mono text-xs">requireAuthForMetrics</code>.
+        server sets <code className="font-mono text-[13px]">requireAuthForMetrics</code>.
       </p>
-      <div className="flex items-center gap-2 rounded-lg border border-line bg-surface-2 px-3 py-2">
-        <code className="min-w-0 flex-1 truncate font-mono text-xs text-fg">{url}</code>
+      <div className="flex items-center gap-2 rounded-control border border-line-strong bg-surface px-4 py-2">
+        <code className="min-w-0 flex-1 truncate font-mono text-[13px] text-fg">{url}</code>
         <CopyButton value={url} />
       </div>
     </Card>
@@ -189,8 +192,10 @@ export function TotalsPanel({ stats }: { stats: StatsResponse['stats'] | undefin
 export function Mini({ k, v }: { k: string; v: string }) {
   return (
     <div>
-      <div className="text-[11px] uppercase tracking-wider text-faint">{k}</div>
-      <div className="mt-1 text-lg font-semibold tnum text-fg">{v}</div>
+      <div className="text-xs font-bold tracking-[0.06em] text-muted uppercase">{k}</div>
+      <div className="mt-1 text-xl font-bold tnum text-fg">
+        <Wash value={v} />
+      </div>
     </div>
   );
 }

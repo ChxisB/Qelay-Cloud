@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { toast } from '@/components/dashboard/stores/toastStore';
 import { Button } from '@/components/ui/Button';
 import { ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
@@ -133,8 +134,11 @@ export function QueuesOverview() {
       toast.info(`No queues to ${target}`);
       return;
     }
-    if (!window.confirm(`${target === 'pause' ? 'Pause' : 'Resume'} ${targets.length} queue(s)?`))
-      return;
+    const asked = await confirmInPage({
+      question: `${target === 'pause' ? 'Pause' : 'Resume'} ${targets.length} queue(s)?`,
+      confirmLabel: target === 'pause' ? 'Pause queues' : 'Resume queues',
+    });
+    if (!asked) return;
     const lease = actionGuard.begin(['bulk', ...all.map((queue) => `queue:${queue.name}`)]);
     if (!lease) return;
     setBulkBusy(true);

@@ -36,7 +36,7 @@ function fakeStore(queue: ClaimedDelivery[], faults = { claim: 0, record: 0 }) {
         };
       },
     },
-  } as unknown as Pick<PostgresStore, 'webhooks'>;
+  } as unknown as Pick<PostgresStore, 'webhooks' | 'enqueue'>;
   return { store, recorded, limits, writes };
 }
 
@@ -53,7 +53,7 @@ async function until(check: () => boolean, ms = 3_000): Promise<void> {
 }
 
 function run(
-  store: Pick<PostgresStore, 'webhooks'>,
+  store: Pick<PostgresStore, 'webhooks' | 'enqueue'>,
   post: (request: PostRequest) => Promise<PostResult>,
   telemetry = noTelemetry
 ) {

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { Textarea } from '@/components/ui/form';
 import type { JobFull } from '@/lib/bqTypes';
 
 /**
@@ -28,6 +29,8 @@ export function JobDataEditor({
   const [text, setText] = useState(() => JSON.stringify(data ?? null, null, 2));
   const [parseError, setParseError] = useState<string | null>(null);
   const lastSeed = useRef(text);
+  const noteId = useId();
+  const errorId = useId();
 
   useEffect(() => {
     const seed = JSON.stringify(data ?? null, null, 2);
@@ -64,7 +67,7 @@ export function JobDataEditor({
           ) : undefined
         }
       />
-      <textarea
+      <Textarea
         aria-label="Job data JSON"
         name="job-data-json"
         value={text}
@@ -72,16 +75,20 @@ export function JobDataEditor({
         readOnly={!editable}
         spellCheck={false}
         rows={8}
-        className="w-full resize-y rounded-lg border border-line bg-surface-2 p-3 font-mono text-xs text-fg placeholder:text-faint focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
+        aria-invalid={parseError ? true : undefined}
+        aria-describedby={
+          [!editable && noteId, parseError && errorId].filter(Boolean).join(' ') || undefined
+        }
+        className="resize-y font-mono text-[13px] leading-relaxed read-only:bg-surface-2 read-only:text-muted"
       />
       {!editable && (
-        <p className="mt-2 text-xs text-faint">
+        <p id={noteId} className="mt-2 text-[13px] text-muted">
           {readOnlyReason ??
             'Data is read-only after a job starts processing or leaves the runnable queue.'}
         </p>
       )}
       {parseError && (
-        <p role="alert" className="mt-2 text-xs text-danger">
+        <p id={errorId} role="alert" className="mt-2 text-[13px] font-semibold text-danger">
           {parseError}
         </p>
       )}

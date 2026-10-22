@@ -24,7 +24,7 @@ describe('the Dashboard status strip', () => {
     const { page, el } = await strip(deployment(tick('ok', 4_000)));
     expect(el.getAttribute('data-tone')).toBe('green');
     expect(el.textContent).toContain('Healthy');
-    expect(el.textContent).toContain('Tick ran 4s ago');
+    expect(el.textContent).toContain('Maintenance ran 4s ago');
     page.unmount();
   });
 
@@ -42,14 +42,14 @@ describe('the Dashboard status strip', () => {
   test('a tick that never ran is red, not "unknown"', async () => {
     const { page, el } = await strip(deployment(tick('never', null)));
     expect(el.getAttribute('data-tone')).toBe('red');
-    expect(el.textContent).toContain('Tick has not run yet');
+    expect(el.textContent).toContain('Maintenance has not run yet');
     page.unmount();
   });
 
   test('a tick nobody reports is unknown, not healthy', async () => {
     const { page, el } = await strip(deployment(tick('unknown', null)));
     expect(el.getAttribute('data-tone')).toBe('zinc');
-    expect(el.textContent).toContain('Tick status unknown');
+    expect(el.textContent).toContain('Maintenance status unknown');
     expect(el.textContent).not.toContain('Healthy');
     page.unmount();
   });
@@ -60,14 +60,14 @@ describe('the Dashboard status strip', () => {
         doorbells: { notRung: 12, oldestNotRungAgeMs: 4_000, queuesScanned: 2, partial: false },
       })
     );
-    expect(some.el.textContent).toContain('12 jobs without a doorbell');
+    expect(some.el.textContent).toContain('12 jobs not yet notified to workers');
     some.page.unmount();
     const none = await strip(
       deployment({
         doorbells: { notRung: null, oldestNotRungAgeMs: null, queuesScanned: null, partial: false },
       })
     );
-    expect(none.el.textContent).toContain('Doorbells unknown');
+    expect(none.el.textContent).toContain('Worker notifications unknown');
     expect(none.el.textContent).not.toContain('0 jobs');
     none.page.unmount();
   });

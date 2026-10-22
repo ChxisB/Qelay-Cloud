@@ -7,7 +7,7 @@ import type { WorkflowDetail } from '../domain/workflowWire';
 import { CompensationView } from './CompensationView';
 import { Fact } from './PayloadView';
 
-const linkClass = 'text-link underline';
+const linkClass = 'font-bold text-link underline';
 
 /** The facts of a run, what it waits for, the runs it started, and how its rollback went. */
 export function ExecutionSummary({ detail }: { detail: WorkflowDetail }) {
@@ -19,7 +19,10 @@ export function ExecutionSummary({ detail }: { detail: WorkflowDetail }) {
   return (
     <div className="space-y-5">
       {unserved && (
-        <p role="note" className="rounded-lg border border-warning/30 p-3 text-xs text-warning">
+        <p
+          role="note"
+          className="rounded-control bg-state-waiting-bg px-4 py-3 text-[13px] font-semibold text-state-waiting-fg"
+        >
           {definition
             ? 'No worker serves the version of the workflow this run was started with, so it cannot move.'
             : 'No worker ever announced the version of the workflow this run was started with, so it cannot move.'}{' '}
@@ -29,12 +32,12 @@ export function ExecutionSummary({ detail }: { detail: WorkflowDetail }) {
       {execution.failureReason && (
         <p
           role="note"
-          className="break-words rounded-lg border border-danger/30 p-3 text-xs text-danger"
+          className="rounded-control bg-danger-tint px-4 py-3 text-[13px] font-semibold break-words text-fg"
         >
           {execution.failureReason}
         </p>
       )}
-      <dl className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
+      <dl className="grid grid-cols-1 gap-4 text-[13px] sm:grid-cols-2">
         <Fact label="Workflow" value={<span translate="no">{execution.workflowName}</span>} />
         <Fact label="State" value={<StatusBadge status={execution.state} />} />
         <Fact
@@ -47,12 +50,12 @@ export function ExecutionSummary({ detail }: { detail: WorkflowDetail }) {
         />
         <Fact
           label="Version of the run"
-          value={<span className="tabular-nums">{execution.version}</span>}
+          value={<span className="tnum">{execution.version}</span>}
         />
         <Fact label="Created" value={formatDateTime(execution.createdAt)} />
         <Fact
           label="Last change"
-          value={`${formatDateTime(execution.updatedAt)} (${formatRelativeTime(execution.updatedAt)} ago)`}
+          value={`${formatDateTime(execution.updatedAt)} (${formatRelativeTime(execution.updatedAt)})`}
         />
         {execution.wait && (
           <Fact
@@ -94,11 +97,11 @@ export function ExecutionSummary({ detail }: { detail: WorkflowDetail }) {
       </dl>
 
       <section aria-label="Signals received">
-        <h3 className="mb-2 text-xs font-medium text-fg">
+        <h3 className="mb-2 text-sm font-bold text-fg">
           Signals received ({execution.signals.total})
         </h3>
         {execution.signals.items.length === 0 ? (
-          <p className="text-xs text-faint">None.</p>
+          <p className="text-xs text-muted">None.</p>
         ) : (
           <ul className="space-y-1 text-xs text-muted">
             {execution.signals.items.map((signal) => (
@@ -111,9 +114,9 @@ export function ExecutionSummary({ detail }: { detail: WorkflowDetail }) {
       </section>
 
       <section aria-label="Child executions">
-        <h3 className="mb-2 text-xs font-medium text-fg">Child executions ({children.total})</h3>
+        <h3 className="mb-2 text-sm font-bold text-fg">Child executions ({children.total})</h3>
         {children.items.length === 0 ? (
-          <p className="text-xs text-faint">None.</p>
+          <p className="text-xs text-muted">None.</p>
         ) : (
           <ul className="space-y-1 text-xs text-muted">
             {children.items.map((child) => (
@@ -132,7 +135,7 @@ export function ExecutionSummary({ detail }: { detail: WorkflowDetail }) {
       </section>
 
       <section aria-label="Rollback">
-        <h3 className="mb-2 text-xs font-medium text-fg">Rollback</h3>
+        <h3 className="mb-2 text-sm font-bold text-fg">Rollback</h3>
         <CompensationView compensation={compensation} />
       </section>
     </div>

@@ -1,14 +1,32 @@
+import { StatusPill, type StateRole } from '@/components/ui/StatusBadge';
+import { Table, TableScroll, Td, Th, THead, Tr, type RowStatus } from '@/components/ui/Table';
+import { Wash } from '@/components/ui/Wash';
 import { cn } from '@/lib/cn';
-import { claimableLabel, doorbellVerdict, figure, freshnessLabel, span } from '@/lib/ops/health';
-import type { Tone } from '@/lib/ops/health';
-import { verdictTone } from '@/lib/ops/health';
+import {
+  claimableLabel,
+  doorbellVerdict,
+  figure,
+  freshnessLabel,
+  span,
+  verdictTone,
+  type DoorbellVerdict,
+} from '@/lib/ops/health';
 import type { TransportQueue } from '@/lib/ops/types';
+import { useFirstLoad } from '@/lib/useFirstLoad';
 
-const DOT: Record<Tone, string> = {
-  green: 'bg-success',
-  amber: 'bg-warning',
-  red: 'bg-danger-fill',
-  zinc: 'bg-state-waiting-fg',
+/** A verdict is a word and a glyph as well as a row bar, so no reading rests on colour. */
+const VERDICT: Record<DoorbellVerdict['kind'], { state: StateRole; word: string }> = {
+  ok: { state: 'completed', word: 'Normal' },
+  backlog: { state: 'waiting', word: 'Backlog' },
+  held: { state: 'waiting', word: 'Paused' },
+  unknown: { state: 'waiting', word: 'Unknown' },
+  'tick-behind': { state: 'delayed', word: 'Maintenance behind' },
+  poison: { state: 'failed', word: 'Delivery failed' },
+};
+
+const ROW_BAR: Partial<Record<ReturnType<typeof verdictTone>, RowStatus>> = {
+  red: 'bad',
+  amber: 'warn',
 };
 
 /**
@@ -30,12 +48,13 @@ function Reading({
       className={cn(
         'tnum',
         value === 0 && 'text-muted',
-        danger && value > 0 && 'font-semibold text-danger'
+        danger && value > 0 && 'font-bold text-danger'
       )}
-      title={approximate ? 'Approximate: the broker counts eventually' : undefined}
+      title={
+        approximate ? "Approximate: the queue service's counts can trail by a minute" : undefined
+      }
     >
-      {approximate ? '≈' : ''}
-      {figure(value)}
+      <Wash value={`${approximate ? '≈' : ''}${figure(value)}`} />
     </span>
   );
 }
@@ -44,7 +63,9 @@ function Age({ ms }: { ms: number | null }) {
   return ms === null ? (
     <span className="text-faint">unknown</span>
   ) : (
-    <span className="tnum">{span(ms)}</span>
+    <span className="tnum">
+      <Wash value={span(ms)} steady />
+    </span>
   );
 }
 
@@ -65,97 +86,80 @@ export function QueueDoorbellTable({
   // A broker that does not count these (Pub/Sub has no in-flight figure) has no column for them.
   const showInFlight = queues.some((queue) => queue.inFlight !== null);
   const showDelayed = queues.some((queue) => queue.delayed !== null);
+  // The rows that come with the first reading rise in a stagger; one a later poll adds does not.
+  const first = useFirstLoad(true);
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <caption className="sr-only">Doorbell health per queue</caption>
-        <thead>
-          <tr className="border-y border-line text-left eyebrow text-muted">
-            <th scope="col" className="px-4 py-2.5 font-semibold">
-              Queue
-            </th>
-            <th scope="col" className="px-3 py-2.5 text-right font-semibold">
-              Claimable
-            </th>
-            <th scope="col" className="px-3 py-2.5 text-right font-semibold">
-              No doorbell
-            </th>
-            <th scope="col" className="px-3 py-2.5 text-right font-semibold">
-              At broker
-            </th>
-            {showInFlight && (
-              <th scope="col" className="px-3 py-2.5 text-right font-semibold">
-                In flight
-              </th>
-            )}
-            {showDelayed && (
-              <th scope="col" className="px-3 py-2.5 text-right font-semibold">
-                Delayed
-              </th>
-            )}
-            <th scope="col" className="px-3 py-2.5 text-right font-semibold">
-              Oldest bell
-            </th>
-            <th scope="col" className="px-3 py-2.5 text-right font-semibold">
-              Dead-letter
-            </th>
-            <th scope="col" className="px-4 py-2.5 font-semibold">
-              Broker figures
-            </th>
+    <TableScroll>
+      <Table className="min-w-[960px]">
+        <caption className="sr-only">Notification health per queue</caption>
+        <THead>
+          <tr>
+            <Th>Queue</Th>
+            <Th right>Ready to run</Th>
+            <Th right>Not notified</Th>
+            <Th right>In queue service</Th>
+            {showInFlight && <Th right>Picked up</Th>}
+            {showDelayed && <Th right>Delayed</Th>}
+            <Th right>Oldest waiting</Th>
+            <Th right>Failed notifications</Th>
+            <Th>Queue service figures</Th>
           </tr>
-        </thead>
+        </THead>
         <tbody>
-          {queues.map((queue) => {
+          {queues.map((queue, index) => {
             const verdict = doorbellVerdict(queue, lateAfterMs);
-            const tone = verdictTone(verdict);
+            const { state, word } = VERDICT[verdict.kind];
             return (
-              <tr key={queue.queue} className="border-b border-line align-top last:border-b-0">
-                <td className="max-w-[22rem] px-4 py-3.5">
-                  <span className="flex items-center gap-2.5">
-                    <span
-                      className={cn('size-2 shrink-0 rounded-full', DOT[tone])}
-                      aria-hidden="true"
-                    />
-                    <span className="truncate font-medium text-fg">{queue.queue}</span>
+              <Tr
+                key={queue.queue}
+                status={ROW_BAR[verdictTone(verdict)]}
+                arrive={first ? index : undefined}
+              >
+                <Td className="max-w-[22rem]">
+                  <span className="block truncate font-bold text-fg">{queue.queue}</span>
+                  <span className="mt-1.5 block">
+                    <StatusPill state={state}>{word}</StatusPill>
                   </span>
-                  <p className="mt-1 pl-[18px] text-xs text-muted">{verdict.text}</p>
-                </td>
-                <td className="px-3 py-3.5 text-right">
-                  <span className="tnum">{claimableLabel(queue.store)}</span>
-                </td>
-                <td className="px-3 py-3.5 text-right">
+                  <p className="mt-1.5 text-[13px] text-muted">{verdict.text}</p>
+                </Td>
+                <Td className="text-right">
+                  <span className="tnum">
+                    <Wash value={claimableLabel(queue.store)} />
+                  </span>
+                </Td>
+                <Td className="text-right">
                   <Reading value={queue.store.notRung} />
-                </td>
-                <td className="px-3 py-3.5 text-right">
+                </Td>
+                <Td className="text-right">
                   <Reading value={queue.doorbellDepth} approximate={approximate} />
-                </td>
+                </Td>
                 {showInFlight && (
-                  <td className="px-3 py-3.5 text-right">
+                  <Td className="text-right">
                     <Reading value={queue.inFlight} approximate={approximate} />
-                  </td>
+                  </Td>
                 )}
                 {showDelayed && (
-                  <td className="px-3 py-3.5 text-right">
+                  <Td className="text-right">
                     <Reading value={queue.delayed} approximate={approximate} />
-                  </td>
+                  </Td>
                 )}
-                <td className="px-3 py-3.5 text-right">
+                <Td className="text-right">
                   <Age ms={queue.oldestUndeliveredAgeMs} />
-                </td>
-                <td className="px-3 py-3.5 text-right">
+                </Td>
+                <Td className="text-right">
                   <Reading value={queue.deadLetterDepth} danger approximate={approximate} />
                   {queue.deadLetterOldestAgeMs !== null && (
-                    <span className="block text-xs text-muted">
+                    <span className="block text-[13px] text-muted">
                       oldest <Age ms={queue.deadLetterOldestAgeMs} />
                     </span>
                   )}
-                </td>
-                <td className="px-4 py-3.5 text-xs text-muted">{freshnessLabel(queue)}</td>
-              </tr>
+                </Td>
+                <Td className="text-[13px] text-muted">{freshnessLabel(queue)}</Td>
+              </Tr>
             );
           })}
         </tbody>
-      </table>
-    </div>
+      </Table>
+    </TableScroll>
   );
 }

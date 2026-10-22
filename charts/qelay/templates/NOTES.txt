@@ -1,0 +1,17 @@
+Qelay {{ .Chart.AppVersion }} is installed as "{{ .Release.Name }}".
+
+  API:   {{ include "qelay.fullname" . }}-api   (kubectl port-forward svc/{{ include "qelay.fullname" . }}-api 8080:80)
+{{- if .Values.panel.enabled }}
+  Panel: {{ include "qelay.fullname" . }}-panel (kubectl port-forward svc/{{ include "qelay.fullname" . }}-panel 8081:80)
+{{- end }}
+{{- if .Values.ingress.enabled }}
+  URLs:  {{ .Values.ingress.scheme }}://{{ .Values.ingress.api.host }}{{ if .Values.panel.enabled }} and {{ .Values.ingress.scheme }}://{{ .Values.ingress.panel.host }}{{ end }}
+{{- end }}
+
+The schema was migrated by a pre-install/pre-upgrade job. Check the services with:
+  kubectl rollout status deploy/{{ include "qelay.fullname" . }}-api
+{{- if eq .Values.transport.kind "postgres" }}
+
+transport.kind is "postgres": workers poll the database, so there is no cloud account to set up and a wake-up can be about a second late.
+Set transport.kind to gcp-pubsub or aws-sqs for a cloud doorbell.
+{{- end }}

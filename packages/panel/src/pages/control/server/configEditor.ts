@@ -1,3 +1,4 @@
+import type { ConfirmOptions } from '@/components/dashboard/stores/confirmStore';
 import type { ServerConfig } from '@/lib/bqTypes';
 
 export interface ConfigEditor {
@@ -149,5 +150,14 @@ function normalize(config: ServerConfig) {
     extraEnv: Object.fromEntries(
       Object.entries(config.extraEnv).sort(([a], [b]) => a.localeCompare(b))
     ),
+  };
+}
+
+/** The question before a save that restarts the server; `changed` is what differs from the running config. */
+export function restartQuestion(changed: readonly string[]): ConfirmOptions {
+  return {
+    question: 'Save and restart the server?',
+    detail: `Save configuration and restart the server to apply it?${changed.length > 0 ? ` Changed: ${changed.join(', ')}.` : ''}`,
+    confirmLabel: 'Save & restart',
   };
 }

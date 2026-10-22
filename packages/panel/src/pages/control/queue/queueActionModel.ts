@@ -1,7 +1,12 @@
+import type { ConfirmOptions } from '@/components/dashboard/stores/confirmStore';
+
+/** What a run asks in the page first: the question, and the main button named as the action it runs. */
+export type RunConfirm = Pick<ConfirmOptions, 'question' | 'confirmLabel' | 'danger'>;
+
 export type RunAction = (
   label: string,
   fn: () => Promise<unknown>,
-  confirmMsg?: string,
+  confirm?: RunConfirm,
   onSuccess?: () => void
 ) => void;
 

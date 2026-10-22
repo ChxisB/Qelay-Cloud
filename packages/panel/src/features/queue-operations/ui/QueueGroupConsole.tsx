@@ -98,7 +98,7 @@ export function QueueGroupConsole({
 
   return (
     <section className="xl:col-span-2" aria-labelledby="queue-groups-title">
-      <h3 id="queue-groups-title" className="mb-3 text-sm font-medium text-fg">
+      <h3 id="queue-groups-title" className="mb-3 text-[13px] font-bold text-fg">
         Groups
       </h3>
       <div className="grid gap-3 sm:grid-cols-4 xl:grid-cols-8">
@@ -237,23 +237,23 @@ export function QueueGroupConsole({
         </Button>
       </div>
       {!id && (
-        <p role="alert" className="mt-3 text-xs text-danger">
+        <p role="alert" className="mt-3 text-[13px] font-semibold text-danger">
           Group ID must contain 1–256 characters and no NUL.
         </p>
       )}
       {!pageRange && (
-        <p role="alert" className="mt-3 text-xs text-danger">
+        <p role="alert" className="mt-3 text-[13px] font-semibold text-danger">
           Group job range must be an inclusive page of 1–100 jobs with whole indexes from 0 to
           1000000.
         </p>
       )}
       {!rateValid && (
-        <p role="alert" className="mt-3 text-xs text-danger">
+        <p role="alert" className="mt-3 text-[13px] font-semibold text-danger">
           Rate max and duration must be positive whole numbers.
         </p>
       )}
       {concurrencyValue === null && (
-        <p role="alert" className="mt-3 text-xs text-danger">
+        <p role="alert" className="mt-3 text-[13px] font-semibold text-danger">
           Concurrency must be a positive whole number.
         </p>
       )}

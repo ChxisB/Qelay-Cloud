@@ -1426,7 +1426,11 @@ paths:
       tags: [webhooks]
       summary: Register a webhook
       description: |
-        Registers an address for the events listed, optionally for one queue. The address is checked against the
+        Registers a route (`docs/event-gateway.md`): the events listed, optionally from one queue, delivered to a
+        `destination`. `http` (the default) POSTs to `url`; `queue` adds a job to `target`, a queue of this namespace,
+        needs a source `queue`, and has no address. A `queue` route that would make a loop is 409 `route_cycle`, and one
+        that would make a chain longer than 5 routes is 409 `route_chain_too_long` (`details.limit`); nothing is
+        saved. An `http` route's address is checked against the
         deployment's policy (https only, and no loopback, private, link-local or metadata destination, unless the
         deployment runs in development mode): a refusal is 400 with the rule as `error.code` (`invalid_url`,
         `scheme_not_allowed`, `credentials_not_allowed`, `host_not_allowed`). The name is not resolved here; the sender
@@ -1481,6 +1485,221 @@ paths:
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/deliveries:
+    get:
+      tags: [webhooks]
+      summary: The deliveries of every route
+      description: |
+        The event gateway's Events feed: deliveries of all routes, newest first, `limit` (default 50, at most 200) at a
+        time, filtered by `status`, one route (`webhook`) and a window over the events' times (`since`, `until`, epoch
+        milliseconds; a window prunes whole days). `next` is the `before` of the following page and null on the last
+        one. Finished deliveries are kept 2 days by default. `routedJobId` names the job a delivered `queue` route made.
+      operationId: listAllWebhookDeliveries
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: before, in: query, description: 'The `next` of the previous page.', schema: { type: string, pattern: '^[1-9][0-9]{0,15}$' } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, sending, delivered, failed] } }
+        - { name: webhook, in: query, description: 'Only this route''s deliveries.', schema: { type: string, maxLength: 256 } }
+        - { name: since, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: until, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: One page of the feed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveriesPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/stats:
+    get:
+      tags: [webhooks]
+      summary: Delivery counts, failure ratio and latency over a window
+      description: |
+        The numbers of the console's Metrics screen: deliveries by outcome, per slice of the window (`buckets`, default
+        24, at most 168), the failure ratio, attempts per finished delivery, receiver latency (of the attempts the
+        receiver answered, from each delivery's kept history) and what is waiting now (`backlog`, `oldestPendingAt`,
+        whatever the window). `since` and `until` are epoch milliseconds over the events' times and span at most 7 days
+        (400 otherwise). One route with `webhook`; an unknown one counts nothing. With `groupBy=webhook` the answer is
+        instead one entry per route of the namespace (the connections list): the same counts, failure ratio, backlog and
+        per-slice trend, with no latency, and zeros for a route with no events; `webhook` cannot be combined with it (400).
+      operationId: getWebhookStats
+      parameters:
+        - { name: since, in: query, required: true, schema: { type: integer, minimum: 0 } }
+        - { name: until, in: query, required: true, schema: { type: integer, minimum: 0 } }
+        - { name: webhook, in: query, schema: { type: string, maxLength: 256 } }
+        - { name: buckets, in: query, schema: { type: integer, minimum: 1, maximum: 168, default: 24 } }
+        - { name: groupBy, in: query, description: 'One entry per route instead of the window''s totals.', schema: { type: string, enum: [webhook] } }
+      responses:
+        '200':
+          description: The window's numbers, or with `groupBy` one entry per route.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/WebhookStatsEnvelope' }
+                  - { $ref: '#/components/schemas/WebhookGroupStatsEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/issues:
+    get:
+      tags: [webhooks]
+      summary: The issues, one per route whose deliveries are failing
+      description: |
+        The event gateway's Issues screen. A route whose last settled delivery failed has one live issue (`open`,
+        `acknowledged` or `ignored`); a delivered one resolves it. This lists one `status` (default `open`), newest
+        first, `limit` (default 50, at most 200) at a time, optionally one route (`webhook`), and answers the count of
+        every status beside it. `next` is the `before` of the following page and null on the last one. Each issue
+        carries the route's name and streak now. `updatedBy` is the operator who last changed the status (null when Qelay
+        did, and always null for a read-only caller). Resolved issues are kept as long as finished deliveries (2 days by
+        default).
+      operationId: listWebhookIssues
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, acknowledged, resolved, ignored], default: open } }
+        - { name: webhook, in: query, description: 'Only this route''s issues.', schema: { type: string, maxLength: 256 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: before, in: query, description: 'The `next` of the previous page.', schema: { type: string, pattern: '^[1-9][0-9]{0,15}$' } }
+      responses:
+        '200':
+          description: One page of issues, and the count of each status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookIssuesPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/issues/{id}:
+    put:
+      tags: [webhooks]
+      summary: Acknowledge, ignore, reopen or resolve an issue
+      description: |
+        Sets the issue's status. `acknowledged` says someone has seen it, `ignored` keeps the route out of the deployment
+        warnings (`webhook_failing`, `webhook_paused`) until it is delivered to again, and `open` puts either back. `resolved` closes it by hand; a resolved issue
+        is history, so changing it is 409 `issue_resolved`, and the route's next failure opens a new one. An unknown id is
+        404 `issue_not_found`. The audit trail records the issue's id.
+      operationId: setWebhookIssueStatus
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^[1-9][0-9]{0,15}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookIssueSet' }
+      responses:
+        '200':
+          description: The issue, with its new status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookIssueEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/destinations:
+    get:
+      tags: [webhooks]
+      summary: The saved destinations
+      description: |
+        A destination is a named `http` address or `queue` target that connections are made from, oldest first, each with
+        how many connections use it. A `viewer` sees an `http` address as its origin only (`urlRedacted: true`), as on a
+        webhook. A destination holds no secret: each connection signs with its own.
+      operationId: listWebhookDestinations
+      responses:
+        '200':
+          description: The destinations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DestinationsList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [webhooks]
+      summary: Save a destination
+      description: |
+        Saves a named address. An `http` destination needs a `url`, checked against the deployment's policy as a webhook's
+        is (400 with the rule as `error.code`: `invalid_url`, `scheme_not_allowed`, `credentials_not_allowed`,
+        `host_not_allowed`); a `queue` destination needs a `target`, a queue of this namespace, and no `url`. Names are
+        unique in the namespace (409 `destination_name_taken`) and at most 100 destinations are kept (409
+        `destination_limit`). The kind cannot be changed afterwards. The audit trail records the destination's id.
+      operationId: createWebhookDestination
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DestinationCreate' }
+      responses:
+        '201':
+          description: Saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DestinationEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/destinations/{id}:
+    patch:
+      tags: [webhooks]
+      summary: Rename a destination or move its address
+      description: |
+        Changes the name, the `url` (an `http` destination) or the `target` (a `queue` one); an address of the other kind is
+        400 `unsupported_option`, and an empty body is 400. A new address is copied to every connection made from the
+        destination in the same transaction, so they all follow; a `queue` address that would make a loop is 409
+        `route_cycle` and one that would make a chain longer than 5 routes is 409 `route_chain_too_long`, with nothing
+        changed. A connection that was paused for failing stays paused. Operator only; the audit entry holds the id and no
+        address.
+      operationId: updateWebhookDestination
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, minLength: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DestinationPatch' }
+      responses:
+        '200':
+          description: The destination after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DestinationEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [webhooks]
+      summary: Delete a destination
+      description: Refused with 409 `destination_in_use` (`details.connections`) while a connection is made from it; delete or move those first.
+      operationId: deleteWebhookDestination
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, minLength: 1 } }
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
   /webhooks/{id}:
     get:
       tags: [webhooks]
@@ -1497,6 +1716,36 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    patch:
+      tags: [webhooks]
+      summary: Edit a webhook
+      description: |
+        Changes the name, description, events and rules the body names; a key that is absent is left alone, and `null`
+        clears a name, description, filter, shape, delay or dedupe (`events` cannot be empty). The source queue, the
+        destination, the address and the secret are not editable here: delete and add, or rotate the secret. A `filter`,
+        `shape`, `delayMs` or `dedupe` needs the delivery writer on, as at creation (400 `unsupported_option`). An empty
+        body is 400. Operator only; the audit entry holds the webhook's id and no value.
+      operationId: updateWebhook
+      parameters:
+        - { $ref: '#/components/parameters/WebhookId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookPatch' }
+      responses:
+        '200':
+          description: The webhook after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/Timeout' }
     delete:
       tags: [webhooks]
@@ -1521,9 +1770,11 @@ paths:
       tags: [webhooks]
       summary: Enable or disable a webhook
       description: |
-        A webhook disabled by hand gets no new deliveries; those already queued are still sent. Enabling a webhook
-        that was paused after repeated failures (`disabledReason`) clears the pause and the failure streak, and
-        sends the deliveries held meanwhile.
+        Turning a webhook off stops sending at once, retries included, and has two modes. `ignore` (the default)
+        disables it: no new deliveries are made, and `pausedBy` is null. `hold` pauses it: events are still collected
+        as deliveries and wait, `pausedBy` is `operator`, and enabling it sends what was held. Deliveries already
+        waiting stay in both modes and go out on enabling, unless they have outlived 24 hours. A webhook paused
+        after repeated failures has `pausedBy` `failures`. Enabling clears any pause and the failure streak.
       operationId: setWebhookEnabled
       parameters:
         - { $ref: '#/components/parameters/WebhookId' }
@@ -1537,6 +1788,7 @@ paths:
               additionalProperties: false
               properties:
                 enabled: { type: boolean }
+                mode: { type: string, enum: [hold, ignore], default: ignore, description: 'How to turn it off; ignored when `enabled` is true.' }
       responses:
         '200':
           description: The webhook after the change.
@@ -1634,6 +1886,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /webhooks/{id}/deliveries/retry:
+    post:
+      tags: [webhooks]
+      summary: Retry a route's failed deliveries
+      description: |
+        Puts the route's `failed` deliveries back in the queue, newest first, at most `limit` (default and most 500),
+        each with a fresh attempt budget (as the retry of one delivery does). Only that route's; `before` (a delivery id)
+        takes only older ones, so a caller can go on from where the last call stopped. Rows another writer holds are left
+        for a later call. Answers how many were put back; the audit trail records the route's id.
+      operationId: retryFailedWebhookDeliveries
+      parameters:
+        - { $ref: '#/components/parameters/WebhookId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookRetryFailed' }
+      responses:
+        '200':
+          description: How many deliveries went back.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookRetryFailedEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/Timeout' }
   /webhooks/{id}/deliveries/{deliveryId}/retry:
     post:
@@ -2263,7 +2544,7 @@ components:
         The job or queue is not in a state the action applies to (`job_state`, `flow_protected`), or the job has moved on
         since the `expectedVersion` the caller read (`version_conflict`), or an event position is past the end of the
         journal (`cursor_ahead`), or a flow action does not apply (`flow_changed`, `flow_active`, `flow_not_retryable`,
-        `flow_not_stuck`, `flow_too_large`), or a webhook action does not apply (`webhook_limit`, `webhook_key_missing`, `webhook_disabled`, `delivery_not_failed`), or a workflow action does not apply (`version_conflict`, `execution_terminal`,
+        `flow_not_stuck`, `flow_too_large`), or a webhook action does not apply (`webhook_limit`, `webhook_key_missing`, `webhook_disabled`, `delivery_not_failed`), or a destination action does not apply (`destination_limit`, `destination_name_taken`, `destination_in_use`, `route_cycle`, `route_chain_too_long`), or a workflow action does not apply (`version_conflict`, `execution_terminal`,
         `execution_state`, `workflow_progressing`, `signal_rejected`). Nothing was changed.
       content:
         application/json:
@@ -3476,15 +3757,22 @@ components:
         removed: { type: boolean }
     Webhook:
       type: object
-      required: [id, url, urlRedacted, events, queue, filter, shape, signed, enabled, createdAt, lastTriggered, successCount, failureCount, consecutiveFailures, alertLevel, disabledReason, disabledAt, previousSecretUntil]
+      required: [id, destination, url, urlRedacted, target, destinationId, events, queue, filter, shape, name, description, delayMs, dedupe, signed, enabled, createdAt, lastTriggered, successCount, failureCount, consecutiveFailures, alertLevel, disabledReason, disabledAt, pausedBy, previousSecretUntil]
       properties:
         id: { type: string }
-        url: { type: string, description: 'The address; for a `viewer` only its origin (`https://host/`), with `urlRedacted` true.' }
+        destination: { type: string, enum: [http, queue], description: '`http` POSTs each delivery to `url`; `queue` adds a job to `target`.' }
+        url: { type: string, description: 'The address of an `http` route; for a `viewer` only its origin (`https://host/`), with `urlRedacted` true. Empty for a `queue` route.' }
         urlRedacted: { type: boolean }
+        target: { type: string, nullable: true, description: 'The queue a `queue` route adds jobs to (shown in full to a `viewer`); null for `http`.' }
+        destinationId: { type: string, nullable: true, description: 'The saved destination the address was copied from; null when it was given directly. A change to the destination reaches this webhook.' }
         events: { type: array, items: { $ref: '#/components/schemas/WebhookEvent' } }
         queue: { type: string, nullable: true, description: 'Only events of this queue are sent; null for every queue.' }
         filter: { type: object, nullable: true, additionalProperties: true, description: 'Only events it lets through are sent (`docs/webhooks.md`); null sends every event of `events`.' }
         shape: { type: object, nullable: true, additionalProperties: true, description: 'The body template; null sends the default body.' }
+        name: { type: string, nullable: true, description: 'What the operator calls it; null when unnamed.' }
+        description: { type: string, nullable: true }
+        delayMs: { type: integer, nullable: true, description: 'Each delivery is due this long after its event; null sends at once.' }
+        dedupe: { $ref: '#/components/schemas/WebhookDedupe', nullable: true }
         signed: { type: boolean, description: 'Whether deliveries carry a signature. The secret itself is never returned.' }
         enabled: { type: boolean }
         createdAt: { type: integer }
@@ -3495,22 +3783,102 @@ components:
         alertLevel: { type: integer, minimum: 0, maximum: 4, description: 'How far the streak has come toward the pause: 1 to 4 at 50, 70, 90 and 100% of `QCLOUD_WEBHOOK_DISABLE_AFTER`. 0 when below 50% or the pause is off.' }
         disabledReason: { type: string, nullable: true, description: 'Set when the webhook was paused after repeated failures (`enabled` is then false); null otherwise, also for one disabled by hand.' }
         disabledAt: { type: integer, nullable: true }
+        pausedBy: { type: string, nullable: true, enum: [operator, failures, null], description: '`operator`: held by hand (`mode: hold`). `failures`: paused for failing. null: running, or disabled by hand with `ignore`.' }
         previousSecretUntil: { type: integer, nullable: true, description: 'While a rotated-out secret still signs beside the new one: when it stops.' }
+    Destination:
+      type: object
+      required: [id, name, kind, url, urlRedacted, target, connections, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [http, queue], description: '`http` has a `url`; `queue` has a `target`. Fixed at creation.' }
+        url: { type: string, description: 'The address of an `http` destination; for a `viewer` only its origin (`https://host/`), with `urlRedacted` true. Empty for `queue`.' }
+        urlRedacted: { type: boolean }
+        target: { type: string, nullable: true, description: 'The queue a `queue` destination adds jobs to; null for `http`.' }
+        connections: { type: integer, description: 'The connections made from it.' }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+    DestinationCreate:
+      type: object
+      required: [name, kind]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 80, description: 'Unique in the namespace; not blank.' }
+        kind: { type: string, enum: [http, queue] }
+        url: { type: string, maxLength: 2048, description: 'Required for `http`; refused for `queue`.' }
+        target: { type: string, maxLength: 256, description: 'Required for `queue`; refused for `http`.' }
+    DestinationPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      description: 'The keys present are set. The address key must fit the destination''s kind.'
+      properties:
+        name: { type: string, maxLength: 80 }
+        url: { type: string, maxLength: 2048 }
+        target: { type: string, maxLength: 256 }
+    DestinationEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [destination]
+          properties:
+            destination: { $ref: '#/components/schemas/Destination' }
+    DestinationsList:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [destinations]
+          properties:
+            destinations: { type: array, items: { $ref: '#/components/schemas/Destination' } }
     WebhookEvent:
       type: string
       enum: [job.pushed, job.started, job.completed, job.failed, job.progress]
     WebhookCreate:
       type: object
-      required: [url, events]
+      required: [events]
       additionalProperties: false
       properties:
-        url: { type: string, maxLength: 2048 }
+        destination: { type: string, enum: [http, queue], default: http }
+        url: { type: string, maxLength: 2048, description: 'Required for an `http` route; refused for a `queue` route.' }
+        target: { type: string, nullable: true, maxLength: 256, description: 'Required for a `queue` route (with `queue`, the source): the queue a job is added to.' }
+        destinationId: { type: string, nullable: true, maxLength: 256, description: 'Takes the kind and address from a saved destination (`/webhooks/destinations`), so `destination`, `url` and `target` are not given with it (400 `unsupported_option` for `destinationId`, also for an unknown id).' }
         events: { type: array, minItems: 1, maxItems: 5, items: { $ref: '#/components/schemas/WebhookEvent' } }
         queue: { type: string, nullable: true, maxLength: 256 }
         secret: { type: string, nullable: true, minLength: 16, maxLength: 256, description: 'Signs each delivery. Write-only.' }
         enabled: { type: boolean, default: true }
         filter: { type: object, nullable: true, additionalProperties: true, description: 'Which events are sent; the grammar is in `docs/webhooks.md`. Needs the delivery writer on.' }
         shape: { type: object, nullable: true, additionalProperties: true, description: 'The body template; the grammar is in `docs/webhooks.md`. Needs the delivery writer on.' }
+        name: { type: string, nullable: true, maxLength: 80, description: 'Blank or null: none.' }
+        description: { type: string, nullable: true, maxLength: 500 }
+        delayMs: { type: integer, nullable: true, minimum: 1000, maximum: 3600000, description: 'Needs the delivery writer on.' }
+        dedupe: { $ref: '#/components/schemas/WebhookDedupe', nullable: true }
+    WebhookDedupe:
+      type: object
+      required: [windowMs, fields]
+      additionalProperties: false
+      description: 'Drops an event whose chosen fields repeat inside the window; the first one goes. Needs the delivery writer on.'
+      properties:
+        windowMs: { type: integer, minimum: 1000, maximum: 86400000 }
+        fields: { type: array, minItems: 1, items: { type: string, enum: [event, queue, jobId, state, error] } }
+    WebhookPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      description: 'The keys present are set; `null` clears all but `events`.'
+      properties:
+        name: { type: string, nullable: true, maxLength: 80 }
+        description: { type: string, nullable: true, maxLength: 500 }
+        events: { type: array, minItems: 1, maxItems: 5, items: { $ref: '#/components/schemas/WebhookEvent' } }
+        filter: { type: object, nullable: true, additionalProperties: true, description: 'Needs the delivery writer on.' }
+        shape: { type: object, nullable: true, additionalProperties: true, description: 'Needs the delivery writer on.' }
+        delayMs: { type: integer, nullable: true, minimum: 1000, maximum: 3600000, description: 'Needs the delivery writer on.' }
+        dedupe: { $ref: '#/components/schemas/WebhookDedupe', nullable: true }
     WebhookPreviewRequest:
       type: object
       required: [event]
@@ -3595,13 +3963,14 @@ components:
         error: { type: string, nullable: true, description: 'A short reason in words; never an address.' }
     WebhookDelivery:
       type: object
-      required: [id, webhookId, event, queue, jobId, occurredAt, status, attempts, nextAttemptAt, lastStatusCode, lastError, history, createdAt, finishedAt]
+      required: [id, webhookId, event, queue, jobId, routedJobId, occurredAt, status, attempts, nextAttemptAt, lastStatusCode, lastError, history, createdAt, finishedAt]
       properties:
         id: { type: string, description: 'Also the `X-Webhook-Id` header: a receiver dedupes on it.' }
         webhookId: { type: string }
         event: { type: string, description: 'A `WebhookEvent`, or `webhook.test`.' }
         queue: { type: string }
-        jobId: { type: string }
+        jobId: { type: string, description: 'The job whose event this delivers.' }
+        routedJobId: { type: string, nullable: true, description: 'The job a delivered `queue` route added to its target queue; null for an `http` route and until delivered.' }
         occurredAt: { type: integer }
         status: { type: string, enum: [pending, sending, delivered, failed] }
         attempts: { type: integer }
@@ -3632,6 +4001,157 @@ components:
           properties:
             deliveries: { type: array, items: { $ref: '#/components/schemas/WebhookDelivery' } }
             next: { type: string, nullable: true }
+    WebhookIssueStatus:
+      type: string
+      enum: [open, acknowledged, resolved, ignored]
+    WebhookIssue:
+      type: object
+      required: [id, webhookId, webhookName, status, kind, openedAt, updatedAt, updatedBy, consecutiveFailures, alertLevel, pausedBy]
+      properties:
+        id: { type: string }
+        webhookId: { type: string }
+        webhookName: { type: string, nullable: true, description: 'The route''s name; null when it has none.' }
+        status: { $ref: '#/components/schemas/WebhookIssueStatus' }
+        kind: { type: string, enum: [delivery_failed] }
+        openedAt: { type: integer }
+        updatedAt: { type: integer, description: 'When the status last changed.' }
+        updatedBy: { type: string, nullable: true, description: 'The operator who last changed the status; null when Qelay did, and for a read-only caller.' }
+        consecutiveFailures: { type: integer, description: 'The route''s failed deliveries in a row now.' }
+        alertLevel: { type: integer, minimum: 0, maximum: 4, description: 'How far the streak is toward the auto-pause.' }
+        pausedBy: { type: string, enum: [operator, failures], nullable: true, description: 'Who paused the route, when it is paused and collecting.' }
+    WebhookIssuesPage:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [issues, next, counts]
+          properties:
+            issues: { type: array, items: { $ref: '#/components/schemas/WebhookIssue' } }
+            next: { type: string, nullable: true }
+            counts:
+              type: object
+              required: [open, acknowledged, resolved, ignored]
+              properties:
+                open: { type: integer }
+                acknowledged: { type: integer }
+                resolved: { type: integer }
+                ignored: { type: integer }
+    WebhookIssueSet:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { $ref: '#/components/schemas/WebhookIssueStatus' }
+    WebhookIssueEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [issue]
+          properties:
+            issue: { $ref: '#/components/schemas/WebhookIssue' }
+    WebhookRetryFailed:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [failed], description: 'Only failed deliveries are put back.' }
+        before: { type: string, pattern: '^[1-9][0-9]{0,15}$', description: 'A delivery id: only older deliveries.' }
+        limit: { type: integer, minimum: 1, maximum: 500, description: 'At most this many, newest first. Default 500.' }
+    WebhookRetryFailedEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [retried]
+          properties:
+            retried: { type: integer, description: 'How many deliveries went back to pending.' }
+    WebhookGroupStatsEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [since, until, bucketMs, groups]
+          properties:
+            since: { type: integer }
+            until: { type: integer }
+            bucketMs: { type: integer, description: 'The width of a bucket.' }
+            groups:
+              type: array
+              description: 'Every route of the namespace, by id.'
+              items:
+                type: object
+                required: [webhookId, delivered, failed, pending, failureRatio, backlog, oldestPendingAt, buckets]
+                properties:
+                  webhookId: { type: string }
+                  delivered: { type: integer }
+                  failed: { type: integer }
+                  pending: { type: integer }
+                  failureRatio: { type: number, nullable: true, description: '`failed / (delivered + failed)`; null when nothing has finished.' }
+                  backlog: { type: integer, description: 'Deliveries waiting or being sent now, whatever the window.' }
+                  oldestPendingAt: { type: integer, nullable: true }
+                  buckets:
+                    type: array
+                    items:
+                      type: object
+                      required: [from, delivered, failed, pending]
+                      properties:
+                        from: { type: integer }
+                        delivered: { type: integer }
+                        failed: { type: integer }
+                        pending: { type: integer }
+    WebhookStatsEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [stats]
+          properties:
+            stats:
+              type: object
+              required: [since, until, bucketMs, delivered, failed, pending, failureRatio, avgAttempts, backlog, oldestPendingAt, latency, buckets]
+              properties:
+                since: { type: integer }
+                until: { type: integer }
+                bucketMs: { type: integer, description: 'The width of a bucket.' }
+                delivered: { type: integer }
+                failed: { type: integer }
+                pending: { type: integer, description: 'Deliveries of the window still pending or being sent.' }
+                failureRatio: { type: number, nullable: true, description: '`failed / (delivered + failed)`; null when nothing has finished.' }
+                avgAttempts: { type: number, nullable: true, description: 'Attempts per finished delivery.' }
+                backlog: { type: integer, description: 'Deliveries waiting or being sent now, whatever the window.' }
+                oldestPendingAt: { type: integer, nullable: true, description: 'The event time of the oldest of them.' }
+                latency:
+                  type: object
+                  nullable: true
+                  required: [avgMs, p95Ms, maxMs]
+                  description: 'Of the attempts a receiver answered; null when there were none.'
+                  properties:
+                    avgMs: { type: number }
+                    p95Ms: { type: number }
+                    maxMs: { type: number }
+                buckets:
+                  type: array
+                  items:
+                    type: object
+                    required: [from, delivered, failed, pending, avgLatencyMs, p95LatencyMs]
+                    properties:
+                      from: { type: integer, description: 'The start of the slice.' }
+                      delivered: { type: integer }
+                      failed: { type: integer }
+                      pending: { type: integer }
+                      avgLatencyMs: { type: number, nullable: true }
+                      p95LatencyMs: { type: number, nullable: true }
     MetricsTotals:
       type: object
       required: [ok, metrics]

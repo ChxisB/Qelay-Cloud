@@ -22,7 +22,7 @@ describe('flow page: the list', () => {
     const repository = fakeRepository({ view: () => stuckFlow() });
     const { host, search } = mountFlows(<FlowPage repository={repository} />);
     await flush();
-    expect(host.querySelector('h1')?.textContent).toBe('Job Flows');
+    expect(host.querySelector('h1')?.textContent).toBe('Flows');
     const row = host.querySelector('tbody tr')!;
     expect(row.textContent).toContain('process-order');
     expect(row.textContent).toContain('1 stuck');
@@ -40,6 +40,8 @@ describe('flow page: the list', () => {
     const { host } = mountFlows(<FlowPage repository={repository} />);
     await flush();
     expect(host.textContent).toContain('No flows yet');
+    expect(host.textContent).toContain('added in one call');
+    expect(host.querySelector('svg[aria-hidden="true"], [aria-hidden="true"] svg')).not.toBeNull();
     expect(host.querySelector('table')).toBeNull();
   });
 

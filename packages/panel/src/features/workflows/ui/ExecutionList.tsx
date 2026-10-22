@@ -1,8 +1,11 @@
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/feedback';
+import { Figure } from '@/components/ui/Figure';
 import { Pagination } from '@/components/ui/Pagination';
-import { StatusBadge } from '@/components/ui/StatusBadge';
-import { formatDateTime, formatNumber } from '@/lib/format';
+import { StatusBadge, stateRole } from '@/components/ui/StatusBadge';
+import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
+import { formatDateTime } from '@/lib/format';
+import { useFirstLoad } from '@/lib/useFirstLoad';
 import { WORKFLOW_PAGE_SIZE } from '../domain/workflowUrlState';
 import type { WorkflowList, WorkflowSummary } from '../domain/workflowWire';
 
@@ -15,6 +18,8 @@ interface Props {
 
 /** The executions, newest first. */
 export function ExecutionList({ list, filtered, onPage, onOpen }: Props) {
+  // The rows of the first load rise in order; a page or a filter asked for later does not.
+  const first = useFirstLoad(list.executions.length > 0);
   if (list.executions.length === 0 && list.total === 0) {
     return (
       <Card>
@@ -31,25 +36,28 @@ export function ExecutionList({ list, filtered, onPage, onOpen }: Props) {
   }
   return (
     <Card padded={false}>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] text-left text-sm">
+      <TableScroll>
+        <Table className="min-w-[720px]">
           <caption className="sr-only">Workflow executions, newest first</caption>
-          <thead className="border-b border-line text-xs text-faint">
+          <THead>
             <tr>
               {['Execution', 'Workflow', 'State', 'Node', 'Detail', 'Updated'].map((heading) => (
-                <th key={heading} scope="col" className="px-4 py-3 font-medium">
-                  {heading}
-                </th>
+                <Th key={heading}>{heading}</Th>
               ))}
             </tr>
-          </thead>
+          </THead>
           <tbody>
-            {list.executions.map((run) => (
-              <ExecutionRow key={run.id} run={run} onOpen={onOpen} />
+            {list.executions.map((run, index) => (
+              <ExecutionRow
+                key={run.id}
+                run={run}
+                arrive={first ? index : undefined}
+                onOpen={onOpen}
+              />
             ))}
           </tbody>
-        </table>
-      </div>
+        </Table>
+      </TableScroll>
       <div className="px-4 pb-4">
         <Pagination
           page={Math.floor(list.offset / WORKFLOW_PAGE_SIZE)}
@@ -63,30 +71,38 @@ export function ExecutionList({ list, filtered, onPage, onOpen }: Props) {
   );
 }
 
-function ExecutionRow({ run, onOpen }: { run: WorkflowSummary; onOpen: (id: string) => void }) {
+function ExecutionRow({
+  run,
+  arrive,
+  onOpen,
+}: {
+  run: WorkflowSummary;
+  arrive: number | undefined;
+  onOpen: (id: string) => void;
+}) {
   return (
-    <tr className="border-b border-line/60 last:border-0 hover:bg-surface-2/60">
-      <td className="px-4 py-3">
+    <Tr status={stateRole(run.state) === 'failed' ? 'bad' : undefined} arrive={arrive}>
+      <Td>
         <button
           type="button"
           onClick={() => onOpen(run.id)}
           title={run.id}
-          className="max-w-[220px] truncate text-left font-mono text-xs text-fg underline decoration-dotted hover:decoration-solid"
+          className="min-h-8 max-w-[220px] truncate rounded-control text-left font-mono text-xs font-bold text-link underline decoration-dotted hover:decoration-solid"
         >
           <span translate="no">{run.id}</span>
         </button>
-        {run.parentExecutionId && <div className="text-[11px] text-faint">Child run</div>}
-      </td>
-      <td className="px-4 py-3 text-muted" translate="no">
+        {run.parentExecutionId && <div className="text-xs text-faint">Child run</div>}
+      </Td>
+      <Td className="text-muted" translate="no">
         {run.workflowName}
-      </td>
-      <td className="px-4 py-3">
+      </Td>
+      <Td>
         <StatusBadge status={run.state} />
-      </td>
-      <td className="px-4 py-3 tabular-nums text-muted">
-        {formatNumber(run.currentNodeIndex + 1)}
-      </td>
-      <td className="max-w-[280px] px-4 py-3 text-xs text-muted">
+      </Td>
+      <Td className="tnum text-muted">
+        <Figure value={run.currentNodeIndex + 1} />
+      </Td>
+      <Td className="max-w-[280px] text-xs text-muted">
         {run.wait ? (
           <span>
             Waiting for <span translate="no">{run.wait.event}</span>
@@ -97,8 +113,8 @@ function ExecutionRow({ run, onOpen }: { run: WorkflowSummary; onOpen: (id: stri
         ) : (
           <span className="text-faint">—</span>
         )}
-      </td>
-      <td className="px-4 py-3 text-xs text-faint">{formatDateTime(run.updatedAt)}</td>
-    </tr>
+      </Td>
+      <Td className="text-xs text-muted">{formatDateTime(run.updatedAt)}</Td>
+    </Tr>
   );
 }

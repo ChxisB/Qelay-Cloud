@@ -1,6 +1,10 @@
 import { Link } from 'react-router-dom';
+import { type StateRole, StatusPill } from '@/components/ui/StatusBadge';
+import { Table, TableScroll, Td, Th, THead, type RowStatus, Tr } from '@/components/ui/Table';
 import { cn } from '@/lib/cn';
 import { formatNumber } from '@/lib/format';
+import { useChangeFlash } from '@/lib/useChangeFlash';
+import { useFirstLoad } from '@/lib/useFirstLoad';
 import type { QueueHealth } from './model';
 
 const LEGEND = [
@@ -26,10 +30,20 @@ function splitOf(q: QueueHealth): Split {
   };
 }
 
-function rowDot(q: QueueHealth, s: Split): string {
-  if (s.dlq > 0 || (q.counts?.failed ?? 0) > 0) return 'bg-danger-fill';
-  if (q.paused) return 'bg-state-waiting-fg';
-  return s.active > 0 ? 'bg-state-active-fg' : 'bg-success';
+interface RowState {
+  role: StateRole;
+  word: string;
+  bar?: RowStatus;
+}
+
+/** One word and glyph per row, so the bar is never the only signal. A missing reading is "Unknown", not healthy. */
+function rowState(q: QueueHealth, s: Split): RowState {
+  if (s.dlq > 0 || (q.counts?.failed ?? 0) > 0)
+    return { role: 'failed', word: 'Failing', bar: 'bad' };
+  if (q.paused) return { role: 'waiting', word: 'Paused', bar: 'idle' };
+  if (!q.counts) return { role: 'waiting', word: 'Unknown' };
+  if (s.active > 0) return { role: 'active', word: 'Active', bar: 'active' };
+  return { role: 'completed', word: 'Healthy' };
 }
 
 function DistributionBar({ split }: { split: Split }) {
@@ -47,20 +61,23 @@ function DistributionBar({ split }: { split: Split }) {
       className="flex h-2 gap-0.5 overflow-hidden rounded bg-line"
     >
       {shown.map(([n, color, label]) => (
-        <div key={label} className={color} style={{ flex: `${n} 1 0` }} />
+        <div key={label} className={cn(color, 'motion-fill')} style={{ flex: `${n} 1 0` }} />
       ))}
     </div>
   );
 }
 
 function Num({ value, tone }: { value: number | null; tone?: 'danger' }) {
+  const flash = useChangeFlash(value);
   if (value == null) return <span className="text-faint">—</span>;
   return (
     <span
+      key={flash}
       className={cn(
         'tnum',
         value === 0 && 'text-muted',
-        tone === 'danger' && value > 0 && 'font-semibold text-danger'
+        tone === 'danger' && value > 0 && 'font-semibold text-danger',
+        flash > 0 && 'motion-flash'
       )}
     >
       {formatNumber(value)}
@@ -69,6 +86,7 @@ function Num({ value, tone }: { value: number | null; tone?: 'danger' }) {
 }
 
 export function QueueHealthTable({ rows, total }: { rows: QueueHealth[]; total: number }) {
+  const first = useFirstLoad(rows.length > 0);
   return (
     <section
       aria-label="Queue health"
@@ -76,7 +94,7 @@ export function QueueHealthTable({ rows, total }: { rows: QueueHealth[]; total: 
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5 px-4 pb-3.5 pt-[18px]">
         <div className="flex flex-col gap-[3px]">
-          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Queue health</h2>
+          <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Queue health</h2>
           <p className="text-xs text-muted">
             {total} {total === 1 ? 'queue' : 'queues'} · sorted by what needs attention
           </p>
@@ -91,69 +109,59 @@ export function QueueHealthTable({ rows, total }: { rows: QueueHealth[]; total: 
         </ul>
       </div>
       {rows.length === 0 ? (
-        <p className="border-t border-line py-8 text-center text-sm text-faint">No queues yet.</p>
+        <p className="border-t border-line py-6 text-center text-sm text-faint">No queues yet.</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-y border-line text-left eyebrow text-muted">
-                <th className="px-3 py-2.5 font-semibold sm:px-4">Queue</th>
-                <th className="hidden px-4 py-2.5 font-semibold sm:table-cell">Distribution</th>
+        <TableScroll>
+          <Table>
+            <THead>
+              <tr>
+                <Th>Queue</Th>
+                <Th className="hidden sm:table-cell">Distribution</Th>
                 {['Ready', 'Active', 'Delayed', 'DLQ'].map((h) => (
-                  <th
-                    key={h}
-                    className="px-1.5 py-2.5 text-right font-semibold tracking-[0.1em] sm:w-20 sm:px-4 sm:tracking-[0.18em]"
-                  >
+                  <Th key={h} tight right className="sm:w-20">
                     {h}
-                  </th>
+                  </Th>
                 ))}
               </tr>
-            </thead>
+            </THead>
             <tbody>
-              {rows.map((q) => {
+              {rows.map((q, index) => {
                 const s = splitOf(q);
+                const state = rowState(q, s);
                 return (
-                  <tr key={q.name} className="border-b border-line last:border-b-0 hover:bg-hover">
-                    <td className="max-w-[6.5rem] px-3 py-3.5 sm:max-w-none sm:px-4">
-                      <span className="flex items-center gap-2.5">
-                        <span
-                          className={cn('size-2 shrink-0 rounded-full', rowDot(q, s))}
-                          aria-hidden="true"
-                        />
+                  <Tr key={q.name} status={state.bar} arrive={first ? index : undefined}>
+                    <Td className="max-w-[8rem] sm:max-w-none">
+                      <span className="flex flex-col items-start gap-1.5">
                         <Link
                           to={`/queues/${encodeURIComponent(q.name)}`}
-                          className="truncate font-semibold text-fg hover:text-link focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                          className="max-w-full truncate font-bold text-fg hover:text-link"
                         >
                           {q.name}
                         </Link>
-                        {q.paused && (
-                          <span className="rounded-full bg-state-waiting-bg px-2 py-0.5 text-[11px] font-medium text-state-waiting-fg">
-                            paused
-                          </span>
-                        )}
+                        <StatusPill state={state.role}>{state.word}</StatusPill>
                       </span>
-                    </td>
-                    <td className="hidden px-4 py-3.5 sm:table-cell">
+                    </Td>
+                    <Td className="hidden sm:table-cell">
                       <DistributionBar split={s} />
-                    </td>
-                    <td className="px-1.5 py-3.5 text-right sm:px-4">
+                    </Td>
+                    <Td tight className="text-right">
                       <Num value={q.counts ? s.ready : null} />
-                    </td>
-                    <td className="px-1.5 py-3.5 text-right sm:px-4">
+                    </Td>
+                    <Td tight className="text-right">
                       <Num value={q.counts ? s.active : null} />
-                    </td>
-                    <td className="px-1.5 py-3.5 text-right sm:px-4">
+                    </Td>
+                    <Td tight className="text-right">
                       <Num value={q.counts ? s.delayed : null} />
-                    </td>
-                    <td className="px-1.5 py-3.5 text-right sm:px-4">
+                    </Td>
+                    <Td tight className="text-right">
                       <Num value={q.dlq} tone="danger" />
-                    </td>
-                  </tr>
+                    </Td>
+                  </Tr>
                 );
               })}
             </tbody>
-          </table>
-        </div>
+          </Table>
+        </TableScroll>
       )}
       {total > rows.length && (
         <div className="border-t border-line px-4 py-3 text-[13px]">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useGlobalModalStore } from '@/components/dashboard/stores/globalModalStore';
+import { holdsModal, useGlobalModalStore } from '@/components/dashboard/stores/globalModalStore';
 import { BqError, bq, type DbFilter } from '@/lib/bq';
 import { usePolledData } from '@/lib/usePolledData';
 import {
@@ -21,7 +21,8 @@ export function useDatabaseController() {
   const [tab, setTab] = useState<Tab>('data');
   const [filter, setFilter] = useState<DbFilter | null>(null);
   const [detailSelection, setDetailSelection] = useState<DbDetailSelection | null>(null);
-  const activeModal = useGlobalModalStore((state) => state.active);
+  // True while a confirm is up over the drawer too: the drawer stays on screen, inert.
+  const drawerHeld = useGlobalModalStore(holdsModal('database-row'));
   const requestModal = useGlobalModalStore((state) => state.request);
   const releaseModal = useGlobalModalStore((state) => state.release);
   const [sql, setSql] = useState("SELECT name FROM sqlite_master WHERE type = 'table'");
@@ -30,12 +31,12 @@ export function useDatabaseController() {
   useEffect(() => {
     if (detailSelection === null) {
       releaseModal('database-row');
-    } else if (activeModal !== 'database-row') {
+    } else if (!drawerHeld) {
       // A higher-priority modal replaced the drawer. Forget the row so closing
       // that modal cannot resurrect a stale detail panel.
       setDetailSelection(null);
     }
-  }, [detailSelection, activeModal, releaseModal]);
+  }, [detailSelection, drawerHeld, releaseModal]);
 
   useEffect(
     () => () => {
@@ -191,7 +192,7 @@ export function useDatabaseController() {
   });
 
   return {
-    activeModal,
+    drawerHeld,
     anyTruncated,
     colMeta,
     cycleSort,

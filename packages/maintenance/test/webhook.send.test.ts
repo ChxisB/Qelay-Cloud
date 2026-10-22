@@ -273,4 +273,14 @@ describe('webhook attempt: a body the writer made', () => {
     expect(result.error).toContain('too large');
     expect(s.calls).toEqual([]);
   });
+
+  test('an http delivery with no address is refused without a request or a lookup', async () => {
+    // The store keeps '' as the url of a queue route; an http one never has it, and nothing is sent if it did.
+    const s = script();
+    const result = await sendDelivery(delivery({ url: '' }), s.deps());
+    expect(result).toMatchObject({ ok: false, statusCode: null });
+    expect(result.error).toContain('destination not allowed');
+    expect(s.calls).toEqual([]);
+    expect(s.lookups).toEqual([]);
+  });
 });

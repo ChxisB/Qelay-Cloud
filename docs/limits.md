@@ -9,8 +9,7 @@ What each broker does, side by side (delay mechanism, at-least-once, dead-letter
 cost drivers), and which test pins it, is in [transports.md](transports.md). Its delay-precision figures are compared
 with section 1 below by `test/contract/matrix.test.ts`.
 
-Measured on PostgreSQL 18.6 on one developer machine, Bun 1.4.2. The PostgreSQL 16 run is owed (see
-[What has not been run](#8-what-has-not-been-run)).
+Measured on PostgreSQL 18.6 on one developer machine, Bun 1.4.2.
 
 ## 1. Delay precision, by hosting mode
 
@@ -66,6 +65,7 @@ is.** `run_at` is a floor: no job was ever claimed early in any run.
 | A flow | **1,000** jobs and **100** levels; an action on a flow names at most 1,000 jobs | `MAX_FLOW_JOBS`, `MAX_FLOW_DEPTH` |
 | A flow in the Control API | `GET /flows/:id` returns **1,000** jobs by default and at most **5,000**, top level first, with `truncated`; `GET /flows` pages of at most **100** | `DEFAULT_FLOW_VIEW_NODES`, `MAX_FLOW_VIEW_NODES`; every statement has a `LIMIT` |
 | Webhooks | **100** per namespace; a URL of at most **2,048** characters; a secret of **16 to 256** characters; a delivery's history keeps its last **20** attempts and its error **500** characters; a deliveries page is at most the store's `MAX_DELIVERY_PAGE` | `MAX_WEBHOOKS`, `MAX_WEBHOOK_URL_CHARS`, `WEBHOOK_HISTORY_ENTRIES`; see [webhooks.md](webhooks.md) and section 12 |
+| Event gateway routes | a chain of `queue` routes is at most **5** routes long, and a loop is refused when a route is saved (`409 route_chain_too_long`, `route_cycle`); **Retry all failed** puts back at most **500** events a call; the stats window is at most **7 days** | `MAX_ROUTE_CHAIN`, `MAX_BULK_RETRY`, `MAX_STATS_WINDOW_MS`; see [event-gateway.md](event-gateway.md) |
 | Doorbell content | a bell carries no payload and no job id: it says only that a queue has work | design (fungible bells) |
 
 ## 3. Throughput and latency (load check)
@@ -344,7 +344,7 @@ left for the first real run (decision D9: nothing paid or shared is created with
 
 | Area | Proven (where) | Not run |
 | --- | --- | --- |
-| **Core queue semantics** | Postgres store against the model: 500 runs of 150 commands, green on the in-memory fake, on Postgres and on Postgres with workers; 36 end-to-end scenarios (12 scenarios on the memory, Postgres and Pub/Sub-emulator stacks) | PostgreSQL 16 (all of the above ran on 18.6) |
+| **Core queue semantics** | Postgres store against the model: 500 runs of 150 commands, green on the in-memory fake, on Postgres and on Postgres with workers; 36 end-to-end scenarios (12 scenarios on the memory, Postgres and Pub/Sub-emulator stacks) | None known (all of the above ran on PostgreSQL 18.6) |
 | **Cloud SQL and RDS** | TLS and a pooler on local Postgres; `connection.*` suites | TLS **hostname verification** against Cloud SQL's CN-only certificate; IAM authentication; HA failover (reset or stall); managed pooling; RDS Proxy pinning, including `nextval` and `prepare: false`; a measured fleet on a real instance |
 | **Pub/Sub** | The transport against the emulator: publish, filter by queue, ack and redeliver, dead-letter wiring, `stats`; monitoring metric names against a **stub** | Exponential retry backoff (the emulator's is not exponential); dead-lettering under real IAM; throughput; streaming pull across Cloud Run restarts; that a busy worker holds at most `maxHeld` bells (the emulator ignores flow control, a `test.todo`); the official client under Bun against the real service; the real metric names and filters |
 | **Pub/Sub `stats`** | `inFlight` is unknown and `delayed` is 0; `stats` lag about 5 minutes plus the cache | the real lag |
@@ -352,9 +352,9 @@ left for the first real run (decision D9: nothing paid or shared is created with
 | **Delay** | The in-process tick, measured (section 1) | Cloud Tasks precision and cost; Cloud Scheduler jitter |
 | **Terraform (`infra/gcp`)** | `terraform fmt`, `init`, `validate` and a **credential-free `plan`**, 161 assertions in `bun run check:terraform`: safety settings, Pub/Sub names the transport expects, the budget against the TypeScript budget, refusals | `terraform apply`, ever; the thirteen items under "Needs D9" in [infra/gcp/README.md](../infra/gcp/README.md): TLS hostname, VPC egress to the private IP, dead-lettering with the service agent's grants, `max_connections` accepted, the tick's audience, OIDC accepted twice, `ttl = ""`, subnet sizing, alert filters, the secret mount, the worker pool, the CREMA autoscaler, shutdown inside 10 s |
 | **The example on GCP** | on the local transport, as a test and a demo (`examples/orders`) | the GCP path: no worker image is built anywhere in the repository yet (task 36) and nothing was applied |
-| **Control API and panel** | A scripted operator walkthrough and its failure drills through the real panel on Chromium (and WebKit for the walkthrough), a sweep of every documented operation for authentication, roles, headers and secrets ([docs/security/phase2-pass.md](security/phase2-pass.md)), and reads on 149,000 jobs over 50 queues (section 10) | Firefox (it would not launch in the build sandbox); any deployed environment; a real OIDC provider; IAP; a container scan; reads on a managed database or on PostgreSQL 16; an independent security review (task 72) |
-| **Webhooks** | The store (57 tests), the sender over real sockets and through the tick (a flaky receiver, the backoff schedule, a signature vector, four concurrent ticks, an SSRF matrix with a redirect and a rebinding resolver, TLS against a test CA), the routes and their audit rows, and the panel page on Chromium and WebKit, all on PostgreSQL 18.6 | PostgreSQL 16; a receiver across the internet; a public CA's certificate chain; the resolver and egress of a real VPC (Cloud NAT, a NAT gateway: whether the cloud metadata address and internal names are in fact unreachable from the tick); an independent review of the SSRF defences (task 72) |
-| **PgBouncer, TLS and PG 16** | suites written (`connection.pooled`, `maintenance/pooled`, `connection.tls`) | run at the end of the plan, with the Docker profiles |
+| **Control API and panel** | A scripted operator walkthrough and its failure drills through the real panel on Chromium (and WebKit for the walkthrough), a sweep of every documented operation for authentication, roles, headers and secrets ([docs/security/phase2-pass.md](security/phase2-pass.md)), and reads on 149,000 jobs over 50 queues (section 10) | Firefox (it would not launch in the build sandbox); any deployed environment; a real OIDC provider; IAP; a container scan; reads on a managed database; an independent security review (task 72) |
+| **Webhooks** | The store (57 tests), the sender over real sockets and through the tick (a flaky receiver, the backoff schedule, a signature vector, four concurrent ticks, an SSRF matrix with a redirect and a rebinding resolver, TLS against a test CA), the routes and their audit rows, and the panel page on Chromium and WebKit, all on PostgreSQL 18.6 | A receiver across the internet; a public CA's certificate chain; the resolver and egress of a real VPC (Cloud NAT, a NAT gateway: whether the cloud metadata address and internal names are in fact unreachable from the tick); an independent review of the SSRF defences (task 72) |
+| **PgBouncer and TLS** | suites written (`connection.pooled`, `maintenance/pooled`, `connection.tls`) | run at the end of the plan, with the Docker profiles |
 
 ## 9. Emulator gaps worth knowing
 
@@ -485,7 +485,7 @@ publishes to the shared topic and nobody hears it until the tick re-rings (and t
 ## 12. Webhooks (task 52)
 
 What the delivery path costs and where it stops. The design is in [webhooks.md](webhooks.md). Measured on PostgreSQL 18.6
-on one developer machine, Bun 1.4.2; PostgreSQL 16 is owed.
+on one developer machine, Bun 1.4.2.
 
 **Measured: the trigger on the job path.** `packages/store-postgres/test/webhook.cost.test.ts`: 8 claimers push, claim and
 complete 2,000 jobs in a queue three webhooks watch (pushed, started, completed: nine delivery rows per job) and in a queue
@@ -510,6 +510,34 @@ the settings, not a load test. `qcloud-tick send` is not bound by the batch or t
 `QCLOUD_WEBHOOK_CONCURRENCY` requests in flight and refills as they finish, so its ceiling is concurrency divided by the
 time of one request (8 in flight at 200 ms a request is about 40 a second), and the per-webhook rate still applies.
 That too is arithmetic.
+
+**A `queue` route** (event gateway, [event-gateway.md](event-gateway.md)) sends no request: its attempt is one `enqueue` in the
+same database, so it costs a job insert and counts against the sender's batch like a request does. It is not measured
+separately; the figures above are for `http` routes. A queue route is operator-scale too, and a chain multiplies it:
+each hop is one more job and one more delivery row per event.
+
+**The stats read** (`GET /webhooks/stats`, behind the panel's Metrics and Home) reads every delivery row of its window with
+the attempts each keeps, so its cost grows with the events in that window (at most 7 days). It is not measured. Home asks
+for the last 24 hours once a minute, and Metrics asks on the panel's refresh interval (3 seconds by default): a namespace
+with a heavy event rate should lengthen it, or keep Metrics closed.
+
+**Gateway features (D13, not measured).** None of these has a timed test; each is stated from the code.
+
+- **The grouped stats read** (`GET /webhooks/stats?groupBy=webhook`, behind the connections list) is one `GROUP BY` count over
+  the window's deliveries (by event time, the partition key, so only those days are read) and one probe of the
+  pending-delivery index for each webhook, so its cost grows with the events in the window and with the webhooks (at most 100).
+  It reads no attempt history, so it is cheaper than one stats read for each connection, which it replaces. The panel polls it
+  with the list on the refresh interval, so a heavy namespace should lengthen that.
+- **Issues** add one statement to the recording path: when a batch of attempts ends deliveries, one insert for the routes that
+  failed and one update for the routes that delivered, in the same transaction. A batch with no ended delivery adds nothing.
+  The Issues tab reads an index on `(namespace, status, id DESC)`, at most 200 rows. The tick prunes resolved issues with
+  the finished deliveries (`QCLOUD_WEBHOOK_KEEP_MS`, 2 days).
+- **De-duplication** adds one read of `qcloud_webhook_dedupe` for the page's keyed events and one write of the keys
+  that opened a window, inside the writer's transaction. A route with a window of 24 hours keeps a row for every distinct
+  value it accepted in that day, so a `jobId` key on a busy queue is one row for each job; choose few fields and short
+  windows. The tick prunes rows whose window has ended.
+- **Saved destinations** are at most 100 for each namespace. Changing one rewrites the copies of every connection that uses
+  it (at most 100) and re-checks the loop rule, in one transaction under the same advisory lock as a save.
 
 **What this does not promise.**
 

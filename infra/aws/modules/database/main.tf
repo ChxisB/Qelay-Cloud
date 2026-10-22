@@ -1,4 +1,4 @@
-# RDS for PostgreSQL 16 in private subnets, encrypted at rest and in transit, with automated backups and
+# RDS for PostgreSQL 18 in private subnets, encrypted at rest and in transit, with automated backups and
 # point-in-time recovery, and two layers of deletion protection (the instance's flag and prevent_destroy).
 #
 # The instance is reached on its private address with a password, over TLS. RDS has no IAM role for a direct
@@ -45,8 +45,8 @@ resource "aws_vpc_security_group_ingress_rule" "from_clients" {
 }
 
 resource "aws_db_parameter_group" "main" {
-  name        = "${var.name}-pg16"
-  family      = "postgres16"
+  name        = "${var.name}-pg18"
+  family      = "postgres18"
   description = "Qelay-Cloud ${var.name}: connection limit and TLS"
   tags        = var.tags
 
@@ -153,8 +153,8 @@ resource "aws_db_instance" "main" {
 resource "aws_rds_cluster_parameter_group" "main" {
   count = local.cluster ? 1 : 0
 
-  name        = "${var.name}-pg16-cluster"
-  family      = "postgres16"
+  name        = "${var.name}-pg18-cluster"
+  family      = "postgres18"
   description = "Qelay-Cloud ${var.name}: connection limit and TLS"
   tags        = var.tags
 

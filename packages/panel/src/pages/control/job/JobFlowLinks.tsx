@@ -9,7 +9,7 @@ const CHILD_LINK_LIMIT = 10;
 const jobHref = (id: string) => `/job?id=${encodeURIComponent(id)}`;
 
 const linkClass =
-  'break-all font-mono text-xs text-fg underline decoration-dotted hover:decoration-solid';
+  'break-all font-mono text-[13px] text-fg underline decoration-dotted hover:decoration-solid';
 
 /** Where the job sits in its flow: the flow, its parent, and the jobs it waits for. */
 export function JobFlowLinks({ job }: { job: JobFull }) {
@@ -21,10 +21,10 @@ export function JobFlowLinks({ job }: { job: JobFull }) {
   return (
     <Card>
       <CardHeader title="Flow" />
-      <dl className="space-y-2 text-sm">
+      <dl className="space-y-3 text-[13px]">
         {root && (
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <dt className="text-[11px] uppercase tracking-wider text-faint">Part of flow</dt>
+            <dt className="text-[13px] font-semibold text-muted">Part of flow</dt>
             <dd>
               <Link to={flowHref(root, job.id)} translate="no" className={linkClass}>
                 {root === job.id ? 'This flow' : root}
@@ -34,7 +34,7 @@ export function JobFlowLinks({ job }: { job: JobFull }) {
         )}
         {parent && (
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <dt className="text-[11px] uppercase tracking-wider text-faint">Child of</dt>
+            <dt className="text-[13px] font-semibold text-muted">Child of</dt>
             <dd>
               <Link to={jobHref(parent)} translate="no" className={linkClass}>
                 {parent}
@@ -44,11 +44,11 @@ export function JobFlowLinks({ job }: { job: JobFull }) {
         )}
         {children.length > 0 && (
           <div>
-            <dt className="mb-1 text-[11px] uppercase tracking-wider text-faint">
+            <dt className="mb-2 text-[13px] font-semibold text-muted">
               Parent of {children.length} {children.length === 1 ? 'job' : 'jobs'}
             </dt>
             <dd>
-              <ul className="space-y-1">
+              <ul className="space-y-2">
                 {shown.map((id) => (
                   <li key={id}>
                     <Link to={jobHref(id)} translate="no" className={linkClass}>
@@ -58,7 +58,7 @@ export function JobFlowLinks({ job }: { job: JobFull }) {
                 ))}
               </ul>
               {children.length > shown.length && (
-                <p className="mt-1 text-xs text-faint">
+                <p className="mt-2 text-[13px] text-muted">
                   and {children.length - shown.length} more.{' '}
                   {root && (
                     <Link to={flowHref(root, job.id)} className="underline">

@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePresence } from '@/lib/usePresence';
 import { DatabaseShell } from './DatabaseShell';
 import { RowDetailDrawer } from './RowDetailDrawer';
 import { useDatabaseController } from './useDatabaseController';
@@ -12,20 +14,25 @@ import { useDatabaseController } from './useDatabaseController';
  */
 export function Database() {
   const db = useDatabaseController();
-  const { activeModal, detail, setDetailSelection } = db;
+  const { drawerHeld, detail, setDetailSelection } = db;
+  const { mounted, leaving } = usePresence(detail !== null && drawerHeld);
+  // The last row stays on screen while the drawer leaves.
+  const [shown, setShown] = useState(detail);
+  if (detail && detail !== shown) setShown(detail);
 
   return (
     <div>
       <DatabaseShell db={db} />
-      {detail &&
-        activeModal === 'database-row' &&
+      {mounted &&
+        shown &&
         createPortal(
           <RowDetailDrawer
-            table={detail.table}
-            columns={detail.columns}
-            row={detail.row}
-            rowid={detail.rowid}
-            truncated={detail.truncated}
+            table={shown.table}
+            columns={shown.columns}
+            row={shown.row}
+            rowid={shown.rowid}
+            truncated={shown.truncated}
+            leaving={leaving}
             onClose={() => setDetailSelection(null)}
           />,
           document.body

@@ -1,15 +1,16 @@
 import { Link } from 'react-router-dom';
+import { type StateRole, StatusGlyph } from '@/components/ui/StatusBadge';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { ago, figure, stripTone, TONE_WORD, type Tone } from '@/lib/ops/health';
 import type { DeploymentView } from '@/lib/ops/types';
 import { usePolledData } from '@/lib/usePolledData';
 
-const DOT: Record<Tone, string> = {
-  green: 'bg-success',
-  amber: 'bg-warning',
-  red: 'bg-danger-fill',
-  zinc: 'bg-state-waiting-fg',
+const GLYPH: Record<Tone, StateRole> = {
+  green: 'completed',
+  amber: 'delayed',
+  red: 'failed',
+  zinc: 'waiting',
 };
 
 const BORDER: Record<Tone, string> = {
@@ -22,18 +23,18 @@ const BORDER: Record<Tone, string> = {
 function tickText(tick: DeploymentView['tick']): string {
   switch (tick.state) {
     case 'never':
-      return 'Tick has not run yet';
+      return 'Maintenance has not run yet';
     case 'unknown':
-      return 'Tick status unknown';
+      return 'Maintenance status unknown';
     default:
-      return `Tick ran ${ago(tick.ageMs)}`;
+      return `Maintenance ran ${ago(tick.ageMs)}`;
   }
 }
 
 function doorbellText(doorbells: DeploymentView['doorbells']): string {
-  if (doorbells.notRung === null) return 'Doorbells unknown';
+  if (doorbells.notRung === null) return 'Worker notifications unknown';
   const more = doorbells.partial ? '+' : '';
-  return `${figure(doorbells.notRung)}${more} job${doorbells.notRung === 1 && !doorbells.partial ? '' : 's'} without a doorbell`;
+  return `${figure(doorbells.notRung)}${more} job${doorbells.notRung === 1 && !doorbells.partial ? '' : 's'} not yet notified to workers`;
 }
 
 /**
@@ -43,6 +44,17 @@ function doorbellText(doorbells: DeploymentView['doorbells']): string {
  */
 export function StatusStrip() {
   const { data, error } = usePolledData(() => api.deployment(), []);
+  return <StatusStripView data={data} error={error} />;
+}
+
+/** The strip for a deployment answer someone else polled, so a page that needs it too asks once. */
+export function StatusStripView({
+  data,
+  error,
+}: {
+  data: DeploymentView | null;
+  error: Error | null;
+}) {
   const tone: Tone = data ? stripTone(data) : 'zinc';
   const word = data ? TONE_WORD[tone] : error ? 'Unknown' : 'Checking';
   const lines = data
@@ -53,14 +65,14 @@ export function StatusStrip() {
       to="/deployment"
       data-testid="status-strip"
       data-tone={tone}
-      aria-label={`Doorbell path: ${word}. ${lines.join('. ')}. Open the deployment page.`}
+      aria-label={`Job delivery: ${word}. ${lines.join('. ')}. Open the deployment page.`}
       className={cn(
-        'flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-card border bg-surface px-5 py-3 text-sm hover:bg-hover',
+        'flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-card border bg-surface px-4 py-3 text-sm hover:bg-hover',
         BORDER[tone]
       )}
     >
       <span className="flex items-center gap-2.5 font-semibold text-fg">
-        <span className={cn('size-2.5 rounded-full', DOT[tone])} aria-hidden="true" />
+        <StatusGlyph state={GLYPH[tone]} />
         {word}
       </span>
       {lines.map((line) => (

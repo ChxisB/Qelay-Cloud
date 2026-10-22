@@ -1,35 +1,42 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { toast } from '@/components/dashboard/stores/toastStore';
-import { Button } from '@/components/ui/Button';
+import { iconButtonClass } from '@/components/ui/Button';
+import { Disclosure } from '@/components/ui/Disclosure';
 import { EmptyState, ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
 import { IconArrowRight, IconChevronLeft } from '@/components/ui/icons';
+import { LinkButton } from '@/components/ui/LinkButton';
+import { LinkTabs } from '@/components/ui/LinkTabs';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
-import { StatusDot } from '@/components/ui/StatusBadge';
+import { StatusPill } from '@/components/ui/StatusBadge';
+import { QueueOperationsPanel } from '@/features/queue-operations/ui/QueueOperationsPanel';
 import { bq } from '@/lib/bq';
 import type { JobFull } from '@/lib/bqTypes';
-import { useCanOperate } from '@/lib/capabilities/useCapabilities';
-import { FLOW_DELETION_UNAVAILABLE } from '@/lib/flowMutationSafety';
+import { useCanOperate, useConceptHidden } from '@/lib/capabilities/useCapabilities';
 import { errorRate, formatNumber } from '@/lib/format';
 import { usePolledData } from '@/lib/usePolledData';
 import { assertSuccessfulMutationResponse, useServerActionGuard } from '@/lib/useServerActionGuard';
-import { ConfigLoadError, DlqConfigForm, StallForm } from './queue/ConfigForms';
-import { LifecycleCard, LimitsCards } from './queue/QueueActions';
+import { STATE_LABEL } from './jobsPro/model';
+import type { RunConfirm } from './queue/queueActionModel';
+import { assertQueueDetail } from './queue/queueDiscovery';
+import { QueueSettings } from './queue/QueueSettings';
 import { QUEUE_DETAIL_COUNT_KEYS, QUEUE_DETAIL_RECENT_STATES } from './queueDetail/model';
 import {
   BacklogDepthCard,
   PriorityHistogram,
   RecentQueueJobs,
 } from './queueDetail/QueueDetailSections';
+import { QueueLifecycle } from './queueDetail/QueueLifecycle';
 import { useQueueDepth } from './queueDetail/useQueueDepth';
 
 /**
- * Pro per-queue operations page, reached by drilling into a queue from the Overview
- * or Queues list (`/queues/:name`). Route-param driven (deep-linkable), unlike the
- * dropdown-based Queue Control page. Reuses the same lifecycle/limits/config
- * building blocks as QueueControl, shows the unavailable obliterate capability, a live backlog-depth sparkline,
- * recent jobs, and jump-off links to this queue's Jobs and DLQ views.
+ * Pro per-queue page, reached by drilling into a queue from the Overview or Queues list
+ * (`/queues/:name`), deep-linkable. Two tabs: Overview (counts, a live backlog-depth sparkline,
+ * recent jobs and jump-off links to this queue's Jobs and DLQ views) and Settings
+ * (`?tab=settings`, operators only: plain-language cards, one main action each; this is where
+ * the old Queue control page went). Monitoring and settings stay on separate tabs on purpose.
  */
 export function QueueDetailPro() {
   const { name = '' } = useParams();
@@ -37,6 +44,11 @@ export function QueueDetailPro() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const actionGuard = useServerActionGuard(`queue:${name}`);
   const canOperate = useCanOperate();
+  // The SDK operations card calls a local control agent, which a managed deployment does not have.
+  const operationsHidden = useConceptHidden('queueOperations');
+  const [operationsRevision, setOperationsRevision] = useState(0);
+  const [params] = useSearchParams();
+  const tab = canOperate && params.get('tab') === 'settings' ? 'settings' : 'overview';
   // scopeKey is the queue and connection lifecycle boundary.
   useEffect(() => {
     setBusy(false);
@@ -72,8 +84,9 @@ export function QueueDetailPro() {
           error: (error as Error).message || 'Unknown error',
         })),
     ]);
+    assertQueueDetail(detail, name);
     // Tag with the queue it was fetched for, so a param change can't render (or
-    // save) queue A's data under queue B for one round-trip (QueueControl pattern).
+    // save) queue A's data under queue B for one round-trip.
     return {
       queue: name,
       exists: true as const,
@@ -92,10 +105,10 @@ export function QueueDetailPro() {
   const run = async (
     label: string,
     fn: () => Promise<unknown>,
-    confirmMsg?: string,
+    confirm?: RunConfirm,
     onSuccess?: () => void
   ) => {
-    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    if (confirm && !(await confirmInPage(confirm))) return;
     const lease = actionGuard.begin();
     if (!lease) return;
     setBusy(true);
@@ -117,6 +130,7 @@ export function QueueDetailPro() {
       setMsg({ ok: true, text });
       toast.success(text, name);
       onSuccess?.();
+      setOperationsRevision((revision) => revision + 1);
       refetch();
     } catch (e) {
       if (!lease.isCurrent()) return;
@@ -128,6 +142,7 @@ export function QueueDetailPro() {
     }
   };
 
+  const base = `/queues/${encodeURIComponent(name)}`;
   const detail = data?.detail;
   const c = detail?.counts;
   // Keep null when nothing has been processed — "0.00%" from zero data is a
@@ -138,7 +153,7 @@ export function QueueDetailPro() {
     <div>
       <PageHeader
         title={<span className="font-mono">{name}</span>}
-        description="Full per-queue operations and complete live non-terminal depth."
+        description="How this queue is doing right now. Use Settings to change how it behaves."
         live={
           data?.exists === true &&
           !!data.detail &&
@@ -148,34 +163,23 @@ export function QueueDetailPro() {
           !error
         }
         back={
-          <Link
-            to="/queues"
-            aria-label="Back to queues"
-            className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
+          <Link to="/queues" aria-label="Back to queues" className={iconButtonClass()}>
             <IconChevronLeft className="size-4" />
           </Link>
         }
         actions={
           data?.exists === true ? (
             <>
-              <Link
+              <LinkButton
                 to={`/jobs?queue=${encodeURIComponent(name)}`}
-                className="flex items-center gap-1 rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg"
+                size="sm"
+                className="gap-1"
               >
-                Jobs <IconArrowRight className="size-3.5" />
-              </Link>
-              <Link
-                to={`/dlq?queue=${encodeURIComponent(name)}`}
-                className="flex items-center gap-1 rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg"
-              >
-                DLQ <IconArrowRight className="size-3.5" />
-              </Link>
-              {canOperate && (
-                <Button variant="danger" size="sm" disabled title={FLOW_DELETION_UNAVAILABLE}>
-                  Obliterate
-                </Button>
-              )}
+                See jobs <IconArrowRight className="size-3.5" />
+              </LinkButton>
+              <LinkButton to={`/dlq?queue=${encodeURIComponent(name)}`} size="sm" className="gap-1">
+                See failed jobs <IconArrowRight className="size-3.5" />
+              </LinkButton>
             </>
           ) : undefined
         }
@@ -198,91 +202,90 @@ export function QueueDetailPro() {
             title="Queue not found"
             hint={`No queue named "${name}" exists — it may have been obliterated, or the link is stale.`}
             action={
-              <Link
-                to="/queues"
-                className="rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg"
-              >
+              <LinkButton to="/queues" size="sm">
                 Back to queues
-              </Link>
+              </LinkButton>
             }
           />
         )
       ) : (
         <>
-          <div className="mb-6 flex flex-wrap items-center gap-3">
-            <StatusDot
-              label={detail.paused ? 'Paused' : 'Active'}
-              tone={detail.paused ? 'amber' : 'green'}
-            />
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <StatusPill state={detail.paused ? 'waiting' : 'active'}>
+              {detail.paused ? 'Paused' : 'Active'}
+            </StatusPill>
             {msg && (
               <span
                 role="status"
-                className={msg.ok ? 'text-xs text-success' : 'text-xs text-danger'}
+                className={msg.ok ? 'text-sm text-success' : 'text-sm text-danger'}
               >
                 {msg.text}
               </span>
             )}
-            {canOperate && (
-              <span className="text-xs text-warning">{FLOW_DELETION_UNAVAILABLE}</span>
-            )}
           </div>
-
-          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-            {QUEUE_DETAIL_COUNT_KEYS.map((k) => (
-              <StatCard
-                key={k}
-                label={k}
-                value={formatNumber(c[k])}
-                tone={k === 'failed' && c.failed ? 'red' : 'default'}
-                compact
-              />
-            ))}
-          </div>
-
-          <RecentQueueJobs name={name} jobs={data.jobs} error={data.recentJobsError} />
-          <PriorityHistogram counts={detail.priorityCounts} />
-          <BacklogDepthCard name={name} depth={depth} trend={trend} rate={rate} />
-
-          {!canOperate && (
-            <p className="mb-6 text-sm text-muted">
-              You are signed in as a viewer, so the queue controls are not shown.
-            </p>
-          )}
           {canOperate && (
-            <>
-              <LifecycleCard queue={name} paused={detail.paused} busy={busy} run={run} />
-              <LimitsCards key={`${name}:limits`} queue={name} busy={busy} run={run} />
-            </>
+            <LinkTabs
+              label="Page section"
+              tabs={[
+                { to: base, label: 'Overview', current: tab === 'overview' },
+                { to: `${base}?tab=settings`, label: 'Settings', current: tab === 'settings' },
+              ]}
+            />
           )}
 
-          <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-            {!canOperate ? null : data.stall ? (
-              <StallForm
-                key={`${name}:stall`}
+          {tab === 'overview' ? (
+            <>
+              <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+                {QUEUE_DETAIL_COUNT_KEYS.map((k) => (
+                  <StatCard
+                    key={k}
+                    label={STATE_LABEL[k]}
+                    value={formatNumber(c[k])}
+                    tone={k === 'failed' && c.failed ? 'red' : 'default'}
+                    compact
+                  />
+                ))}
+              </div>
+
+              <QueueLifecycle counts={c} />
+              <RecentQueueJobs name={name} jobs={data.jobs} error={data.recentJobsError} />
+              <PriorityHistogram counts={detail.priorityCounts} />
+              <BacklogDepthCard name={name} depth={depth} trend={trend} rate={rate} />
+
+              {!canOperate && (
+                <p className="mb-6 text-sm text-muted">
+                  You are signed in as a viewer, so the queue settings are not shown.
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <QueueSettings
+                key={name}
                 queue={name}
-                config={data.stall}
-                onSaved={() => {
+                paused={detail.paused}
+                busy={busy}
+                run={run}
+                stall={data.stall}
+                dlq={data.dlq}
+                onRetry={refetch}
+                onStallSaved={() => {
                   setMsg({ ok: true, text: 'Stall config saved ✓' });
                   toast.success('Stall config saved', name);
                 }}
               />
-            ) : (
-              <ConfigLoadError title="Stall detection" onRetry={refetch} />
-            )}
-            {!canOperate ? null : data.dlq ? (
-              <DlqConfigForm
-                key={`${name}:dlq`}
-                queue={name}
-                config={data.dlq}
-                onSaved={() => {
-                  setMsg({ ok: true, text: 'DLQ config saved ✓' });
-                  toast.success('DLQ config saved', name);
-                }}
-              />
-            ) : (
-              <ConfigLoadError title="DLQ policy" onRetry={refetch} />
-            )}
-          </div>
+              {!operationsHidden && (
+                <Disclosure summary="Developer tools" className="mb-6">
+                  <QueueOperationsPanel
+                    key={`${actionGuard.scopeKey}:sdk-operations`}
+                    queue={name}
+                    refreshKey={operationsRevision}
+                    onApplied={() => setOperationsRevision((revision) => revision + 1)}
+                  />
+                </Disclosure>
+              )}
+            </>
+          )}
         </>
       )}
     </div>

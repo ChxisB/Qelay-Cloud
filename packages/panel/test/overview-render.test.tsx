@@ -120,14 +120,15 @@ afterEach(() => {
 });
 
 describe('OverviewPro layout', () => {
-  test('a healthy server shows no attention banner and no Failed tile', async () => {
+  test('a healthy server shows no attention banner and no Failed node', async () => {
     serve({ dlq: 0, failed: 0, dlqQueues: [{ name: 'orders', dlq: 0 }] });
     const { host, unmount } = renderOverview();
     await settle(40);
     expect(host.textContent).toContain('Server connected');
     expect(host.textContent).toContain('v2.9.3');
     expect(host.textContent).not.toContain('dead letter queue');
-    expect(host.querySelector('a[href^="/dlq"]')).toBeNull();
+    // The Dead letter queue card links to /dlq always; only the attention banner means a problem.
+    expect(host.querySelector('[aria-label="Needs attention"] a[href^="/dlq"]')).toBeNull();
     expect(host.textContent).not.toContain('recorded across queues');
     unmount();
   });
@@ -141,7 +142,7 @@ describe('OverviewPro layout', () => {
     unmount();
   });
 
-  test('failed jobs add the Failed tile and the failed-jobs banner', async () => {
+  test('failed jobs add the Failed node and the failed-jobs banner', async () => {
     serve({ dlq: 0, failed: 4, dlqQueues: [{ name: 'orders', dlq: 0 }] });
     const { host, unmount } = renderOverview();
     await settle(40);

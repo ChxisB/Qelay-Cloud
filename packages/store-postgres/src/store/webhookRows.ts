@@ -2,6 +2,8 @@ import type {
   AttemptRecord,
   DeliveredEvent,
   DeliveryStatus,
+  WebhookDedupe,
+  WebhookDestination,
   WebhookEvent,
   WebhookFilter,
   WebhookShape,
@@ -18,13 +20,20 @@ type Time = number | string | bigint;
 
 export interface WebhookRow {
   readonly id: string;
+  readonly destination: string;
   readonly url: string;
+  readonly target: string | null;
+  readonly destination_id: string | null;
   readonly events: string[];
   readonly queue: string | null;
   readonly secret_sealed: string | null;
   readonly enabled: boolean;
   readonly filter: unknown;
   readonly shape: unknown;
+  readonly name: string | null;
+  readonly description: string | null;
+  readonly delay_ms: Time | null;
+  readonly dedupe: unknown;
   readonly created_by: string;
   readonly created_at: Time;
   readonly success_count: Time;
@@ -54,8 +63,8 @@ export interface DeliveryRow {
   readonly finished_at: Time | null;
 }
 
-export const WEBHOOK_COLUMNS = `id, url, events, queue, secret_sealed, enabled, filter, shape, created_by,
-  created_at, success_count, failure_count, last_triggered, consecutive_failures, alert_level,
+export const WEBHOOK_COLUMNS = `id, destination, url, target, destination_id, events, queue, secret_sealed, enabled, filter, shape, name, description,
+  delay_ms, dedupe, created_by, created_at, success_count, failure_count, last_triggered, consecutive_failures, alert_level,
   disabled_reason, disabled_at, secret_previous_until`;
 
 export const DELIVERY_COLUMNS = `id, webhook_id, event_name, queue, job_id, occurred_at, status, attempts,
@@ -71,13 +80,20 @@ export const jsonOrNull = <T>(value: unknown): T | null =>
 
 export const webhookOf = (row: WebhookRow): WebhookRecord => ({
   id: row.id,
+  destination: row.destination as WebhookDestination,
   url: row.url,
+  target: row.target,
+  destinationId: row.destination_id,
   events: row.events as WebhookEvent[],
   queue: row.queue,
   signed: row.secret_sealed !== null,
   enabled: row.enabled,
   filter: jsonOrNull<WebhookFilter>(row.filter),
   shape: jsonOrNull<WebhookShape>(row.shape),
+  name: row.name,
+  description: row.description,
+  delayMs: orNull(row.delay_ms),
+  dedupe: jsonOrNull<WebhookDedupe>(row.dedupe),
   createdBy: row.created_by,
   createdAt: Number(row.created_at),
   lastTriggered: orNull(row.last_triggered),

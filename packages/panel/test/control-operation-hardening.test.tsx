@@ -1,16 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { Benchmark } from '../src/pages/control/Benchmark';
 import { DEFAULT_CONFIG } from '../src/pages/control/benchmark/engine';
 import { useBenchmark } from '../src/pages/control/benchmark/useBenchmark';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, renderHook, settle } from './domSetup';
 
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window.confirm;
+let asked: ReturnType<typeof answerConfirms> | null = null;
 const mounted = new Set<() => void>();
 
 const json = (value: unknown, status = 200) =>
@@ -118,7 +120,8 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
+  asked?.stop();
+  asked = null;
   localStorage.removeItem('qelay-db-history');
   useConnectionStore.setState({
     baseUrl: '/api',
@@ -194,7 +197,7 @@ describe('Benchmark operation identity and lifecycle', () => {
     const cleanCalls: Array<{ url: string; auth: string | null }> = [];
     let cleanCount = 0;
     const allCalls: string[] = [];
-    globalThis.window.confirm = () => true;
+    asked = answerConfirms();
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       allCalls.push(url);
@@ -211,7 +214,7 @@ describe('Benchmark operation identity and lifecycle', () => {
       return Promise.resolve(json({ ok: true }));
     }) as typeof fetch;
 
-    const view = render(createElement(Benchmark));
+    const view = render(createElement(MemoryRouter, null, createElement(Benchmark)));
     const clean = findButton(view.host, 'Clean queue');
     const run = findButton(view.host, 'Run benchmark');
     act(() => {

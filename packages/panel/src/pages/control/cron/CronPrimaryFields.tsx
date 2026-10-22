@@ -1,8 +1,16 @@
-import { Field, Input, SegmentedControl } from '@/components/ui/form';
+import {
+  Field,
+  FieldAction,
+  FormRow,
+  Input,
+  SegmentedControl,
+  Textarea,
+} from '@/components/ui/form';
 import { cn } from '@/lib/cn';
 import { nextCronRuns } from '@/lib/cronPreview';
 import { formatDateTime } from '@/lib/format';
 import { MAX_JOB_DATA_CHARS } from '../AddJob';
+import { CronWire } from './CronWire';
 import { type CronFormValues, everyPreview, MAX_DELAY_MS, type SetCronFormValue } from './model';
 
 export function CronPrimaryFields({
@@ -17,11 +25,12 @@ export function CronPrimaryFields({
       ? nextCronRuns(values.schedule.trim(), 3, Date.now())
       : null;
   const intervalPreview = everyPreview(values.every);
+  const cron = values.mode === 'cron';
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Name">
+      <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-3">
+        <Field label="Name" hint="A unique name for this schedule.">
           <Input
             name="cron-name"
             autoComplete="off"
@@ -31,7 +40,7 @@ export function CronPrimaryFields({
             placeholder="daily-report"
           />
         </Field>
-        <Field label="Queue">
+        <Field label="Queue" hint="Where the jobs are added.">
           <Input
             name="cron-queue"
             autoComplete="off"
@@ -42,8 +51,8 @@ export function CronPrimaryFields({
           />
         </Field>
         <Field
-          label="Spawned job name"
-          hint="First-class worker routing name; separate from schedule data."
+          label="Job name"
+          hint="What workers see as each job's name. Leave as default if unsure."
         >
           <Input
             name="cron-job-name"
@@ -56,20 +65,22 @@ export function CronPrimaryFields({
         </Field>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <fieldset>
-          <legend className="sr-only">Schedule type</legend>
+      <FormRow>
+        <FieldAction>
           <SegmentedControl
             options={['cron', 'every'] as const}
             value={values.mode}
+            label="Schedule type"
+            format={(mode) => (mode === 'cron' ? 'At set times' : 'Every so often')}
+            asWritten
             onChange={(mode) => setValue('mode', mode)}
           />
-        </fieldset>
+        </FieldAction>
         {values.mode === 'cron' ? (
           <div className="min-w-56 flex-1">
             <Field
               label="Cron expression"
-              hint="Standard 5-field syntax, 6 fields with leading seconds, or an official @hourly/@daily-style shortcut. Croner extensions L/W/#/? are rejected by Qelay."
+              hint="Five fields: minute, hour, day, month, weekday. 0 9 * * * is 09:00 every day. @hourly and @daily also work."
             >
               <Input
                 name="cron-expression"
@@ -81,8 +92,8 @@ export function CronPrimaryFields({
           </div>
         ) : (
           <>
-            <div className="w-40">
-              <Field label="Every (ms)">
+            <div className="w-48">
+              <Field label="Every (ms)" hint="1000 is one second.">
                 <Input
                   type="number"
                   min={1}
@@ -96,23 +107,28 @@ export function CronPrimaryFields({
               </Field>
             </div>
             {values.every.trim() !== '' && (
-              <span className={cn('pb-2 text-xs', intervalPreview ? 'text-muted' : 'text-danger')}>
-                {intervalPreview ?? 'not a valid interval'}
-              </span>
+              <FieldAction>
+                <span className={cn('text-[13px]', intervalPreview ? 'text-muted' : 'text-danger')}>
+                  {intervalPreview ?? 'not a valid interval'}
+                </span>
+              </FieldAction>
             )}
           </>
         )}
-      </div>
+      </FormRow>
 
       {values.mode === 'cron' && values.schedule.trim() && preview && (
-        <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-xs">
+        <div className="rounded-control border border-line bg-slate-tint px-4 py-3 text-[13px]">
           {preview.valid ? (
             preview.runs.length ? (
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 {/* nextCronRuns evaluates in the browser's timezone, never the server's. */}
                 <span className="text-faint">Next runs (browser-local time):</span>
                 {preview.runs.map((run) => (
-                  <span key={run} className="font-mono text-muted">
+                  <span
+                    key={run}
+                    className="rounded-full border border-line bg-surface px-2.5 py-0.5 font-mono text-xs text-fg"
+                  >
                     {formatDateTime(run)}
                   </span>
                 ))}
@@ -127,21 +143,32 @@ export function CronPrimaryFields({
             )
           ) : (
             <span className="text-warning">
-              Unsupported expression: {preview.error} Fix it before creating the schedule.
+              That cron expression is not supported: {preview.error} Fix it before creating the
+              schedule.
             </span>
           )}
         </div>
       )}
 
-      <Field label="Data (JSON)">
-        <textarea
+      <CronWire
+        when={cron ? values.schedule.trim() : (intervalPreview ?? '')}
+        valid={cron ? preview?.valid === true : intervalPreview !== null}
+        queue={values.queue.trim()}
+        job={(values.jobName ?? '').trim()}
+      />
+
+      <Field
+        label="Data (JSON)"
+        hint="Sent to the worker with every job. Leave {} if there is none."
+      >
+        <Textarea
           name="cron-data"
           value={values.dataText}
           onChange={(event) => setValue('dataText', event.target.value)}
           maxLength={MAX_JOB_DATA_CHARS}
           rows={3}
           spellCheck={false}
-          className="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-sm text-fg placeholder:text-faint transition-colors focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
+          className="font-mono text-sm"
         />
       </Field>
     </>

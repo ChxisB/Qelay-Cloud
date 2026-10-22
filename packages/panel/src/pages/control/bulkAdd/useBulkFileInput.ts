@@ -1,4 +1,5 @@
 import { type ChangeEvent, useCallback, useEffect, useRef } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { MAX_BULK_INPUT_BYTES } from './constants';
 import { bulkInputBudgetError } from './input';
 
@@ -29,7 +30,7 @@ export function useBulkFileInput({
 
   useEffect(() => cancelPending, [cancelPending]);
 
-  const onFile = (event: ChangeEvent<HTMLInputElement>) => {
+  const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
     const file = input.files?.[0];
     if (!file) return;
@@ -48,8 +49,13 @@ export function useBulkFileInput({
       setResult({ ok: false, msg: `File is too large; maximum is 64 MiB (${file.name})` });
       return;
     }
-    if (text.trim() !== '' && !window.confirm(`Replace the current input with "${file.name}"?`)) {
-      return;
+    if (text.trim() !== '') {
+      const replace = await confirmInPage({
+        question: `Replace the current input with "${file.name}"?`,
+        confirmLabel: 'Replace',
+      });
+      // A newer pick (or leaving the page) while the question was open owns the input now.
+      if (!replace || generationRef.current !== generation) return;
     }
 
     const reader = new FileReader();

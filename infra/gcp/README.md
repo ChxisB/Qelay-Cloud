@@ -1,6 +1,6 @@
 # Qelay-Cloud on GCP (Terraform)
 
-Everything a Qelay-Cloud environment needs on Google Cloud: a private Cloud SQL for PostgreSQL 16, a Pub/Sub topic and
+Everything a Qelay-Cloud environment needs on Google Cloud: a private Cloud SQL for PostgreSQL 18, a Pub/Sub topic and
 subscriptions per queue (the "doorbell"), Cloud Run worker pools for the workers, a Cloud Run service for the maintenance tick, Cloud Scheduler as
 the tick's clock, Secret Manager for the connection strings, least-privilege service accounts and alert policies.
 

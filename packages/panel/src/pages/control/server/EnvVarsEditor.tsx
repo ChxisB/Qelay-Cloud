@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { Button } from '@/components/ui/Button';
+import { Button, IconButton } from '@/components/ui/Button';
+import { Disclosure } from '@/components/ui/Disclosure';
 import { Input } from '@/components/ui/form';
+import { IconClose } from '@/components/ui/icons';
 
 interface Row {
   id: number;
@@ -84,11 +86,11 @@ export function EnvVarsEditor({
   return (
     <div className="flex flex-col gap-2">
       {rows.length === 0 && (
-        <p className="text-xs leading-relaxed text-faint">
+        <p className="m-0 text-[13px] leading-relaxed text-muted">
           No custom variables. The agent already injects{' '}
-          <code className="rounded bg-surface-2 px-1 py-0.5">HTTP_PORT</code>,{' '}
-          <code className="rounded bg-surface-2 px-1 py-0.5">TCP_PORT</code>, plus the SQLite data
-          path unless PostgreSQL mode is selected.
+          <code className="rounded-control bg-slate-tint px-1 py-0.5 font-mono">HTTP_PORT</code>,{' '}
+          <code className="rounded-control bg-slate-tint px-1 py-0.5 font-mono">TCP_PORT</code>,
+          plus the SQLite data path unless PostgreSQL mode is selected.
         </p>
       )}
       {rows.map((r) => (
@@ -111,7 +113,9 @@ export function EnvVarsEditor({
               onChange={(e) => setRow(r.id, { key: e.target.value })}
             />
           </div>
-          <span className="text-faint">=</span>
+          <span aria-hidden="true" className="text-muted">
+            =
+          </span>
           <div className="min-w-0 flex-1">
             <Input
               id={`env-value-${r.id}`}
@@ -126,47 +130,49 @@ export function EnvVarsEditor({
               onChange={(e) => setRow(r.id, { value: e.target.value })}
             />
           </div>
-          <button
-            type="button"
+          <IconButton
             aria-label={`Remove ${r.key || 'variable'}`}
             disabled={disabled}
             onClick={() => removeRow(r.id)}
-            className="shrink-0 rounded-control px-2 py-1 text-xs text-faint transition-colors hover:text-danger disabled:opacity-40"
           >
-            ✕
-          </button>
+            <IconClose className="size-4" />
+          </IconButton>
         </div>
       ))}
 
       {dupes.length > 0 && (
-        <p className="text-xs text-warning">
+        <p className="m-0 text-[13px] font-bold text-warning">
           Duplicate key{dupes.length > 1 ? 's' : ''} — the last value wins: {dupes.join(', ')}
         </p>
       )}
 
       {suspicious.length > 0 && (
-        <p className="text-xs text-faint">
+        <p className="m-0 text-[13px] text-muted">
           Unusual key{suspicious.length > 1 ? 's' : ''} — env names are usually UPPER_SNAKE_CASE
           with no spaces or "=": {suspicious.join(', ')}. Saved as-is.
         </p>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        <Button size="sm" variant="ghost" disabled={disabled} onClick={() => addRow()}>
+      <div className="pt-1">
+        <Button size="sm" disabled={disabled} onClick={() => addRow()}>
           + Add variable
         </Button>
-        {PRESETS.filter((p) => !used.has(p)).map((p) => (
-          <button
-            key={p}
-            type="button"
-            disabled={disabled}
-            onClick={() => addRow(p)}
-            className="rounded-control border border-line bg-surface-2 px-2 py-1 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-fg disabled:opacity-40"
-          >
-            + {p}
-          </button>
-        ))}
       </div>
+      <Disclosure summary="Or pick a common variable">
+        <div className="flex flex-wrap items-center gap-2">
+          {PRESETS.filter((p) => !used.has(p)).map((p) => (
+            <Button
+              key={p}
+              size="sm"
+              className="font-mono"
+              disabled={disabled}
+              onClick={() => addRow(p)}
+            >
+              + {p}
+            </Button>
+          ))}
+        </div>
+      </Disclosure>
     </div>
   );
 }

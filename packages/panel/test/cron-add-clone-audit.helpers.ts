@@ -16,11 +16,12 @@ import {
   CronManager,
   existingCronNameError,
 } from '../src/pages/control/CronManager';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 
 const realFetch = globalThis.fetch;
 
-const realConfirm = window.confirm;
+let stopAnswering = () => {};
 
 const mountedViews = new Set<() => void>();
 
@@ -124,7 +125,6 @@ export {
   MemoryRouter,
   mountedViews,
   parseAddJobNumbers,
-  realConfirm,
   realFetch,
   render,
   setInput,
@@ -142,13 +142,13 @@ export function installTestHooks() {
       agentToken: '',
       refreshMs: 60_000,
     });
-    window.confirm = () => true;
+    stopAnswering = answerConfirms().stop;
   });
 
   afterEach(() => {
     for (const unmount of [...mountedViews]) unmount();
     globalThis.fetch = realFetch;
-    window.confirm = realConfirm;
+    stopAnswering();
     useConnectionStore.setState({
       baseUrl: '/api',
       token: '',

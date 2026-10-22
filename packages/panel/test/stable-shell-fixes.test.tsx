@@ -1,23 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, Component, createElement, type ReactElement, type ReactNode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { useToastStore } from '../src/components/dashboard/stores/toastStore';
 import { titleFor } from '../src/components/layout/pageTitle';
 import { CopyButton } from '../src/components/ui/CopyButton';
 import { Toaster } from '../src/components/ui/Toaster';
 import { resetFailedLazyImports, retryableLazy } from '../src/lib/retryableLazy';
-import { QueueDetail } from '../src/pages/QueueDetail';
 import { ensureDom, settle } from './domSetup';
 
 const realFetch = globalThis.fetch;
 const mounted = new Set<() => void>();
 const restorers: Array<() => void> = [];
 const initialConnection = useConnectionStore.getState();
-
-const json = (value: unknown) =>
-  Response.json(value, { headers: { 'content-type': 'application/json' } });
 
 function render(element: ReactElement) {
   const host = document.createElement('div');
@@ -113,7 +108,6 @@ describe('page titles', () => {
     expect(titleFor('/Settings')).toBe('Settings');
     expect(titleFor('/QUEUES')).toBe('Queues');
     expect(titleFor('/Queues/Email')).toBe('Email · Queue');
-    expect(titleFor('/QUEUES-CLASSIC/Email')).toBe('Email · Queue (classic)');
   });
 });
 
@@ -148,73 +142,5 @@ describe('CopyButton fallback copy', () => {
     await settle(1);
     expect(button?.getAttribute('aria-label')).toBe('Copied to clipboard');
     expect(document.activeElement).toBe(button);
-  });
-});
-
-describe('classic queue detail job names', () => {
-  test('prefer the first-class job name and never render object-valued data names', async () => {
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith('/queues/summary')) {
-        return json([
-          {
-            name: 'orders',
-            paused: false,
-            counts: { waiting: 2, prioritized: 0, active: 0, completed: 0, failed: 0, delayed: 0 },
-          },
-        ]);
-      }
-      if (url.includes('/dashboard/queues/orders?includeJobs=false')) {
-        return json({
-          ok: true,
-          name: 'orders',
-          counts: {
-            waiting: 2,
-            active: 0,
-            completed: 0,
-            failed: 0,
-            delayed: 0,
-            prioritized: 0,
-            'waiting-children': 0,
-            paused: 0,
-          },
-          paused: false,
-          priorityCounts: {},
-          dlqPreview: [],
-          timestamp: 1,
-        });
-      }
-      if (url.includes('/queues/orders/jobs/list?')) {
-        return json({
-          ok: true,
-          jobs: [
-            { id: 'j1', name: 'send-email', state: 'waiting', data: { name: 'Alice' } },
-            { id: 'j2', state: 'waiting', data: { name: { first: 'Ada' } } },
-          ],
-        });
-      }
-      return json({ ok: false, error: `unexpected ${url}` });
-    }) as typeof fetch;
-
-    const { host } = render(
-      createElement(
-        MemoryRouter,
-        { initialEntries: ['/queues-classic/orders'] },
-        createElement(
-          Routes,
-          null,
-          createElement(Route, {
-            path: '/queues-classic/:name',
-            element: createElement(QueueDetail),
-          })
-        )
-      )
-    );
-    await settle(10);
-    const rows = [...host.querySelectorAll('tbody tr')].map((row) => row.textContent ?? '');
-    expect(rows.some((row) => row.includes('j1') && row.includes('send-email'))).toBe(true);
-    expect(rows.some((row) => row.includes('Alice'))).toBe(false);
-    expect(rows.some((row) => row.includes('j2') && row.includes('default'))).toBe(true);
-    expect(host.textContent).not.toContain('Something went wrong');
   });
 });

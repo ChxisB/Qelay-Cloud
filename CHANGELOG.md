@@ -18,7 +18,7 @@ doorbell to wake workers, and one idempotent tick repairs whatever a failure lef
 - **SDK (`qelay-cloud`)**: `Queue`, `Worker`, `QueueEvents` and `FlowProducer` with Qelay's names. Jobs are rows in Postgres,
   settled only by the worker that holds the current lease; delivery is at least once. Delay, priority, deduplication, groups,
   rate limits, concurrency, cron, retries with backoff and a dead-letter queue are options of the job and columns of its row.
-- **Store (`@qelay-cloud/store-postgres`)**: the schema, 11 forward-only migrations safe with the previous release still
+- **Store (`@qelay-cloud/store-postgres`)**: the schema, 19 forward-only migrations safe with the previous release still
   connected, a connection budget that is a formula, and a model harness that checks the store against a reference model.
 - **Transports**: `postgres` (workers poll, no cloud account), in-memory, Google Pub/Sub and Amazon SQS, behind one contract
   suite that runs the same scenarios on each.
@@ -27,6 +27,13 @@ doorbell to wake workers, and one idempotent tick repairs whatever a failure lef
 - **Flows**: parents that wait for children across queues, written in one transaction, with a Control API tree and a panel page.
 - **Webhooks**: signed, at-least-once events to receivers you register, with addresses checked at connect time (public
   addresses only, no redirects), secrets sealed at rest and shown once.
+- **Event gateway** (the panel's Webhooks page, renamed): a webhook is a connection with a source queue and a destination, an
+  address or another queue, with loops refused when it is saved. Connections have a name and a description and are edited
+  in place (`PATCH /webhooks/{id}`); rules are a filter, de-duplication, a shape and a delay, all declarative data. A
+  connection is paused (events are held and sent on resume) or disabled (events are ignored). Issues are stored state that
+  an operator can acknowledge, ignore or resolve, and destinations can be saved and shared (a copy stays on each
+  connection). The connections list shows each connection's last 24 hours from one grouped read. No inbound HTTP source
+  exists yet ([event gateway](docs/event-gateway.md)).
 - **Workflow engine**: durable steps, branches, loops, signals, waits and compensation, stored as rows and run as ordinary
   jobs, with operator actions in the Control API and the panel.
 - **Control API (`@qelay-cloud/control-api`)**: 105 routes in front of the same Postgres and the broker's metrics, signed in
@@ -66,7 +73,7 @@ The full list, with what decides each, is [docs/known-issues.md](docs/known-issu
 
 - **From Qelay**: [Moving from Qelay](docs/migration.md). Every method is async here, a `Queue` sees only its own queue, and a
   handler must be idempotent.
-- **Database**: PostgreSQL 16 or later. Run `qcloud-api migrate` as a release step before the services; services never migrate
+- **Database**: PostgreSQL 18 or later. Run `qcloud-api migrate` as a release step before the services; services never migrate
   on start. Migrations are forward-only, so a rollback serves the previous revision against the migrated database
   ([operations](docs/operations.md#upgrading)).
 - **Tables** are prefixed `qcloud_`, never `qelay_`.

@@ -1,0 +1,46 @@
+{{- define "qelay.panelEnv" -}}
+- name: QCLOUD_PANEL_AUTH_MODE
+  value: oidc
+- name: QCLOUD_PANEL_API_BASE_URL
+  value: {{ .Values.panel.apiBaseUrl | default (ternary (printf "%s://%s" .Values.ingress.scheme .Values.ingress.api.host) "" (and .Values.ingress.enabled (ne .Values.ingress.api.host ""))) | required "panel.apiBaseUrl (or ingress.api.host) is required" | quote }}
+- name: QCLOUD_PANEL_OIDC_AUTHORITY
+  value: {{ .Values.panel.oidc.authority | default .Values.oidc.issuer | required "panel.oidc.authority (or oidc.issuer) is required" | quote }}
+- name: QCLOUD_PANEL_OIDC_CLIENT_ID
+  value: {{ required "panel.oidc.clientId is required" .Values.panel.oidc.clientId | quote }}
+{{- with .Values.panel.oidc.scope }}
+- name: QCLOUD_PANEL_OIDC_SCOPE
+  value: {{ . | quote }}
+{{- end }}
+{{- with .Values.panel.oidc.audience }}
+- name: QCLOUD_PANEL_OIDC_AUDIENCE
+  value: {{ . | quote }}
+{{- end }}
+{{- include "qelay.extraEnv" .Values.panel.env }}
+{{- end }}
+{{- if .Values.panel.enabled }}
+---
+{{ include "qelay.deployment" (dict
+  "root" .
+  "component" "panel"
+  "replicas" .Values.panel.replicas
+  "image" (include "qelay.image" (dict "root" . "image" .Values.panel.image))
+  "env" (include "qelay.panelEnv" .)
+  "port" 8080
+  "livePath" "/health"
+  "readyPath" "/health"
+  "resources" .Values.panel.resources) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "qelay.fullname" . }}-panel
+  labels:
+    {{- include "qelay.labels" (dict "root" . "component" "panel") | nindent 4 }}
+spec:
+  selector:
+    {{- include "qelay.selector" (dict "root" . "component" "panel") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}

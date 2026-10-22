@@ -29,7 +29,7 @@ test('the Dashboard strip goes amber, then red, when the tick stops, and clears 
   const strip = page.getByTestId('status-strip');
   await expect(strip).toHaveAttribute('data-tone', 'green');
   await expect(strip).toContainText('Healthy');
-  await expect(strip).toContainText(/Tick ran \d+s ago/);
+  await expect(strip).toContainText(/Maintenance ran \d+s ago/);
 
   await control(request, '/tick/stop');
   // Late after 4 s and stale after 9 s (e2e/config.ts); the panel polls every 3 s.
@@ -54,7 +54,7 @@ test('the Dashboard strip goes amber, then red, when the tick stops, and clears 
   expectNoBrowserErrors(browserErrors);
 });
 
-test('the Transport page reads the local transport honestly and has no redrive button', async ({
+test('the Job delivery page reads the local transport honestly and has no redrive button', async ({
   page,
   browserErrors,
 }, testInfo) => {
@@ -63,34 +63,34 @@ test('the Transport page reads the local transport honestly and has no redrive b
     window.history.pushState({}, '', route);
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, `${OPERATOR.basePath}/transport`);
-  await expect(page.getByRole('heading', { name: 'Transport', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Job delivery', level: 1 })).toBeVisible();
 
-  const table = page.getByRole('table', { name: 'Doorbell health per queue' });
+  const table = page.getByRole('table', { name: 'Notification health per queue' });
   await expect(table).toBeVisible();
   await expect(table.getByRole('row', { name: new RegExp(E2E_SEED_QUEUE) })).toBeVisible();
-  // The local transport has no broker queue of poison doorbells: said, not shown as a zero.
+  // The local transport has no list of failed notifications: said, not shown as a zero.
   await expect(
-    page.getByText('This transport has no dead-letter queue of doorbells.')
+    page.getByText('This queue service does not keep a list of failed notifications.')
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /redrive/i })).toHaveCount(0);
   await expectAccessible(page, testInfo, 'transport');
   expectNoBrowserErrors(browserErrors);
 });
 
-test('a viewer can read the Transport and Deployment pages', async ({ page, browserErrors }) => {
+test('a viewer can read the Job delivery and Deployment pages', async ({ page, browserErrors }) => {
   await unlockDashboard(page, false, VIEWER);
   await page.evaluate((route) => {
     window.history.pushState({}, '', route);
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, `${VIEWER.basePath}/deployment`);
   await expect(page.getByRole('heading', { name: 'Deployment', level: 1 })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Tick' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Maintenance' })).toBeVisible();
 
   await page.evaluate((route) => {
     window.history.pushState({}, '', route);
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, `${VIEWER.basePath}/transport`);
-  await expect(page.getByRole('heading', { name: 'Transport', level: 1 })).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Doorbell health per queue' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Job delivery', level: 1 })).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Notification health per queue' })).toBeVisible();
   expectNoBrowserErrors(browserErrors);
 });

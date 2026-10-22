@@ -95,6 +95,7 @@ describe('RouteGate', () => {
     const host = at('/dlq');
     expect(host.querySelector('[data-testid="page"]')).toBeNull();
     expect(host.textContent).toContain('HTTP 502');
+    expect(host.querySelector('h1')?.textContent).toBe('This page could not be opened');
     const button = host.querySelector('button');
     expect(button?.textContent).toBe('Retry');
     act(() => button?.click());

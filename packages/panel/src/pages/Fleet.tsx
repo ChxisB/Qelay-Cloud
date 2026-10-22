@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { useConnectionStore } from '@/components/dashboard/stores/connectionStore';
+import { SystemTabs } from '@/components/SystemTabs';
+import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { StatCard } from '@/components/ui/StatCard';
 import {
   type FleetNodeSnapshot,
   postgresTopologyKey,
@@ -10,8 +14,13 @@ import {
   runFleetLifecycle,
 } from '@/features/fleet/fleetClient';
 import { FleetNodeCard } from '@/features/fleet/FleetNodeCard';
+import { cn } from '@/lib/cn';
 import { useControlConnectionEpoch } from '@/lib/controlConnectionEpoch';
+import { useFirstLoad } from '@/lib/useFirstLoad';
 import { usePolledData } from '@/lib/usePolledData';
+
+// The placeholder for the node cards: same block as the other loading states, flat under reduced motion.
+const SKELETON = 'block rounded-card bg-slate-tint motion-safe:animate-pulse';
 
 function topologyGroups(nodes: readonly FleetNodeSnapshot[]) {
   const groups = new Map<string, FleetNodeSnapshot[]>();
@@ -48,6 +57,9 @@ export function Fleet() {
   const [busy, setBusy] = useState<Record<string, string>>({});
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const actionGeneration = useRef(0);
+  const asking = useRef(new Set<string>());
+  const [refreshing, setRefreshing] = useState(false);
+  const firstLoad = useFirstLoad(data !== null);
   const topology = useMemo(() => topologyGroups(data ?? []), [data]);
 
   useEffect(() => {
@@ -58,16 +70,20 @@ export function Fleet() {
 
   const act = async (snapshot: FleetNodeSnapshot, action: 'start' | 'stop' | 'restart') => {
     const id = snapshot.target.id;
-    if (busy[id]) return;
-    if (
-      action !== 'start' &&
-      !window.confirm(
-        `${action === 'stop' ? 'Stop' : 'Restart'} ${snapshot.target.name}? In-flight jobs on this broker may be interrupted.`
-      )
-    ) {
-      return;
-    }
+    if (busy[id] || asking.current.has(id)) return;
     const generation = actionGeneration.current;
+    if (action !== 'start') {
+      const verb = action === 'stop' ? 'Stop' : 'Restart';
+      asking.current.add(id);
+      const yes = await confirmInPage({
+        question: `${verb} this node?`,
+        confirmLabel: `${verb} node`,
+        danger: action === 'stop',
+        detail: `${verb} ${snapshot.target.name}? In-flight jobs on this broker may be interrupted.`,
+      }).finally(() => asking.current.delete(id));
+      // A connection edited while the question was open ends the action, as it does for a running one.
+      if (!yes || generation !== actionGeneration.current) return;
+    }
     setBusy((current) => ({ ...current, [id]: action }));
     setActionErrors((current) => ({ ...current, [id]: '' }));
     try {
@@ -88,43 +104,41 @@ export function Fleet() {
     }
   };
 
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
         title="Fleet"
         description="Operate every server node and verify shared PostgreSQL topology."
-        actions={<Button onClick={() => void refetch()}>Refresh all</Button>}
+        actions={
+          <Button aria-disabled={refreshing || undefined} onClick={() => void refresh()}>
+            {refreshing ? 'Refreshing…' : 'Refresh all'}
+          </Button>
+        }
       />
+      <SystemTabs current="/fleet" />
 
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-faint">
-            Configured nodes
-          </div>
-          <div className="mt-1 text-2xl font-bold text-fg">{profiles.length}</div>
-        </Card>
-        <Card>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-faint">
-            Healthy APIs
-          </div>
-          <div className="mt-1 text-2xl font-bold text-fg">
-            {(data ?? []).filter((node) => node.server.healthy).length}/{profiles.length}
-          </div>
-        </Card>
-        <Card>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-faint">
-            PostgreSQL clusters
-          </div>
-          <div className="mt-1 text-2xl font-bold text-fg">{topology.length}</div>
-        </Card>
+        <StatCard label="Configured nodes" value={profiles.length} />
+        <StatCard
+          label="Healthy APIs"
+          value={`${(data ?? []).filter((node) => node.server.healthy).length}/${profiles.length}`}
+        />
+        <StatCard label="PostgreSQL clusters" value={topology.length} />
       </div>
 
       {error && (
-        <div
-          role="status"
-          className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-2 text-sm text-danger"
-        >
-          Fleet refresh failed: {error.message}
+        <div className="mb-4">
+          <Banner title="Fleet refresh failed">{error.message}</Banner>
         </div>
       )}
 
@@ -135,7 +149,7 @@ export function Fleet() {
             {topology.map((group) => (
               <div
                 key={group.key}
-                className="rounded-lg border border-line bg-surface-2/40 px-4 py-3"
+                className="rounded-[18px] border border-line bg-surface-2/40 px-4 py-3"
               >
                 <div className="font-mono text-sm text-fg">{group.target}</div>
                 <div className="mt-1 text-xs text-muted">
@@ -150,16 +164,23 @@ export function Fleet() {
       )}
 
       {loading && !data ? (
-        <Card>Checking every server node…</Card>
+        <div role="status" aria-busy="true" className="flex flex-col gap-4">
+          <p className="m-0 text-sm text-muted">Checking every server node…</p>
+          <div aria-hidden="true" className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <span className={cn(SKELETON, 'h-56')} />
+            <span className={cn(SKELETON, 'h-56')} />
+          </div>
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {(data ?? []).map((snapshot) => (
+          {(data ?? []).map((snapshot, index) => (
             <FleetNodeCard
               key={snapshot.target.id}
               snapshot={snapshot}
               active={snapshot.target.id === activeProfileId}
               busy={busy[snapshot.target.id]}
               actionError={actionErrors[snapshot.target.id]}
+              arrive={firstLoad ? index : undefined}
               onActivate={() => activateProfile(snapshot.target.id)}
               onAction={(action) => void act(snapshot, action)}
             />

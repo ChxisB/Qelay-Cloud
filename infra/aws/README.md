@@ -1,6 +1,6 @@
 # Qelay-Cloud on AWS (Terraform)
 
-Everything a Qelay-Cloud environment needs on AWS: a private RDS for PostgreSQL 16, an SQS queue and dead-letter queue per
+Everything a Qelay-Cloud environment needs on AWS: a private RDS for PostgreSQL 18, an SQS queue and dead-letter queue per
 Qelay queue (the "doorbell"), ECS Fargate services for the workers, a one-shot Fargate task for the maintenance tick with
 EventBridge Scheduler as its clock, Secrets Manager for the connection string, least-privilege roles, and CloudWatch alarms.
 
@@ -436,7 +436,7 @@ READMEs). The assertions are the policy scan: no policy scanner (`tflint`, `triv
 
 - **Identities and policies:** every statement of every role and queue policy as listed above, no wildcard action, `*` only
   for the two actions that take no resource, no IAM user, group or managed policy.
-- **Database:** PostgreSQL 16, encrypted, deletion protection, backups, a final snapshot, no public address, no IAM
+- **Database:** PostgreSQL 18, encrypted, deletion protection, backups, a final snapshot, no public address, no IAM
   authentication, `max_connections` and `rds.force_ssl` in the parameter group, no inbound rule from the internet anywhere.
 - **Queues:** names, tags, visibility, retention and redrive against `queueNames`, plain and hashed; encryption; one alarm
   of each kind per queue.

@@ -26,3 +26,4 @@ test
 packages/*/test
 packages/*/e2e
 docker-compose.test.yml
+charts

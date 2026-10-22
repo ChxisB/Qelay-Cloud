@@ -3,16 +3,17 @@ import { useSearchParams } from 'react-router-dom';
 import { toast } from '@/components/dashboard/stores/toastStore';
 import { EmptyState, ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
 import { IconDlq } from '@/components/ui/icons';
+import { InboxDrawing } from '@/components/ui/illustrations';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { bq } from '@/lib/bq';
 import { downloadCsv } from '@/lib/exportFile';
-import { FLOW_BULK_RETRY_UNAVAILABLE } from '@/lib/flowMutationSafety';
 import type { QueueSummary } from '@/lib/types';
 import { usePolledData } from '@/lib/usePolledData';
 import { DlqFilters, DlqQueueGrid, DlqSummary } from './dlq/DlqProControls';
 import { DlqProTable } from './dlq/DlqProTable';
-import { loadAllQueuePages } from './QueueControl';
+import { DlqUnavailableNote } from './dlq/DlqUnavailableNote';
+import { loadAllQueuePages } from './queue/queueDiscovery';
 
 const PAGE_SIZE = 25;
 const EMPTY_QUEUES: QueueSummary[] = [];
@@ -38,7 +39,7 @@ export function DlqPro() {
   const total = qs ? queues.reduce((a, q) => a + q.dlq, 0) : null;
 
   // Fast poll: only the selected queue's paginated /dlq page + /dlq/stats.
-  // Tagged with queue+page (QueueControl pattern): after a queue switch the old
+  // Tagged with queue+page: after a queue switch the old
   // queue's entries must not stay rendered under the new queue heading.
   const fetcher = useCallback(async () => {
     if (!queue)
@@ -85,6 +86,17 @@ export function DlqPro() {
     if (page > 0 && page * PAGE_SIZE >= t) setPage(Math.max(0, Math.ceil(t / PAGE_SIZE) - 1));
   }, [data, page]);
 
+  // A queue that vanished from discovery has no <option>: the picker would show another
+  // queue while this page kept fetching the gone one. Drop it so the auto-pick below
+  // chooses a live queue.
+  useEffect(() => {
+    if (!queue || !qs || qs.queues.some((q) => q.name === queue)) return;
+    autoPicked.current = false;
+    setQueue('');
+    setPage(0);
+    setReason('all');
+  }, [qs, queue]);
+
   const exportEntries = () => {
     const rows = (data?.entries ?? []).map((e) => ({
       jobId: e.job.id,
@@ -114,7 +126,7 @@ export function DlqPro() {
   };
 
   // A reason with no remaining entries has no <option>: the picker would show
-  // "All Reasons" while the stale filter kept hiding every row.
+  // "All reasons" while the stale filter kept hiding every row.
   useEffect(() => {
     if (reason === 'all' || !data) return;
     if (!((data.stats?.byReason?.[reason] ?? 0) > 0)) setReason('all');
@@ -133,7 +145,7 @@ export function DlqPro() {
 
   // First load: honor a ?queue= deep link (e.g. QueueDetailPro's DLQ jump-off),
   // else jump straight to the biggest non-empty DLQ instead of parking the user
-  // on a "Select a queue" prompt (DlqControl already does this).
+  // on a "Select a queue" prompt.
   // Once per mount, so a deliberate reset back to "Select a queue…" sticks.
   const autoPicked = useRef(false);
   const urlQueue = params.get('queue');
@@ -178,8 +190,8 @@ export function DlqPro() {
   return (
     <div>
       <PageHeader
-        title="Dead Letter Queue"
-        description="Jobs that failed after exhausting all retries. Inspect and export entries without mutating flow topology."
+        title="Dead letter queue"
+        description="Jobs that failed after using up all their retries. Look at them here, or export them."
         live={!!queue && !!data && !data.statsError && !error && !discoveryError}
       />
 
@@ -227,7 +239,7 @@ export function DlqPro() {
         onSearch={setSearch}
         onExport={exportEntries}
       />
-      <p className="mb-4 text-xs text-warning">{FLOW_BULK_RETRY_UNAVAILABLE}</p>
+      <DlqUnavailableNote className="mb-4" />
 
       {error && !data ? (
         <ErrorState error={error} onRetry={refetch} />
@@ -249,12 +261,13 @@ export function DlqPro() {
         />
       ) : entries.length === 0 ? (
         <EmptyState
-          icon={<IconDlq />}
-          title={filterActive ? 'No matches on this page' : 'No dead letter entries'}
+          picture={filterActive ? undefined : <InboxDrawing />}
+          icon={filterActive ? <IconDlq /> : undefined}
+          title={filterActive ? 'No matches on this page' : 'Nothing has failed'}
           hint={
             filterActive
               ? 'No entries on this page match your filter — the filter is page-scoped. Use the pager below to check other pages.'
-              : 'This queue has no dead letter entries.'
+              : 'A job lands here when it has used all its tries and still failed. This queue has none, which is good.'
           }
         />
       ) : (

@@ -138,29 +138,29 @@ describe('what a queue row says', () => {
     expect(verdict.kind).toBe('held');
   });
 
-  test('claimable jobs unrung for longer than the threshold say the tick is behind', () => {
+  test('claimable jobs unrung for longer than the threshold say maintenance is behind', () => {
     const verdict = doorbellVerdict(
       queue('q', { store: { claimable: 9, notRung: 9, oldestNotRungAgeMs: 61_000 } }),
       60_000
     );
     expect(verdict.kind).toBe('tick-behind');
-    expect(verdict.text).toContain('the tick is behind');
+    expect(verdict.text).toContain('maintenance is behind');
     expect(verdictTone(verdict)).toBe('amber');
   });
 
-  test('unrung jobs inside the threshold are only waiting for the next tick', () => {
+  test('unrung jobs inside the threshold are only waiting for the next maintenance run', () => {
     const verdict = doorbellVerdict(
       queue('q', { store: { claimable: 2, notRung: 2, oldestNotRungAgeMs: 3_000 } }),
       60_000
     );
     expect(verdict.kind).toBe('ok');
-    expect(verdict.text).toContain('next tick');
+    expect(verdict.text).toContain('next maintenance run');
   });
 
-  test('poison doorbells outrank everything but a pause, and the jobs are said to be safe', () => {
+  test('failed notifications outrank everything but a pause, and the jobs are said to be safe', () => {
     const verdict = doorbellVerdict(queue('q', { deadLetterDepth: 7 }), 60_000);
     expect(verdict.kind).toBe('poison');
-    expect(verdict.text).toContain('7 poison doorbells');
+    expect(verdict.text).toContain('7 failed notifications');
     expect(verdict.text).toContain('jobs stay in the database');
     expect(verdictTone(verdict)).toBe('red');
   });

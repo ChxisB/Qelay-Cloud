@@ -38,12 +38,17 @@ export {
   BatchTooLargeError,
   ConnectionBudgetError,
   ConnectionConfigError,
+  DestinationInUseError,
+  DestinationLimitError,
+  DestinationNameTakenError,
   ExecutionTooLargeError,
   GroupFullError,
   MigrationError,
   NotImplementedError,
   PayloadTooComplexError,
   PayloadTooLargeError,
+  RouteChainError,
+  RouteCycleError,
   SchemaDriftError,
   SchemaVersionError,
   WebhookDisabledError,
@@ -148,24 +153,53 @@ export { webhookSettingsFromEnv } from './store/webhookEnv';
 export type { WebhookRetention } from './store/webhookRetention';
 export { DEFAULT_WEBHOOK_KEEP_MS, WEBHOOK_DELIVERY_EXPIRY_MS } from './store/webhookRetention';
 export { RATE_WINDOW_MS } from './store/webhookClaim';
+export { MAX_BULK_RETRY } from './store/webhookFeed';
 export { DEFAULT_DELIVERY_PAGE, MAX_DELIVERY_PAGE } from './store/webhookHistory';
+export {
+  DEFAULT_STATS_BUCKETS,
+  MAX_STATS_BUCKETS,
+  MAX_STATS_WINDOW_MS,
+} from './store/webhookStats';
 export { MAX_SECRET_CHARS, MIN_SECRET_CHARS } from './store/webhooks';
 export type {
+  AllDeliveriesQuery,
   AttemptOutcome,
   ClaimedDelivery,
   ClaimOptions,
   DeliveryPage,
   DeliveryQuery,
   DeliveryRecord,
+  GroupBucket,
+  GroupStatsQuery,
   RecordSummary,
+  RetryFailedOptions,
   RetryResult,
+  StatsBucket,
+  StatsQuery,
+  WebhookGroupStat,
+  WebhookGroupStats,
   WebhookIssued,
+  WebhookPatch,
   WebhookRecord,
   WebhookSpec,
+  WebhookStats,
   WriteOptions,
   WriterState,
   WriteResult,
 } from './store/webhookTypes';
+export type {
+  DestinationPatch,
+  DestinationRecord,
+  DestinationSpec,
+} from './store/webhookDestinationTypes';
+export { DEFAULT_ISSUE_PAGE, MAX_ISSUE_PAGE } from './store/webhookIssues';
+export type {
+  IssueCounts,
+  IssuePage,
+  IssueQuery,
+  IssueRecord,
+  IssueResult,
+} from './store/webhookIssueTypes';
 export { DEFAULT_WRITE_PAGE } from './store/webhookWriter';
 export { DEFAULT_MAX_JOB_LOGS, MAX_JOB_LOGS, MAX_LOG_MESSAGE_CHARS } from './store/logs';
 export type { StoreSettingsOptions } from './store/settings';

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { type ConfirmOptions, confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/feedback';
 import { Field, Input } from '@/components/ui/form';
@@ -14,10 +15,12 @@ import {
   type ConfigSaveFence,
   createConfigSaveFence,
   parseConfigSaveResponse,
+  restartQuestion,
   sameConfig,
   shouldIgnoreStatusBehindSave,
   validConfigRevision,
 } from './configEditor';
+import { CommandNotes, EnvNotes } from './ConfigNotes';
 import { EnvVarsEditor } from './EnvVarsEditor';
 
 export function ConfigCard({
@@ -124,7 +127,7 @@ export function ConfigCard({
       setSaved(false);
     }, 2000);
   };
-  const persist = async (restart: boolean) => {
+  const persist = async (restart: boolean, confirm?: ConfirmOptions) => {
     const lease = actionGuard.begin(['config', 'lifecycle']);
     if (!lease) return;
     const invalid = configDraftError(value);
@@ -143,6 +146,11 @@ export function ConfigCard({
       lease.finish();
       setConflict(true);
       return setErr('Configuration changed elsewhere; reload the latest values before saving.');
+    }
+    // The lease is held while the question is open, so a second click cannot save twice.
+    if ((confirm && !(await confirmInPage(confirm))) || !lease.isCurrent()) {
+      lease.finish();
+      return;
     }
     setErr(null);
     setConflict(false);
@@ -174,13 +182,7 @@ export function ConfigCard({
     }
   };
 
-  const save = () => persist(false);
-
-  const saveAndRestart = () => {
-    const what = changed.length > 0 ? ` Changed: ${changed.join(', ')}.` : '';
-    if (!window.confirm(`Save configuration and restart the server to apply it?${what}`)) return;
-    return persist(true);
-  };
+  const saveAndRestart = () => persist(true, restartQuestion(changed));
 
   const reloadLatest = () => {
     if (!status?.config) return;
@@ -199,7 +201,7 @@ export function ConfigCard({
   };
 
   return (
-    <Card className="p-6">
+    <Card className="p-4">
       <CardHeader title="Configuration" />
       <p className="-mt-2 mb-5 text-[13px] text-muted">
         {running
@@ -210,12 +212,12 @@ export function ConfigCard({
         className="flex flex-col gap-4"
         onSubmit={(e) => {
           e.preventDefault();
-          save();
+          persist(false);
         }}
       >
         <Field
           label="Command"
-          hint="The exact command the agent runs to launch qelay. It receives HTTP_PORT and TCP_PORT; QELAY_DATA_PATH is injected only for SQLite and removed in non-SQLite modes. The default resolves Qelay with bunx; offline installs can point at a local entry."
+          hint="The command the agent runs to start the server. Leave the default unless you need something else."
         >
           <Input
             name="server-command"
@@ -227,8 +229,9 @@ export function ConfigCard({
             placeholder="bunx qelay@2.9.11 start"
           />
         </Field>
+        <CommandNotes />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="HTTP port" hint="Dashboard API + SSE.">
+          <Field label="HTTP port" hint="Used by this dashboard and its live updates.">
             <Input
               name="server-http-port"
               autoComplete="off"
@@ -240,7 +243,7 @@ export function ConfigCard({
               onChange={(e) => set({ httpPort: Number(e.target.value) })}
             />
           </Field>
-          <Field label="TCP port" hint="Binary protocol. Must differ from HTTP.">
+          <Field label="TCP port" hint="For client connections. Must differ from HTTP.">
             <Input
               name="server-tcp-port"
               autoComplete="off"
@@ -255,7 +258,7 @@ export function ConfigCard({
         </div>
         <Field
           label="Data path"
-          hint="Durable SQLite path for the managed broker and Workflow Engine, relative to the agent's working directory. In PostgreSQL mode the agent keeps it for Workflow state but does not pass it to the broker."
+          hint="Where data is stored, relative to the agent's folder. With PostgreSQL, only Workflow state uses it."
         >
           <Input
             name="server-data-path"
@@ -268,7 +271,7 @@ export function ConfigCard({
         </Field>
         <Field
           label="Environment variables"
-          hint="Injected on start. Includes Qelay completed-history controls: QELAY_MAX_COMPLETED_JOBS bounds hot memory, while QELAY_COMPLETED_RETENTION_MS opts into durable age-based expiry. Memory and PostgreSQL modes remove inherited SQLite path aliases. Applies on the next restart."
+          hint="Extra settings given to the server when it starts. Applies on the next restart."
         >
           <EnvVarsEditor
             key={currentEditor?.id ?? 'initial'}
@@ -277,6 +280,7 @@ export function ConfigCard({
             disabled={busy}
           />
         </Field>
+        <EnvNotes />
         <ConfigActions
           busy={busy}
           running={running}

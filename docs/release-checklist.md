@@ -40,9 +40,9 @@ bun run test:e2e && bun run docs:check && bun run security:routes --check && bun
 QCLOUD_REQUIRE_TERRAFORM=1 bun run check:terraform
 ```
 
-The Pub/Sub emulator is started on the host (see [CLAUDE.md](../CLAUDE.md)). The compose file starts PostgreSQL 16, so this is
-the first run of the database suites on 16: if the DDL snapshot or an `EXPLAIN` check differs, regenerate it with
-`QCLOUD_UPDATE_SNAPSHOT=1`, read the diff, and commit it. The Firefox project of `test:e2e` is also run here for the first
+The Pub/Sub emulator is started on the host (see [CLAUDE.md](../CLAUDE.md)). The compose file starts PostgreSQL 18, so this is
+the first run of the database suites on the Docker image: if the DDL snapshot or an `EXPLAIN` check differs, regenerate it
+with `QCLOUD_UPDATE_SNAPSHOT=1`, read the diff, and commit it. The Firefox project of `test:e2e` is also run here for the first
 time. Then, in each of `infra/gcp/example`, `infra/gcp/control-plane`, `infra/aws/example` and `infra/aws/control-plane`:
 
 ```bash
@@ -98,7 +98,13 @@ for p in core store-postgres transport-local transport-gcp transport-aws transpo
 done
 ```
 
-The panel is not published: it ships as an image and static files.
+The panel is not published to npm: it ships as an image and static files.
+
+The tag also starts [release.yml](../.github/workflows/release.yml): the full CI, then the `qelay-api` and `qelay-panel` images
+(amd64 and arm64, with SBOM and provenance) and the Helm chart, pushed to `ghcr.io/<owner>`, and a GitHub Release. Only
+`GITHUB_TOKEN` is used. The first push of each of the three packages is private: make them public once, in the package
+settings, or `helm install` and `docker pull` need a login. Pre-release tags (`v1.0.0-rc.1`) go through the same steps and
+are marked as pre-releases; use one first, because no image has ever been built.
 
 ## 5. Deploy
 

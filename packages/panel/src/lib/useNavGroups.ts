@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 export const NAV_GROUPS_STORAGE_KEY = 'qelay-nav-groups';
 
-/** The design opens only Queues; every other group starts collapsed. */
-const DEFAULT_OPEN: ReadonlySet<string> = new Set(['Queues']);
+/** The design opens only Work; every other group starts collapsed. */
+const DEFAULT_OPEN: ReadonlySet<string> = new Set(['Work']);
 
 type Stored = Record<string, boolean>;
 

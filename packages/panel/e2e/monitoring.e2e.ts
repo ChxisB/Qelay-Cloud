@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import {
   E2E_APP_URL,
   E2E_BASE_PATH,
@@ -5,8 +6,18 @@ import {
   E2E_CONTROL_URL,
   E2E_SEED_QUEUE,
 } from './config';
-import { control, expect, expectNoBrowserErrors, test, unlockDashboard } from './fixtures';
+import {
+  answerQuestion,
+  control,
+  expect,
+  expectNoBrowserErrors,
+  test,
+  unlockDashboard,
+} from './fixtures';
 import { clickNavLink } from './navigation';
+
+const logLines = (page: Page) =>
+  page.getByRole('log', { name: 'Activity events' }).getByRole('button');
 
 test.beforeEach(async ({ page, request }) => {
   await control(request, '/upstream/start');
@@ -23,7 +34,13 @@ test('shows live queue metrics, storage health and the real worker registry', as
   await expect(page.getByRole('heading', { level: 1, name: 'Metrics' })).toBeVisible();
   await expect(page.getByRole('row').filter({ hasText: E2E_SEED_QUEUE })).toBeVisible();
   await expect(page.locator('#main').getByText('Live', { exact: true })).toBeVisible();
-  await clickNavLink(page, page.locator(`#app-nav a[href="${E2E_BASE_PATH}/usage"]`));
+  // Usage is a tab of Health: the sidebar item opens Deployment, the tab bar leads on.
+  await clickNavLink(page, page.locator(`#app-nav a[href="${E2E_BASE_PATH}/deployment"]`));
+  await page
+    .getByRole('navigation', { name: 'Health' })
+    .getByRole('link', { name: 'Usage', exact: true })
+    .click();
+  await expect(page).toHaveURL(`${E2E_APP_URL}/usage`);
   await expect(page.getByText('Disk writes are being accepted.')).toBeVisible();
   await expect(page.getByText('Jobs pushed (since restart)')).toBeVisible();
   const workers = page.waitForResponse((r) => r.url().endsWith('/api/workers') && r.ok());
@@ -40,14 +57,16 @@ test('receives a real job event in Logs and filters it', async ({
 }, testInfo) => {
   const queue = `logs-${testInfo.project.name}`;
   await clickNavLink(page, page.locator(`#app-nav a[href="${E2E_BASE_PATH}/logs"]`));
-  await expect(page.getByRole('heading', { name: 'Activity Logs', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Activity logs', exact: true })).toBeVisible();
   await expect(page.locator('#main').getByText('Live', { exact: true })).toBeVisible();
   await control(request, '/jobs', { queue });
-  await expect(page.getByRole('row').filter({ hasText: queue })).toBeVisible();
-  await page.getByRole('textbox').fill('no-matching-e2e-event');
-  await expect(page.getByRole('row').filter({ hasText: queue })).toHaveCount(0);
-  await page.getByRole('textbox').fill(queue);
-  await expect(page.getByRole('row').filter({ hasText: queue })).toBeVisible();
+  await expect(logLines(page).filter({ hasText: queue }).first()).toBeVisible();
+  await page
+    .getByRole('searchbox', { name: 'Search by job ID or queue' })
+    .fill('no-matching-e2e-event');
+  await expect(logLines(page).filter({ hasText: queue })).toHaveCount(0);
+  await page.getByRole('searchbox', { name: 'Search by job ID or queue' }).fill(queue);
+  await expect(logLines(page).filter({ hasText: queue }).first()).toBeVisible();
   expectNoBrowserErrors(browserErrors);
 });
 
@@ -60,7 +79,7 @@ test('evaluates an alert against a real waiting job and removes the rule', async
   const name = `Waiting evidence ${testInfo.project.name}`;
   await control(request, '/jobs', { queue });
   await clickNavLink(page, page.locator(`#app-nav a[href="${E2E_BASE_PATH}/alerts"]`));
-  await page.getByRole('button', { name: '+ Create Alert Rule' }).click();
+  await page.getByRole('button', { name: '+ Create alert rule' }).click();
   await page.getByLabel('Name', { exact: true }).fill(name);
   await page.getByLabel('Metric', { exact: true }).selectOption('waiting');
   await page.getByLabel('Threshold', { exact: true }).fill('1');
@@ -68,15 +87,15 @@ test('evaluates an alert against a real waiting job and removes the rule', async
   await page.getByRole('button', { name: 'Save rule' }).click();
   const triggered = page
     .locator('section')
-    .filter({ has: page.getByRole('heading', { name: 'Triggered Alerts' }) });
+    .filter({ has: page.getByRole('heading', { name: 'Triggered alerts' }) });
   await expect(triggered.getByRole('row').filter({ hasText: name })).toBeVisible();
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: `Delete rule ${name}` }).click();
+  await answerQuestion(page, `Delete alert rule "${name}"?`, 'accept', 'Delete rule');
   await expect(page.getByRole('row').filter({ hasText: name })).toHaveCount(0);
   expectNoBrowserErrors(browserErrors);
 });
 
-test('shows a real failed job in both DLQ views, with purge disabled and no retry offered', async ({
+test('shows a real failed job in the DLQ, with purge disabled and no retry offered', async ({
   page,
   request,
   browserErrors,
@@ -89,23 +108,15 @@ test('shows a real failed job in both DLQ views, with purge disabled and no retr
   });
   expect(seeded.ok()).toBe(true);
   const { id } = await seeded.json();
-  for (const route of ['/dlq', '/dlq-control']) {
-    await clickNavLink(page, page.locator(`#app-nav a[href="${E2E_BASE_PATH}${route}"]`));
-    await expect(page).toHaveURL(`${E2E_APP_URL}${route}`);
-    await expect(
-      page.getByRole('heading', {
-        name: route === '/dlq' ? 'Dead Letter Queue' : 'DLQ Control',
-        exact: true,
-      })
-    ).toBeVisible();
-    await page.getByRole('combobox', { name: 'Queue', exact: true }).selectOption(queue);
-    await expect(page.getByRole('combobox', { name: 'Queue', exact: true })).toHaveValue(queue);
-    await expect(
-      page.getByRole('row').filter({ has: page.locator(`a[href="${E2E_BASE_PATH}/job?id=${id}"]`) })
-    ).toBeVisible();
-  }
-  await expect(page.getByRole('button', { name: 'Purge', exact: true })).toBeDisabled();
-  // Retrying a dead job is not offered here: the Control API answers it with 501 (`dlq-retry`).
-  await expect(page.getByRole('button', { name: 'Retry all', exact: true })).toHaveCount(0);
+  await clickNavLink(page, page.locator(`#app-nav a[href="${E2E_BASE_PATH}/dlq"]`));
+  await expect(page).toHaveURL(`${E2E_APP_URL}/dlq`);
+  await expect(page.getByRole('heading', { name: 'Dead letter queue', exact: true })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Queue', exact: true }).selectOption(queue);
+  await expect(page.getByRole('combobox', { name: 'Queue', exact: true })).toHaveValue(queue);
+  await expect(
+    page.getByRole('row').filter({ has: page.locator(`a[href="${E2E_BASE_PATH}/job?id=${id}"]`) })
+  ).toBeVisible();
+  // Neither purging nor retrying a dead job is offered here: the Control API answers them with 501 (`dlq-retry`).
+  await expect(page.getByRole('button', { name: /^(Retry|Purge)/ })).toHaveCount(0);
   expectNoBrowserErrors(browserErrors);
 });

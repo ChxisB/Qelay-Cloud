@@ -14,7 +14,6 @@ import { ensureDom, settle } from './domSetup';
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = window.confirm;
 const realFileReader = globalThis.FileReader;
 const realWindowFileReader = window.FileReader;
 const realJsonParse = JSON.parse;
@@ -160,7 +159,6 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
   globalThis.FileReader = realFileReader;
   window.FileReader = realWindowFileReader;
   Object.defineProperty(JSON, 'parse', {

@@ -1,6 +1,8 @@
 import { Card, CardHeader } from '@/components/ui/Card';
+import { Meter } from '@/components/ui/charts/HBars';
 import { cn } from '@/lib/cn';
 import { formatCompact, formatNumber, formatPercent, formatUptime } from '@/lib/format';
+import { useChangeFlash } from '@/lib/useChangeFlash';
 import type { useThroughputSeries } from '@/lib/useThroughputSeries';
 
 export function MetricsStatusPanels({
@@ -11,11 +13,10 @@ export function MetricsStatusPanels({
   stats: NonNullable<ReturnType<typeof useThroughputSeries>['latest']>['stats'] | undefined;
 }) {
   return (
-    <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card>
-        <CardHeader title="Error Rate" />
-        <p className="-mt-3 mb-4 text-xs text-faint">Failed as percentage of total processed</p>
-        <div className="flex items-center justify-around">
+        <CardHeader title="Error rate" sub="Failed jobs as a share of all processed jobs" />
+        <div className="mb-5 flex items-center justify-around">
           <Rate
             value={rate == null ? '—' : formatPercent(rate)}
             label="error rate"
@@ -27,21 +28,11 @@ export function MetricsStatusPanels({
             success={rate != null}
           />
         </div>
-        {rate == null ? (
-          <div className="mt-4 h-2 overflow-hidden rounded-full bg-surface-2" />
-        ) : (
-          <div className="mt-4 h-2 overflow-hidden rounded-full bg-danger/40">
-            <div
-              className="h-full rounded-full bg-success"
-              style={{ width: `${(1 - rate) * 100}%` }}
-            />
-          </div>
-        )}
+        <Meter value={rate == null ? 0 : (1 - rate) * 100} tone="ok" label="Success rate" />
       </Card>
       <Card>
-        <CardHeader title="Server Overview" />
-        <p className="-mt-3 mb-4 text-xs text-faint">Current server-wide statistics</p>
-        <dl className="divide-y divide-line text-sm">
+        <CardHeader title="Server overview" sub="Server-wide counts right now" />
+        <dl className="divide-y divide-line text-[13px]">
           <ServerRow
             color="bg-state-waiting-fg"
             label="Standard waiting"
@@ -76,6 +67,7 @@ export function MetricsStatusPanels({
             color="bg-success"
             label="Uptime"
             value={stats ? formatUptime(stats.uptime / 1000) : '—'}
+            steady
           />
         </dl>
       </Card>
@@ -94,29 +86,48 @@ function Rate({
   danger?: boolean;
   success?: boolean;
 }) {
+  const flash = useChangeFlash(value);
   return (
     <div className="text-center">
       <div
         className={cn(
-          'text-3xl font-bold tnum',
+          'text-[22px] leading-none font-semibold tracking-[-0.02em] tnum',
           danger ? 'text-danger' : success ? 'text-success' : 'text-fg'
         )}
       >
-        {value}
+        <span key={flash} className={flash > 0 ? 'motion-flash' : undefined}>
+          {value}
+        </span>
       </div>
-      <div className="text-xs text-faint">{label}</div>
+      <div className="mt-1.5 text-[13px] font-bold text-muted">{label}</div>
     </div>
   );
 }
 
-function ServerRow({ color, label, value }: { color: string; label: string; value: string }) {
+/** `steady` is for a figure that moves on every poll (uptime): it never washes. */
+function ServerRow({
+  color,
+  label,
+  value,
+  steady,
+}: {
+  color: string;
+  label: string;
+  value: string;
+  steady?: boolean;
+}) {
+  const flash = useChangeFlash(value);
   return (
     <div className="flex items-center justify-between py-2.5">
       <dt className="flex items-center gap-2 text-muted">
         <span className={cn('size-2 rounded-full', color)} />
         {label}
       </dt>
-      <dd className="font-semibold tnum text-fg">{value}</dd>
+      <dd className="font-bold tnum text-fg">
+        <span key={flash} className={!steady && flash > 0 ? 'motion-flash' : undefined}>
+          {value}
+        </span>
+      </dd>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import type { StoreContext } from './context';
 import { runTransaction } from './retry';
+import { pruneResolvedIssues } from './webhookIssues';
 
 /**
  * How long past its due time a delivery may stay undelivered before the tick gives up on it (for a
@@ -104,9 +105,25 @@ export async function pruneWebhookDeliveries(
       RETURNING id`;
     return rows.length;
   });
+  // The writer's dedupe keys whose window has ended (migration 17). Not counted in the result: they only
+  // decide `more`, so a backlog of them keeps the tick coming back.
+  const keys = await ctx.db.run('pruneWebhookDedupe', async (sql) => {
+    const now = await ctx.db.time.now(sql);
+    const rows = await sql<Array<{ key: string }>>`
+      DELETE FROM qcloud_webhook_dedupe
+      WHERE (namespace, webhook_id, key) IN (
+        SELECT namespace, webhook_id, key FROM qcloud_webhook_dedupe
+        WHERE namespace = ${ctx.namespace} AND until <= ${now}
+        ORDER BY until
+        LIMIT ${limit})
+      RETURNING key`;
+    return rows.length;
+  });
+  // Issues resolved more than `webhookKeepMs` ago (migration 18); likewise only decides `more`.
+  const issues = await pruneResolvedIssues(ctx, limit);
   return {
     expired,
     deleted,
-    more: expired >= limit || deleted >= limit,
+    more: expired >= limit || deleted >= limit || keys >= limit || issues >= limit,
   };
 }

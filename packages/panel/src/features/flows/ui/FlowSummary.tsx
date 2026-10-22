@@ -1,6 +1,7 @@
+import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
+import { StatusPill, stateRole } from '@/components/ui/StatusBadge';
 import { formatNumber } from '@/lib/format';
-import { flowStateStyle } from '../domain/flowConstants';
 import { countByState, type FlowFilter } from '../domain/flowTree';
 import { MAX_FLOW_VIEW_NODES, type FlowView } from '../domain/flowWire';
 
@@ -37,12 +38,9 @@ export function FlowSummary({
           {view.nodes.length === 1 ? 'job' : 'jobs'}
         </span>
         {counts.map(([state, n]) => (
-          <span
-            key={state}
-            className={`rounded-full border px-2 py-0.5 font-medium ${flowStateStyle(state)}`}
-          >
+          <StatusPill key={state} state={stateRole(state)} className="capitalize">
             {formatNumber(n)} {state}
-          </span>
+          </StatusPill>
         ))}
       </div>
       {view.truncated && (
@@ -91,20 +89,20 @@ function TruncationNotice({
   onShowMore: () => void;
 }) {
   return (
-    <div
-      role="status"
-      className="flex flex-wrap items-center gap-3 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
+    <Banner
+      tone="warn"
+      title={`Showing ${formatNumber(view.nodes.length)} of ${formatNumber(view.total)} jobs.`}
+      action={
+        canShowMore && (
+          <Button size="sm" disabled={loading} onClick={onShowMore}>
+            Show more
+          </Button>
+        )
+      }
     >
-      <span>
-        Showing {formatNumber(view.nodes.length)} of {formatNumber(view.total)} jobs. The rest are
-        not listed, so a failure or a stuck parent may be out of sight
-        {canShowMore ? '.' : `: a view is limited to ${formatNumber(MAX_FLOW_VIEW_NODES)} jobs.`}
-      </span>
-      {canShowMore && (
-        <Button size="sm" disabled={loading} onClick={onShowMore}>
-          Show more
-        </Button>
-      )}
-    </div>
+      {' '}
+      The rest are not listed, so a failure or a stuck parent may be out of sight
+      {canShowMore ? '.' : `: a view is limited to ${formatNumber(MAX_FLOW_VIEW_NODES)} jobs.`}
+    </Banner>
   );
 }

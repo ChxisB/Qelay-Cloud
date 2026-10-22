@@ -5,6 +5,7 @@ import type { StoreContext } from './context';
 import type { EventCursor } from './journal';
 import { MAX_EVENT_PAGE, readEventsOn, WHOLE_COMMIT } from './journal';
 import { isRetryableTransactionError, runTransaction } from './retry';
+import { dedupe } from './webhookDedupe';
 import type { HookRow, Planned } from './webhookPlan';
 import { hookOf, plan } from './webhookPlan';
 import type { WriteOptions, WriterState, WriteResult } from './webhookTypes';
@@ -17,7 +18,8 @@ import type { WriteOptions, WriterState, WriteResult } from './webhookTypes';
  * switching on and off stays lossless.
  *
  * It makes what the trigger makes (the same rules, and the same `created_at`, so the unique index on
- * the event still guards it) plus each webhook's `filter` and `shape`. A shaped body is rendered
+ * the event still guards it) plus each webhook's `filter`, `dedupe`, `shape` and `delayMs` (the delivery
+ * is made at once and is due that much later). A shaped body is rendered
  * here, once, and stored: every attempt sends those bytes. A body too large to make is recorded as a
  * failed delivery with an empty `body`, which the sender refuses, so it is visible and not lost.
  *
@@ -43,7 +45,7 @@ const IDLE: WriteResult = { active: false, events: 0, written: 0, more: false, g
 const refusal = (): UnsupportedOptionError =>
   new UnsupportedOptionError(
     'writer',
-    'webhooks with a filter or shape need the writer on: delete them first'
+    'webhooks with a filter, shape, delay or dedupe need the writer on: delete them first'
   );
 
 const cursorOf = (row: WriterRow): EventCursor => ({
@@ -121,10 +123,11 @@ async function writePage(
     // KEY SHARE, like the trigger's: a webhook being deleted is waited for and then skipped. A paused
     // webhook still gets its deliveries (they wait, `claimDue` serves only enabled ones).
     const rows = await tx<HookRow[]>`
-      SELECT id, events, queue, filter, shape, active_from, created_at FROM qcloud_webhooks
+      SELECT id, events, queue, filter, shape, delay_ms, dedupe, active_from, created_at
+      FROM qcloud_webhooks
       WHERE namespace = ${ctx.namespace} AND (enabled OR disabled_reason IS NOT NULL)
       ORDER BY id FOR KEY SHARE`;
-    const planned = plan(page.events, rows.map(hookOf));
+    const planned = await dedupe(tx, ctx, plan(page.events, rows.map(hookOf)));
     for (let at = 0; at < planned.length; at += INSERT_CHUNK) {
       written += await insert(tx, ctx, planned.slice(at, at + INSERT_CHUNK), now);
     }
@@ -152,7 +155,7 @@ async function insert(
        next_attempt_at, created_at, body, last_error, finished_at)
     SELECT ${ctx.namespace}, r.v->>'w', (r.v->>'e')::bigint, r.v->>'n', r.v->>'q', r.v->>'j',
            (r.v->>'t')::bigint, CASE WHEN r.v->>'x' IS NULL THEN 'pending' ELSE 'failed' END,
-           (r.v->>'t')::bigint, (r.v->>'t')::bigint, r.v->>'b', r.v->>'x',
+           (r.v->>'a')::bigint, (r.v->>'t')::bigint, r.v->>'b', r.v->>'x',
            CASE WHEN r.v->>'x' IS NULL THEN NULL ELSE ${now}::bigint END
     FROM jsonb_array_elements(${JSON.stringify(rows)}::text::jsonb) WITH ORDINALITY AS r(v, ord)
     ORDER BY r.ord
@@ -164,13 +167,14 @@ async function insert(
 async function hasFiltered(sql: Queryable, namespace: string): Promise<boolean> {
   const [row] = await sql<Array<{ n: number }>>`
     SELECT count(*)::int AS n FROM qcloud_webhooks
-    WHERE namespace = ${namespace} AND (filter IS NOT NULL OR shape IS NOT NULL)`;
+    WHERE namespace = ${namespace}
+      AND (filter IS NOT NULL OR shape IS NOT NULL OR delay_ms IS NOT NULL OR dedupe IS NOT NULL)`;
   return row!.n > 0;
 }
 
 /**
  * Switches the namespace back to the trigger without losing an event. Refused while a webhook has a
- * filter or shape (the trigger cannot apply them). It marks the row `stopping` (the trigger delivers
+ * filter, shape, delay or dedupe (the trigger cannot apply them). It marks the row `stopping` (the trigger delivers
  * again from then on), catches the writer up, then in one transaction locks the row `FOR UPDATE`,
  * which waits for every job transaction that skipped its deliveries for the writer to commit, drains
  * what those added, and deletes the row.

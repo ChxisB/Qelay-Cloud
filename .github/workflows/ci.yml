@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # The release workflow runs this first.
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -23,7 +25,7 @@ jobs:
       # Throwaway database for the test suite. These credentials guard nothing: the container
       # lives for this job only. No repository secrets or cloud credentials are used here.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: qcloud
           POSTGRES_PASSWORD: qcloud
@@ -133,7 +135,7 @@ jobs:
     services:
       # Throwaway database, as in the gate job: the runtime makes its own schema and drops it.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: qcloud
           POSTGRES_PASSWORD: qcloud
@@ -199,3 +201,17 @@ jobs:
       # variable themselves. Nothing is applied and no cloud is contacted.
       - name: Format, validate and plan
         run: bun run check:terraform
+
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # Lint and render with every feature on. The chart is not installed on a cluster here.
+      - name: Lint and render
+        run: |
+          helm lint charts/qelay -f charts/qelay/ci/values.yaml
+          helm template qelay charts/qelay -f charts/qelay/ci/values.yaml > /dev/null

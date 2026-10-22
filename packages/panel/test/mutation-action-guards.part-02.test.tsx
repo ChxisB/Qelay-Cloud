@@ -7,7 +7,6 @@ import { QueueDetailPro } from '../src/pages/control/QueueDetailPro';
 import { ensureDom, settle } from './domSetup';
 
 const realFetch = globalThis.fetch;
-const realConfirm = window.confirm;
 const mounted = new Set<() => void>();
 
 const json = (body: unknown, status = 200) =>
@@ -88,7 +87,6 @@ const _queuePage = {
 
 beforeEach(() => {
   ensureDom();
-  window.confirm = () => true;
   useConnectionStore.setState({
     baseUrl: 'http://server-a.test',
     token: 'token-a',
@@ -100,7 +98,6 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  window.confirm = realConfirm;
   useConnectionStore.setState({
     baseUrl: '/api',
     token: '',
@@ -190,7 +187,7 @@ describe('route and connection ownership', () => {
     const { host } = render(
       createElement(
         MemoryRouter,
-        { initialEntries: ['/queues/orders'] },
+        { initialEntries: ['/queues/orders?tab=settings'] },
         createElement(
           Routes,
           null,

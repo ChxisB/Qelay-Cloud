@@ -35,6 +35,8 @@ export const EMPTY_OVERVIEW = {
   details: [] as QueueHealth[],
   /** Every queue holding dead-lettered jobs; null when the queue list could not be read. */
   dlqQueues: null as { name: string; dlq: number }[] | null,
+  /** Every queue that is paused, not only the rows the health table shows. */
+  pausedQueues: [] as string[],
   failedTotal: 0,
   readyTotal: 0,
   waitingTotal: 0,

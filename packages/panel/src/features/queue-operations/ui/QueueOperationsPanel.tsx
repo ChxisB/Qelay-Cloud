@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
-import { Field, Input } from '@/components/ui/form';
+import { Field, FieldAction, FormRow, Input } from '@/components/ui/form';
 import { currentControlConnectionEpoch } from '@/lib/controlConnectionEpoch';
 import { useControlActionGuard } from '@/lib/useControlActionGuard';
 import type {
@@ -140,14 +140,16 @@ export function QueueOperationsPanel({
     <Card className="mb-6">
       <CardHeader
         title="Queue SDK operations"
-        action={busy ? <span className="font-mono text-xs text-link">{busy}...</span> : undefined}
+        action={
+          busy ? <span className="font-mono text-[13px] text-link">{busy}...</span> : undefined
+        }
       />
-      <p className="mb-5 max-w-3xl text-xs leading-5 text-faint">
+      <p className="mb-5 max-w-3xl text-[13px] leading-5 text-muted">
         Live Qelay limit, group, deduplication, metric, and event-journal contracts, including group
         pause, pending jobs, and priority counts. Requests are pinned to the server managed by this
         control agent.
       </p>
-      <div className="mb-5 flex flex-wrap items-end gap-3 border-b border-line pb-5">
+      <FormRow className="mb-5 border-b border-line pb-5">
         <div className="w-48">
           <Field label="TTL threshold (maxJobs)" hint="Optional token-consumption threshold">
             <Input
@@ -162,17 +164,19 @@ export function QueueOperationsPanel({
             />
           </Field>
         </div>
-        <Button size="sm" disabled={limits.loading || Boolean(busy)} onClick={loadLimits}>
-          Refresh limits
-        </Button>
-      </div>
+        <FieldAction>
+          <Button size="sm" disabled={limits.loading || Boolean(busy)} onClick={loadLimits}>
+            Refresh limits
+          </Button>
+        </FieldAction>
+      </FormRow>
       <QueueLimitReadback
         snapshot={limits.snapshot}
         loading={limits.loading}
         error={limits.error}
       />
       {actionError && (
-        <p role="alert" className="mt-4 text-sm text-danger">
+        <p role="alert" className="mt-4 text-[13px] font-semibold text-danger">
           {actionError}
         </p>
       )}

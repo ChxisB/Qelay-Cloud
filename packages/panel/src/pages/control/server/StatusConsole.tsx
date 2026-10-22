@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { IconRefresh } from '@/components/ui/icons';
-import { STATE_PILL } from '@/components/ui/StatusBadge';
+import { StatusPill } from '@/components/ui/StatusBadge';
 import type { ServerStatus } from '@/lib/bqTypes';
 import { cn } from '@/lib/cn';
 import { formatUptime } from '@/lib/format';
+import { useChangeFlash } from '@/lib/useChangeFlash';
 import { type ServerVitals, StatusFacts } from './StatusFacts';
 
 interface Props {
@@ -40,20 +41,6 @@ function UptimeTicker({ startedAt }: { startedAt: number }) {
   return <>{formatUptime((Date.now() - startedAt) / 1000)}</>;
 }
 
-function Pill({ tone, children }: { tone: keyof typeof STATE_PILL; children: string }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-full py-[3px] pl-2 pr-2.5 text-xs font-medium',
-        STATE_PILL[tone]
-      )}
-    >
-      <span className="size-1.5 rounded-full bg-current" />
-      {children}
-    </span>
-  );
-}
-
 /**
  * The server's status bar: what state it is in, the three lifecycle buttons and the facts
  * underneath. It carries this screen's single brand gradient, as its top rule.
@@ -74,6 +61,10 @@ export function StatusConsole({
   const running = external ? status?.reachable === true : state === 'running';
   const healthy = !!status?.healthy && !stale;
   const crashed = !external && !running && status?.exitCode != null && status.exitCode !== 0;
+
+  // The ring goes out once when the server becomes healthy, and on nothing else.
+  const haloOn = running && healthy && !transitioning;
+  const halo = useChangeFlash(haloOn);
 
   const meta = external
     ? {
@@ -96,28 +87,32 @@ export function StatusConsole({
         aria-hidden
         className="h-[3px] bg-[linear-gradient(90deg,var(--brand-1),var(--brand-2),var(--brand-3))]"
       />
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 py-5">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4 px-4 py-3">
         <div className="flex min-w-0 flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span className="inline-flex items-center gap-2.5 text-[22px] font-bold tracking-tight text-fg">
-              <span className="relative flex size-2.5 shrink-0">
-                {running && healthy && !transitioning && (
-                  <span className="absolute inline-flex size-full rounded-full bg-success opacity-50 motion-safe:animate-ping" />
+            <span className="inline-flex items-center gap-2.5 text-[16px] font-bold tracking-tight text-fg">
+              <span
+                key={halo}
+                className={cn(
+                  'relative inline-flex size-2.5 shrink-0 rounded-full',
+                  meta.dot,
+                  halo > 0 && haloOn && 'motion-ping text-success'
                 )}
-                <span className={cn('relative inline-flex size-2.5 rounded-full', meta.dot)} />
-              </span>
+              />
               {transitioning && busy ? `${capitalize(busy)}…` : meta.label}
             </span>
             {stale ? (
-              <Pill tone="delayed">Agent unreachable</Pill>
+              <StatusPill state="delayed">Agent unreachable</StatusPill>
             ) : crashed ? (
-              <Pill tone="failed">{`Crashed · exit ${status?.exitCode}`}</Pill>
+              <StatusPill state="failed">{`Crashed · exit ${status?.exitCode}`}</StatusPill>
             ) : running && healthy ? (
-              <Pill tone="completed">Healthy</Pill>
+              <StatusPill state="completed">Healthy</StatusPill>
             ) : running ? (
-              <Pill tone="delayed">{external ? 'Unhealthy' : 'Waiting for health'}</Pill>
+              <StatusPill state="delayed">
+                {external ? 'Unhealthy' : 'Waiting for health'}
+              </StatusPill>
             ) : external ? (
-              <Pill tone="failed">Unreachable</Pill>
+              <StatusPill state="failed">Unreachable</StatusPill>
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-muted">
@@ -126,7 +121,7 @@ export function StatusConsole({
                 Last known: pid {status?.pid ?? '—'} — agent unreachable, state may have changed
               </span>
             ) : external ? (
-              <span title={status?.healthError} className="font-mono text-xs">
+              <span title={status?.healthError} className="font-mono text-[13px]">
                 {status?.reachable
                   ? healthy
                     ? `healthy via ${healthEndpoint}`

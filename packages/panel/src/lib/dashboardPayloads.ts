@@ -1,9 +1,19 @@
 import type { WebhookAttemptFull, WebhookDeliveryFull } from './bq/types';
 import type { QueueSummaryFull, WebhookFull, WorkerFull } from './bqTypes';
+import { routeFields } from './gatewayPayloads';
+import {
+  count,
+  finiteNumber,
+  optionalText,
+  payloadData,
+  record,
+  stringList,
+  text,
+  timestamp,
+} from './payloadChecks';
 
 const MAX_COLLECTION_ROWS = 10_000;
 const MAX_QUEUE_REFS = 1_000;
-const MAX_DATE_MS = 8_640_000_000_000_000;
 const WEBHOOK_EVENT_SET = new Set([
   'job.pushed',
   'job.started',
@@ -14,56 +24,6 @@ const WEBHOOK_EVENT_SET = new Set([
   // though new registrations cannot request it and the server never emits it.
   'job.stalled',
 ]);
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function text(value: unknown, max: number, allowEmpty = false): value is string {
-  if (typeof value !== 'string' || value.length > max || (!allowEmpty && value.length === 0)) {
-    return false;
-  }
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (code < 32 || code === 127) return false;
-  }
-  return true;
-}
-
-function count(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-
-function finiteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-function timestamp(value: unknown): value is number {
-  return count(value) && value <= MAX_DATE_MS;
-}
-
-function optionalText(value: unknown, max: number): value is string | null {
-  return value === null || text(value, max);
-}
-
-function stringList(value: unknown, maxItems: number, maxLength: number): value is string[] {
-  if (!Array.isArray(value) || value.length > maxItems) return false;
-  const unique = new Set<string>();
-  for (const item of value) {
-    if (!text(item, maxLength) || unique.has(item)) return false;
-    unique.add(item);
-  }
-  return true;
-}
-
-function payloadData(value: unknown, label: string): Record<string, unknown> {
-  const root = record(value);
-  const data = root && record(root.data);
-  if (root?.ok !== true || !data) throw new Error(`Malformed ${label} response.`);
-  return data;
-}
 
 /** `/queues/summary` is a bare array in v2.9.3, so validate it explicitly. */
 export function parseQueueSummaryPayload(value: unknown): QueueSummaryFull[] {
@@ -166,7 +126,7 @@ export interface WebhooksPayload {
   data: { webhooks: WebhookFull[]; stats?: unknown };
 }
 
-function upstreamWebhookUrl(value: unknown): value is string {
+export function upstreamWebhookUrl(value: unknown): value is string {
   if (!text(value, 2_048)) return false;
   try {
     const url = new URL(value);
@@ -186,11 +146,13 @@ export function parseWebhooksPayload(value: unknown): WebhooksPayload {
   const webhooks: WebhookFull[] = [];
   for (const candidate of data.webhooks) {
     const webhook = record(candidate);
+    const route = webhook && routeFields(webhook);
     if (
       !webhook ||
+      !route ||
       !text(webhook.id, 1_024) ||
       ids.has(webhook.id) ||
-      !upstreamWebhookUrl(webhook.url) ||
+      !(route.destination === 'queue' ? webhook.url === '' : upstreamWebhookUrl(webhook.url)) ||
       typeof webhook.urlRedacted !== 'boolean' ||
       typeof webhook.signed !== 'boolean' ||
       !Array.isArray(webhook.events) ||
@@ -205,7 +167,7 @@ export function parseWebhooksPayload(value: unknown): WebhooksPayload {
       throw new Error('Malformed webhooks response.');
     }
     ids.add(webhook.id);
-    webhooks.push(candidate as WebhookFull);
+    webhooks.push({ ...(candidate as WebhookFull), ...route });
   }
   return {
     ok: true,
@@ -249,6 +211,7 @@ function wellFormedDelivery(delivery: Record<string, unknown>): boolean {
     text(delivery.event, 64) &&
     text(delivery.queue, 256) &&
     text(delivery.jobId, 1_024) &&
+    (delivery.routedJobId === undefined || optionalText(delivery.routedJobId, 1_024)) &&
     timestamp(delivery.occurredAt) &&
     typeof delivery.status === 'string' &&
     DELIVERY_STATUSES.has(delivery.status) &&
