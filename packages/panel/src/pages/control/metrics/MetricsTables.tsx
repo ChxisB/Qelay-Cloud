@@ -1,8 +1,10 @@
-import { Card } from '@/components/ui/Card';
+import { Card, CardHeader } from '@/components/ui/Card';
+import { Figure } from '@/components/ui/Figure';
 import { Pagination } from '@/components/ui/Pagination';
+import { StatusGlyph, StatusPill } from '@/components/ui/StatusBadge';
+import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
 import type { QueueSummaryFull } from '@/lib/bqTypes';
 import { cn } from '@/lib/cn';
-import { formatNumber } from '@/lib/format';
 import type { useThroughputSeries } from '@/lib/useThroughputSeries';
 
 const OPS = ['push', 'pull', 'ack'] as const;
@@ -15,51 +17,55 @@ export function OperationLatency({
 }) {
   return (
     <Card className="mb-6" padded={false}>
-      <div className="border-b border-line px-5 py-4">
-        <h2 className="text-base font-semibold text-fg">Operation Latency</h2>
-        <p className="text-xs text-faint">
-          TCP round-trip per operation (p50 / p95 / p99, milliseconds)
-        </p>
+      <div className="px-4 pt-6">
+        <CardHeader
+          title="Operation latency"
+          sub="TCP round trip per operation, in milliseconds (average, p50, p95, p99)"
+        />
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-line text-left eyebrow text-muted light:bg-surface-2">
-              <th className="px-4 py-2.5 font-semibold">Operation</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Avg</th>
-              <th className="px-4 py-2.5 text-right font-semibold">p50</th>
-              <th className="px-4 py-2.5 text-right font-semibold">p95</th>
-              <th className="px-4 py-2.5 text-right font-semibold">p99</th>
+      <TableScroll>
+        <Table>
+          <THead>
+            <tr>
+              <Th>Operation</Th>
+              <Th right>Avg</Th>
+              <Th right>p50</Th>
+              <Th right>p95</Th>
+              <Th right>p99</Th>
             </tr>
-          </thead>
+          </THead>
           <tbody>
             {OPS.map((operation) => {
               const percentile = latency?.percentiles?.[operation];
               const average = latency?.averages?.[`${operation}Ms`];
+              const slow = (percentile?.p99 ?? 0) > P99_WARN_MS;
               return (
-                <tr key={operation} className="border-b border-line last:border-0">
-                  <td className="px-4 py-2.5 font-medium capitalize text-fg">{operation}</td>
-                  <td className="px-4 py-2.5 text-right tnum text-muted">{formatMs(average)}</td>
-                  <td className="px-4 py-2.5 text-right tnum text-muted">
-                    {formatMs(percentile?.p50)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum text-muted">
-                    {formatMs(percentile?.p95)}
-                  </td>
-                  <td
+                <Tr key={operation} dense status={slow ? 'warn' : undefined}>
+                  <Td className="font-bold capitalize">{operation}</Td>
+                  <Td className="text-right tnum text-muted">{formatMs(average)}</Td>
+                  <Td className="text-right tnum text-muted">{formatMs(percentile?.p50)}</Td>
+                  <Td className="text-right tnum text-muted">{formatMs(percentile?.p95)}</Td>
+                  <Td
                     className={cn(
-                      'px-4 py-2.5 text-right tnum',
-                      (percentile?.p99 ?? 0) > P99_WARN_MS ? 'text-warning' : 'text-muted'
+                      'text-right tnum',
+                      slow ? 'font-bold text-warning' : 'text-muted'
                     )}
                   >
-                    {formatMs(percentile?.p99)}
-                  </td>
-                </tr>
+                    {slow ? (
+                      <span className="inline-flex items-center justify-end gap-1.5">
+                        <StatusGlyph state="delayed" small />
+                        slow {formatMs(percentile?.p99)}
+                      </span>
+                    ) : (
+                      formatMs(percentile?.p99)
+                    )}
+                  </Td>
+                </Tr>
               );
             })}
           </tbody>
-        </table>
-      </div>
+        </Table>
+      </TableScroll>
     </Card>
   );
 }
@@ -81,71 +87,65 @@ export function PerQueueMetrics({
 }) {
   return (
     <Card padded={false}>
-      <div className="border-b border-line px-5 py-4">
-        <h2 className="text-base font-semibold text-fg">Per-Queue Metrics</h2>
-        <p className="text-xs text-faint">Job counts breakdown by queue</p>
+      <div className="px-4 pt-6">
+        <CardHeader title="Per-queue metrics" sub="Job counts for each queue" />
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-line text-left eyebrow text-muted light:bg-surface-2">
-              <th className="px-4 py-2.5 font-semibold">Queue</th>
-              <th className="px-4 py-2.5 font-semibold">Status</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Waiting</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Prioritized</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Active</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Completed</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Failed</th>
+      <TableScroll>
+        <Table className="min-w-[640px]">
+          <THead>
+            <tr>
+              <Th>Queue</Th>
+              <Th>Status</Th>
+              <Th right>Waiting</Th>
+              <Th right>Prioritized</Th>
+              <Th right>Active</Th>
+              <Th right>Completed</Th>
+              <Th right>Failed</Th>
             </tr>
-          </thead>
+          </THead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-sm text-faint">
+                <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted">
                   {empty}
                 </td>
               </tr>
             ) : (
               rows.map((queue) => (
-                <tr
-                  key={queue.name}
-                  className="border-b border-line last:border-0 hover:bg-surface-2/40"
-                >
-                  <td className="px-4 py-2.5 font-mono text-xs text-fg">{queue.name}</td>
-                  <td className="px-4 py-2.5">
-                    <span
-                      className={cn(
-                        'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                        queue.paused
-                          ? 'bg-state-waiting-bg text-state-waiting-fg'
-                          : 'bg-state-completed-bg text-state-completed-fg'
-                      )}
-                    >
+                <Tr key={queue.name} dense>
+                  <Td className="font-mono text-xs font-bold">{queue.name}</Td>
+                  <Td>
+                    <StatusPill state={queue.paused ? 'waiting' : 'active'}>
                       {queue.paused ? 'paused' : 'active'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum text-state-waiting-fg">
-                    {formatNumber(queue.counts.waiting)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum text-fg">
-                    {formatNumber(queue.counts.prioritized)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum text-state-active-fg">
-                    {formatNumber(queue.counts.active)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum text-success">
-                    {formatNumber(queue.counts.completed)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum text-danger">
-                    {formatNumber(queue.counts.failed)}
-                  </td>
-                </tr>
+                    </StatusPill>
+                  </Td>
+                  <Td className="text-right tnum text-state-waiting-fg">
+                    <Figure value={queue.counts.waiting} />
+                  </Td>
+                  <Td className="text-right tnum">
+                    <Figure value={queue.counts.prioritized} />
+                  </Td>
+                  <Td className="text-right tnum text-state-active-fg">
+                    <Figure value={queue.counts.active} />
+                  </Td>
+                  <Td className="text-right tnum text-success">
+                    <Figure value={queue.counts.completed} />
+                  </Td>
+                  <Td
+                    className={cn(
+                      'text-right tnum',
+                      queue.counts.failed > 0 && 'font-bold text-danger'
+                    )}
+                  >
+                    <Figure value={queue.counts.failed} />
+                  </Td>
+                </Tr>
               ))
             )}
           </tbody>
-        </table>
-      </div>
-      <div className="px-5 pb-4">
+        </Table>
+      </TableScroll>
+      <div className="px-4 pb-5">
         <Pagination
           page={page}
           pageSize={pageSize}

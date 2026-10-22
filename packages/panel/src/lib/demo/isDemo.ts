@@ -13,7 +13,7 @@
 // installed once at boot). Evaluating live per call let post-navigation callers
 // disagree — React Router drops the `?demo`/`#demo` from the URL on the first
 // nav, so a render-time isDemo() flipped to false while the shim kept serving
-// canned data (SidebarFooter CTA vanished, Flows lost its default DAG), while
+// canned data (Flows lost its default DAG), while
 // the boot-time consumers (main.tsx, Topbar) still read true. Cache so all agree.
 let cached: boolean | undefined;
 

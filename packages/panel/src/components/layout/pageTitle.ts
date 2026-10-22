@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 
 const TITLES: Record<string, string> = {
-  '/': 'Overview',
+  '/': 'Home',
   '/fleet': 'Fleet',
   '/queues': 'Queues',
   '/jobs': 'Jobs',
@@ -16,12 +16,15 @@ const TITLES: Record<string, string> = {
   '/add-job': 'Add Job',
   '/jobs/bulk-add': 'Bulk Add Jobs',
   '/job': 'Job Inspector',
-  '/queue-control': 'Queue Control',
-  '/dlq-control': 'DLQ Control',
-  '/webhooks': 'Webhooks',
+  '/events-gateway': 'Event gateway',
+  '/events-gateway/events': 'Gateway events',
+  '/events-gateway/metrics': 'Gateway metrics',
+  '/events-gateway/issues': 'Gateway issues',
+  '/events-gateway/destinations': 'Gateway destinations',
+  '/events-gateway/connections/new': 'New connection',
   '/diagnostics': 'Diagnostics',
   '/alerts': 'Alerts',
-  '/transport': 'Transport',
+  '/transport': 'Job delivery',
   '/deployment': 'Deployment',
   '/benchmark': 'Benchmark',
   '/database': 'Database',
@@ -29,16 +32,6 @@ const TITLES: Record<string, string> = {
   '/usage': 'Usage',
   '/s3': 'S3 Backup',
   '/settings': 'Settings',
-  '/overview-classic': 'Overview (classic)',
-  '/queues-classic': 'Queues (classic)',
-  '/jobs-classic': 'Jobs (classic)',
-  '/dlq-classic': 'DLQ (classic)',
-  '/cron-classic': 'Cron Jobs (classic)',
-  '/metrics-classic': 'Metrics (classic)',
-  '/workers-classic': 'Workers (classic)',
-  '/logs-classic': 'Logs (classic)',
-  '/usage-classic': 'Usage (classic)',
-  '/s3-classic': 'S3 Backup (classic)',
 };
 
 export function titleFor(pathname: string): string {
@@ -47,15 +40,16 @@ export function titleFor(pathname: string): string {
   // Settings page; resolve its title the same way (queue names keep their case).
   const lower = normalized.toLowerCase();
   if (TITLES[lower]) return TITLES[lower];
-  const classic = lower.startsWith('/queues-classic/');
-  if (classic || lower.startsWith('/queues/')) {
+  if (/^\/events-gateway\/connections\/[^/]+(\/(metrics|settings))?$/.test(lower))
+    return 'Gateway connection';
+  if (lower.startsWith('/queues/')) {
     // A pasted/hand-typed URL may carry a malformed percent-escape (e.g. `%zz`),
     // which makes decodeURIComponent throw during render. Fall back to the raw slice.
-    let name = normalized.slice(classic ? '/queues-classic/'.length : '/queues/'.length);
+    let name = normalized.slice('/queues/'.length);
     try {
       name = decodeURIComponent(name);
     } catch {}
-    return `${name} · Queue${classic ? ' (classic)' : ''}`;
+    return `${name} · Queue`;
   }
   return 'Page not found';
 }

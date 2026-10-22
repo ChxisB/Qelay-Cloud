@@ -1,8 +1,13 @@
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/feedback';
+import { Figure } from '@/components/ui/Figure';
+import { FlowDrawing } from '@/components/ui/illustrations';
 import { Pagination } from '@/components/ui/Pagination';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
 import { formatDateTime, formatNumber } from '@/lib/format';
-import { FLOW_PAGE_SIZE, flowStateStyle, shortFlowId } from '../domain/flowConstants';
+import { useFirstLoad } from '@/lib/useFirstLoad';
+import { FLOW_PAGE_SIZE, shortFlowId } from '../domain/flowConstants';
 import type { FlowList as FlowListData, FlowRootSummary } from '../domain/flowWire';
 
 interface Props {
@@ -14,50 +19,46 @@ interface Props {
 
 /** The flows of the namespace, newest first: where an operator starts. */
 export function FlowList({ list, page, onPage, onOpen }: Props) {
+  // The rows of the first load rise in order; a page asked for later does not.
+  const first = useFirstLoad(list.flows.length > 0);
   if (list.flows.length === 0 && list.total === 0) {
     return (
       <Card>
         <EmptyState
+          picture={<FlowDrawing />}
           title="No flows yet"
-          hint="A flow is a job with children, added in one call. Flows appear here as soon as one is added."
+          hint="A flow is a job with child jobs under it, added in one call, and a parent can wait for its children. Flows appear here as soon as your code adds one."
         />
       </Card>
     );
   }
   return (
     <Card padded={false}>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] text-left text-sm">
+      <TableScroll>
+        <Table className="min-w-[640px]">
           <caption className="sr-only">Flows, newest first</caption>
-          <thead className="border-b border-line text-xs text-faint">
+          <THead>
             <tr>
-              <th scope="col" className="px-4 py-3 font-medium">
-                Flow
-              </th>
-              <th scope="col" className="px-4 py-3 font-medium">
-                Queue
-              </th>
-              <th scope="col" className="px-4 py-3 font-medium">
-                State
-              </th>
-              <th scope="col" className="px-4 py-3 text-right font-medium">
-                Jobs
-              </th>
-              <th scope="col" className="px-4 py-3 font-medium">
-                Needs attention
-              </th>
-              <th scope="col" className="px-4 py-3 font-medium">
-                Created
-              </th>
+              <Th>Flow</Th>
+              <Th>Queue</Th>
+              <Th>State</Th>
+              <Th right>Jobs</Th>
+              <Th>Needs attention</Th>
+              <Th>Created</Th>
             </tr>
-          </thead>
+          </THead>
           <tbody>
-            {list.flows.map((flow) => (
-              <FlowListRow key={flow.id} flow={flow} onOpen={onOpen} />
+            {list.flows.map((flow, index) => (
+              <FlowListRow
+                key={flow.id}
+                flow={flow}
+                arrive={first ? index : undefined}
+                onOpen={onOpen}
+              />
             ))}
           </tbody>
-        </table>
-      </div>
+        </Table>
+      </TableScroll>
       <div className="px-4 pb-4">
         <Pagination
           page={page}
@@ -71,47 +72,51 @@ export function FlowList({ list, page, onPage, onOpen }: Props) {
   );
 }
 
-function FlowListRow({ flow, onOpen }: { flow: FlowRootSummary; onOpen: (root: string) => void }) {
+function FlowListRow({
+  flow,
+  arrive,
+  onOpen,
+}: {
+  flow: FlowRootSummary;
+  arrive: number | undefined;
+  onOpen: (root: string) => void;
+}) {
   const failed = flow.states.failed ?? 0;
   return (
-    <tr className="border-b border-line/60 last:border-0 hover:bg-surface-2/60">
-      <td className="px-4 py-3">
+    <Tr status={flow.blocked > 0 ? 'bad' : undefined} arrive={arrive}>
+      <Td>
         <button
           type="button"
           onClick={() => onOpen(flow.id)}
           title={flow.id}
-          className="text-left font-mono text-xs text-fg underline decoration-dotted hover:decoration-solid"
+          className="min-h-8 rounded-control text-left font-mono text-xs font-bold text-link underline decoration-dotted hover:decoration-solid"
         >
           <span translate="no">{flow.name ?? shortFlowId(flow.id)}</span>
           <span className="sr-only"> ({flow.id})</span>
         </button>
         {flow.name && (
-          <div translate="no" className="font-mono text-[11px] text-faint">
+          <div translate="no" className="font-mono text-xs text-faint">
             {shortFlowId(flow.id)}
           </div>
         )}
-      </td>
-      <td className="px-4 py-3 text-muted">{flow.queue}</td>
-      <td className="px-4 py-3">
-        <span
-          className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${flowStateStyle(flow.state)}`}
-        >
-          {flow.state}
-        </span>
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums text-muted">{formatNumber(flow.total)}</td>
-      <td className="px-4 py-3 text-xs">
+      </Td>
+      <Td className="text-muted">{flow.queue}</Td>
+      <Td>
+        <StatusBadge status={flow.state} />
+      </Td>
+      <Td className="text-right tnum text-muted">
+        <Figure value={flow.total} />
+      </Td>
+      <Td className="text-xs">
         {flow.blocked > 0 ? (
-          <span className="rounded border border-danger/40 px-1.5 py-0.5 text-danger">
-            {formatNumber(flow.blocked)} stuck
-          </span>
+          <span className="font-bold text-danger">{formatNumber(flow.blocked)} stuck</span>
         ) : failed > 0 ? (
-          <span className="text-warning">{formatNumber(failed)} failed</span>
+          <span className="font-bold text-warning">{formatNumber(failed)} failed</span>
         ) : (
           <span className="text-faint">—</span>
         )}
-      </td>
-      <td className="px-4 py-3 text-xs text-faint">{formatDateTime(flow.createdAt)}</td>
-    </tr>
+      </Td>
+      <Td className="text-xs text-muted">{formatDateTime(flow.createdAt)}</Td>
+    </Tr>
   );
 }

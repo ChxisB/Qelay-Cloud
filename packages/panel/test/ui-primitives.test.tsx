@@ -42,21 +42,22 @@ describe('Button', () => {
     return (host.firstElementChild as HTMLElement).classList;
   }
 
-  test('every variant is 10px-radius, semibold and shares the focus outline', () => {
+  test('every variant is a semibold 6px-radius button and shares the 2px focus outline', () => {
     for (const variant of ['default', 'ghost', 'primary', 'danger'] as const) {
       const cls = classesOf(createElement(Button, { variant }, variant));
       expect(cls.contains('rounded-control')).toBe(true);
       expect(cls.contains('font-semibold')).toBe(true);
+      expect(cls.contains('focus-visible:outline-2')).toBe(true);
       expect(cls.contains('focus-visible:outline-ring')).toBe(true);
     }
   });
 
-  test('md is 36px / 13px and sm is 32px / 12px', () => {
+  test('md is 32px tall with 13px text, sm is 28px with 12px text', () => {
     const md = classesOf(createElement(Button, {}, 'Save'));
-    expect(md.contains('h-9')).toBe(true);
-    expect(md.contains('text-[13px]')).toBe(true);
+    expect(md.contains('min-h-8')).toBe(true);
+    expect(md.contains('text-sm')).toBe(true);
     const sm = classesOf(createElement(Button, { size: 'sm' }, 'Save'));
-    expect(sm.contains('h-8')).toBe(true);
+    expect(sm.contains('min-h-7')).toBe(true);
     expect(sm.contains('text-xs')).toBe(true);
   });
 
@@ -70,18 +71,17 @@ describe('Button', () => {
   test('danger is an outline in the danger colour, not a fill', () => {
     const cls = classesOf(createElement(Button, { variant: 'danger' }, 'Stop'));
     expect(cls.contains('text-danger')).toBe(true);
-    expect(cls.contains('border-danger/45')).toBe(true);
+    expect(cls.contains('border-danger')).toBe(true);
     expect([...cls].some((c) => /^bg-(danger|red)/.test(c))).toBe(false);
   });
 
-  test('default is a bordered, transparent button that gets a surface in light', () => {
+  test('default is a field-line bordered, transparent button', () => {
     const cls = classesOf(createElement(Button, {}, 'Cancel'));
     expect(cls.contains('border-line-strong')).toBe(true);
     expect(cls.contains('bg-transparent')).toBe(true);
-    expect(cls.contains('light:bg-surface')).toBe(true);
   });
 
-  test('disabled drops to 0.4 and blocks clicks while keeping the title tooltip reachable', () => {
+  test('disabled drops to 0.5 and blocks clicks while keeping the title tooltip reachable', () => {
     let clicks = 0;
     const { host } = render(
       createElement(
@@ -92,7 +92,7 @@ describe('Button', () => {
     );
     const button = host.querySelector('button') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
-    expect(button.classList.contains('disabled:opacity-40')).toBe(true);
+    expect(button.classList.contains('disabled:opacity-50')).toBe(true);
     expect(button.classList.contains('disabled:cursor-not-allowed')).toBe(true);
     // pointer-events-none would also swallow the native title tooltip
     expect(button.className).not.toContain('pointer-events-none');
@@ -101,11 +101,15 @@ describe('Button', () => {
     expect(clicks).toBe(0);
   });
 
-  test('IconButton shares the control radius and the disabled treatment', () => {
+  test('IconButton is a 32px square with the disabled treatment, and 28px when small', () => {
     const cls = classesOf(createElement(IconButton, { 'aria-label': 'Close' }, '×'));
     expect(cls.contains('size-8')).toBe(true);
     expect(cls.contains('rounded-control')).toBe(true);
-    expect(cls.contains('disabled:opacity-40')).toBe(true);
+    expect(cls.contains('border-line-strong')).toBe(true);
+    expect(cls.contains('disabled:opacity-50')).toBe(true);
+    const sm = classesOf(createElement(IconButton, { 'aria-label': 'Close', size: 'sm' }, '×'));
+    expect(sm.contains('size-7')).toBe(true);
+    expect(sm.contains('size-10')).toBe(false);
   });
 });
 
@@ -130,11 +134,11 @@ describe('StatCard', () => {
     }
   });
 
-  test('the value is the 32px tabular figure, with a muted hint under it', () => {
+  test('the value is the 22px tabular figure, with a muted hint under it', () => {
     const { host } = render(createElement(StatCard, { label: 'Waiting', value: 12, hint: 'now' }));
     const [label, value, hint] = Array.from(host.firstElementChild?.children ?? []);
-    expect(label?.classList.contains('eyebrow')).toBe(true);
-    expect(value?.classList.contains('text-[32px]')).toBe(true);
+    expect(label?.classList.contains('font-medium')).toBe(true);
+    expect(value?.classList.contains('text-[22px]')).toBe(true);
     expect(value?.classList.contains('tnum')).toBe(true);
     expect(hint?.textContent).toBe('now');
     expect(hint?.classList.contains('text-muted')).toBe(true);
@@ -145,9 +149,9 @@ describe('StatCard', () => {
       createElement(StatCard, { label: 'Waiting', value: 12, compact: true })
     );
     const card = host.firstElementChild as HTMLElement;
-    expect(card.classList.contains('px-4')).toBe(true);
-    expect(card.children[1]?.classList.contains('text-xl')).toBe(true);
-    expect(card.children[1]?.classList.contains('text-[32px]')).toBe(false);
+    expect(card.classList.contains('px-3')).toBe(true);
+    expect(card.children[1]?.classList.contains('text-lg')).toBe(true);
+    expect(card.children[1]?.classList.contains('text-[22px]')).toBe(false);
   });
 });
 
@@ -157,6 +161,7 @@ describe('SearchField and Kbd', () => {
     const kbd = host.querySelector('kbd');
     expect(kbd?.textContent).toBe('⌘K');
     expect(kbd?.classList.contains('rounded-kbd')).toBe(true);
+    expect(kbd?.classList.contains('bg-slate-tint')).toBe(true);
   });
 
   test('forwards input props, so it works controlled and keeps its accessible name', () => {
@@ -180,7 +185,8 @@ describe('SearchField and Kbd', () => {
     const { host } = render(createElement(SearchField, { 'aria-label': 'Search' }));
     const wrapper = host.firstElementChild as HTMLElement;
     expect(wrapper.classList.contains('rounded-control')).toBe(true);
-    expect(wrapper.classList.contains('h-9')).toBe(true);
+    expect(wrapper.classList.contains('min-h-8')).toBe(true);
+    expect(wrapper.classList.contains('focus-within:outline-2')).toBe(true);
     expect(wrapper.classList.contains('focus-within:outline-ring')).toBe(true);
     expect(host.querySelector('svg')).not.toBeNull();
     expect(host.querySelector('kbd')).toBeNull();
@@ -220,6 +226,22 @@ describe('SegmentedControl format', () => {
     expect(picked).toEqual(['archive']);
   });
 
+  test('the group is a pill with 44px-high segments', () => {
+    const { host } = render(
+      createElement(SegmentedControl, {
+        options: ['a', 'b'] as const,
+        value: 'a',
+        onChange: () => {},
+      })
+    );
+    expect(host.querySelector('fieldset')?.classList.contains('rounded-segment')).toBe(true);
+    for (const button of host.querySelectorAll('button')) {
+      // 38px inside the group's 1px border is 40px, the height of a field and a button.
+      expect(button.classList.contains('min-h-[38px]')).toBe(true);
+      expect(button.classList.contains('min-w-11')).toBe(true);
+    }
+  });
+
   test('the active segment is raised and bold, inactive ones are muted', () => {
     const { host } = render(
       createElement(SegmentedControl, {
@@ -230,7 +252,7 @@ describe('SegmentedControl format', () => {
     );
     const [data, schema] = Array.from(host.querySelectorAll('button'));
     expect(schema?.classList.contains('bg-segment-active')).toBe(true);
-    expect(schema?.classList.contains('font-semibold')).toBe(true);
+    expect(schema?.classList.contains('font-bold')).toBe(true);
     expect(data?.classList.contains('text-muted')).toBe(true);
     expect(data?.classList.contains('bg-segment-active')).toBe(false);
   });
@@ -246,7 +268,7 @@ describe('ErrorState retry', () => {
       (b) => b.textContent === 'Retry'
     );
     expect(retry?.classList.contains('rounded-control')).toBe(true);
-    expect(retry?.classList.contains('h-8')).toBe(true);
+    expect(retry?.classList.contains('min-h-7')).toBe(true);
     click(retry);
     expect(retries).toBe(1);
   });

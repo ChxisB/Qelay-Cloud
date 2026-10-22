@@ -87,11 +87,89 @@ Tokens live in memory only. They are never written to `localStorage`, `sessionSt
 `sessionStorage` for the length of a sign-in; that record holds no token.
 
 `GET /capabilities` is fetched once per connection. A page that needs a Qelay TCP server or a local agent (Server
-Control, SQLite Database, S3 Backup, Fleet, and the agent-backed card on Queue Control) is left out of the navigation
+Control, SQLite Database, S3 Backup, Fleet, and the agent-backed card on a queue's Settings tab) is left out of the navigation
 and answers "Not available in this deployment" on a direct URL. Flows and Workflows follow `features.flows` and
 `features.workflows`. A `viewer` is shown no control that changes anything; the server stays the authority and
 answers 403 if one is forced. Until the answer arrives the panel assumes the closed side: those pages are hidden and
 the caller is a viewer.
+
+## Navigation
+
+`src/components/layout/navConfig.ts` is the one source for the sidebar, the breadcrumb and the command palette: 14 items
+in four groups under **Home**. **Work** (Queues, Jobs, Dead letter queue, Cron jobs), **Automation** (Event gateway, Flows),
+**Monitor** (Metrics, Workers, Logs, Alerts, Health) and **System** (Settings, System). An item can stand for several pages
+(`also`): Jobs for Add job, Bulk add and the job inspector, Event gateway for Connections, Events, Metrics and Issues,
+Flows for job flows and workflow runs, Health for Deployment, Diagnostics, Job delivery and Usage, System for Server,
+Database, Backups, MCP, Benchmark and Fleet. Each keeps its own
+path, so no bookmark moved, and a tab bar under the page title (`SectionTabs`) links its siblings. A page the deployment
+closes is left out of the item, and an item with one page left shows no tabs.
+
+**Home** (`/`) is the one screen for every number and every problem: a **Needs attention** list, worst first, where each row
+links to the page that fixes it, and one card per area (Queues, Jobs, Dead letter queue, Workers, Cron jobs, Event gateway,
+Job delivery, Health, Alerts) above the throughput chart, the queue table and recent activity. It reads what the pages
+already read (`/deployment` once, shared with the status strip, plus `/transport` and, when the gateway is open, the
+gateway's routes and 24-hour stats); a call that fails shows "Unavailable" in its own card and never blanks the page.
+`src/pages/control/home/` has the model, the list, the cards and the feeds.
+
+The **Event gateway** (`src/pages/control/gateway/`, `/events-gateway`) is the webhook page with Hookdeck's screens as the
+reference (Connections, Events, Metrics, Issues). It is described in [docs/event-gateway.md](../../docs/event-gateway.md).
+
+## Look and feel
+
+The console follows the "Qelay Console Redesign" Claude Design canvas (33 boards, the Carebell design system),
+applied on 2026-10-20: <https://claude.ai/artifact/F5owf5M7tMgXzPyJts8S2k>. It changes how pages look, not what they do.
+The board-to-page map and every place the panel departs from a board are in
+`.claude/.planning/console-redesign/DESIGN-MAP.md`.
+
+On 2026-10-22 the console gained motion and a connected look (nodes, lines and pills where things really are connected),
+from the "Design" canvas (16 boards): <https://claude.ai/artifact/TMMbZ97jDRzvSpWiFVKRuG>. Again it changes how pages look
+and move, not what they do. Its board-to-page map, every numbered deviation and the wording that still needs the owner's word
+are in `.claude/.planning/motion-redesign/DESIGN-MAP.md`.
+
+- **Colour lives in one file.** `src/tokens.css` holds the tokens (`--primary`, `--link`, `--ring`, `--state-*` and the
+  rest), dark by default and overridden under `[data-theme='light']`; `src/index.css` imports it and maps the roles into
+  Tailwind. Change a value there and every utility built on it follows. `test/design-tokens.test.ts` computes WCAG contrast for each text and surface pair, so a token that is too
+  pale fails the test.
+- **Type scale.** `--text-xs` (13px) and `--text-sm` (15px) in `src/index.css` sit one step above Tailwind's defaults; body
+  text is 15px, titles are bold, and buttons and fields are 40px tall (DESIGN-MAP R25).
+- **Plain wording, aligned forms.** A card says what it is, shows the current value and has one main action. Labels use
+  everyday words and units go in the hint ("60000 is one minute"); request keys are unchanged. A label sits 8px above a
+  40px control and `FormRow` aligns a row's controls on one top edge (`FieldAction` lines a button up with them).
+  Rarely used controls sit in `Disclosure` (Advanced, Remove, Why?), and an action the server switches off is said once
+  per page. Page titles are sentence case like the nav (DESIGN-MAP R26 to R33).
+- **Cards that say first, graphs that show.** A settings card (`ReadFirstCard`) states what is set as a sentence and opens
+  its fields behind **Edit**; the Cron and Webhooks create forms (`CreateCard`) open behind a button. Job flows draw as a
+  read-only graph (Graph | List switch) and a run's definition as a chain with its place marked; empty pages teach with a
+  small drawing (DESIGN-MAP R34 to R37). None of it edits a workflow: the graphs are for reading.
+- **Shapes and focus.** Cards use `rounded-card`, fields `rounded-control`, buttons and badges are pills. Keyboard focus
+  is one 3px `:focus-visible` outline in `--ring`; do not override it on a control.
+- **Status is never colour alone.** A state pill is its word and a glyph whose shape differs per state.
+- **Motion is one system.** Ten non-colour tokens in `src/tokens.css` (press 160 ms, hover 240 ms, enter 300 ms, exit 180 ms,
+  stagger 40 ms capped at 8 items, draw 600 ms, flow 900 ms, and the `settle`, `exit` and `pop` easings) and the patterns in
+  `src/motion.css` (`motion-arrive`, `-leave`, `-stagger`, `-flash`, `-draw`, `-fill`, `-comet`, `-pop` and the rest). Only
+  `transform` and `opacity` move, and every `animation` and `transition` sits inside
+  `@media (prefers-reduced-motion: no-preference)`, so reduced motion turns each into an instant change. A thing that leaves
+  stays mounted for the exit time through `usePresence` (one overlay) or `useLeavers` (a list). No package: CSS, `@starting-style`
+  and the router's `viewTransition`.
+- **Motion says something true.** A wash, flash or pulse fires only when a polled value really changed since the last read;
+  a first load arrives once in order and a poll that changes nothing animates nothing. Nothing loops and no traffic is faked
+  (the panel only polls).
+- **Connected language.** `src/components/ui/nodegraph/` holds the node, the line, the pill on the line, the rule glyphs and the
+  hover card. They draw the Connections diagram, a connection and its event attempts, the Home Job flow, a queue's lifecycle,
+  a cron's queue, a destination's connections and the Health delivery line, from counts and fields the pages already read.
+  A control for something the server gates off (`shared/flowOperationPolicy.ts`) is never drawn.
+- **The page asks, the browser does not.** Every confirmation goes through `confirmInPage()`
+  (`src/components/dashboard/stores/confirmStore.ts`, shown by `components/ui/ConfirmDialog.tsx`, role `alertdialog`), which
+  answers asynchronously. A test answers it with `answerConfirms()` from `test/confirmSupport.ts`.
+- **Guards.** `accent-split-guard`, `ui-primitives-guard`, `state-colours`, `brand-assets` and `design-rules-guard` in
+  `test/` fail when a page drifts from these rules. `motion-guard` fails on a raw time, a stray `@keyframes`, a motion rule
+  outside no-preference, a property other than `transform` and `opacity` in a keyframe, or a presence hook that holds a node
+  past the exit time. `native-dialog-guard` fails on `window.confirm`, `prompt` or `alert` (a bare call is caught only when its
+  message is a literal).
+- **Fonts are Plus Jakarta Sans and JetBrains Mono**, from `@fontsource-variable/plus-jakarta-sans` and
+  `@fontsource-variable/jetbrains-mono`, served from the panel's own origin (the CSP is `font-src 'self'`, so the design's
+  Google Fonts link is not used). `src/fonts.css` ships the latin and latin-ext subsets, upright only; `test/fonts.test.ts`
+  guards the families, the files and that no font comes from another host.
 
 ## Browser tests
 
@@ -110,7 +188,7 @@ OIDC are covered by unit tests with a fake client, not by the browser specs.
 
 ## Not done yet
 
-- Queue Control's queue-operations card calls the upstream agent's `/queue-operations/*` routes. A deployment lists
+- A queue's Settings tab has a queue-operations card that calls the upstream agent's `/queue-operations/*` routes. A deployment lists
   `queueOperations` under `hidden` and the card is left out; with an agent address set it still works.
 - Bare version numbers from the old wording (for example "v2.9.3") remain in some comments and two Add Job hints.
   They name no product, and no test depends on them being removed.

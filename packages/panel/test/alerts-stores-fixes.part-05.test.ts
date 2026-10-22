@@ -210,7 +210,7 @@ describe('alert configuration validation', () => {
 
     try {
       act(() => rootView.render(createElement(Alerts)));
-      click('Create Alert Rule');
+      click('Create alert rule');
       setInput('alert-rule-name', 'Capacity retry');
       setInput('alert-rule-threshold', '5');
       expect({

@@ -25,7 +25,7 @@ jobs:
       # Throwaway database for the test suite. These credentials guard nothing: the container
       # lives for this job only. No repository secrets or cloud credentials are used here.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: qcloud
           POSTGRES_PASSWORD: qcloud
@@ -135,7 +135,7 @@ jobs:
     services:
       # Throwaway database, as in the gate job: the runtime makes its own schema and drops it.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: qcloud
           POSTGRES_PASSWORD: qcloud

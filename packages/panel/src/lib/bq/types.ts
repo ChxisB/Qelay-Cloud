@@ -1,3 +1,4 @@
+import type { WebhookDedupeFull } from './gatewayTypes';
 export interface DbFilter {
   column: string;
   op: 'contains' | 'eq' | 'ne';
@@ -117,11 +118,25 @@ export interface CreateCronBody {
   jobOptions?: CronJobOptions;
 }
 
+export type WebhookDestination = 'http' | 'queue';
+
+/** A route: `http` needs a `url`; `queue` needs a source `queue` and a `target` queue, and no `url`. */
 export interface AddWebhookBody {
-  url: string;
+  destination?: WebhookDestination;
+  url?: string;
+  target?: string;
+  /** Takes the kind and address from a saved destination: no `destination`, `url` or `target` with it. */
+  destinationId?: string;
   events: string[];
   queue?: string;
   secret?: string;
+  enabled?: boolean;
+  filter?: Record<string, unknown>;
+  shape?: Record<string, unknown>;
+  name?: string;
+  description?: string;
+  delayMs?: number;
+  dedupe?: WebhookDedupeFull;
 }
 
 export type WebhookDeliveryStatus = 'pending' | 'sending' | 'delivered' | 'failed';
@@ -142,6 +157,8 @@ export interface WebhookDeliveryFull {
   event: string;
   queue: string;
   jobId: string;
+  /** The job a delivered queue route made in its target queue; null for http and until it is delivered. */
+  routedJobId?: string | null;
   occurredAt: number;
   status: WebhookDeliveryStatus;
   attempts: number;
@@ -157,6 +174,46 @@ export interface WebhookDeliveriesQuery {
   limit?: number;
   before?: string;
   status?: WebhookDeliveryStatus;
+}
+
+/** The Events screen's feed: every route's deliveries, newest first. */
+export interface AllWebhookDeliveriesQuery extends WebhookDeliveriesQuery {
+  webhook?: string;
+  /** Epoch ms: only events at or after / before these. */
+  since?: number;
+  until?: number;
+}
+
+export interface WebhookStatsQuery {
+  since: number;
+  until: number;
+  webhook?: string;
+  buckets?: number;
+}
+
+export interface WebhookStatsBucketFull {
+  from: number;
+  delivered: number;
+  failed: number;
+  pending: number;
+  avgLatencyMs: number | null;
+  p95LatencyMs: number | null;
+}
+
+export interface WebhookStatsFull {
+  since: number;
+  until: number;
+  bucketMs: number;
+  delivered: number;
+  failed: number;
+  pending: number;
+  failureRatio: number | null;
+  avgAttempts: number | null;
+  /** Waiting or being sent now, whatever the window. */
+  backlog: number;
+  oldestPendingAt: number | null;
+  latency: { avgMs: number; p95Ms: number; maxMs: number } | null;
+  buckets: WebhookStatsBucketFull[];
 }
 
 export const WEBHOOK_EVENTS = [

@@ -29,6 +29,7 @@
     "dist",
     "node_modules",
     "packages/panel/src/index.css",
+    "packages/panel/src/tokens.css",
     "**/*.html",
     "**/*.md",
     "**/*.mdx",

@@ -12,7 +12,6 @@ import { ensureDom } from './domSetup';
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window.confirm;
 const mounted = new Set<() => void>();
 
 const _json = (value: unknown, status = 200) =>
@@ -120,7 +119,6 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
   localStorage.removeItem('qelay-db-history');
   useConnectionStore.setState({
     baseUrl: '/api',

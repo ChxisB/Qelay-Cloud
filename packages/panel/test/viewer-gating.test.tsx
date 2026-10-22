@@ -6,7 +6,7 @@ import { useConnectionStore } from '../src/components/dashboard/stores/connectio
 import { useCapabilitiesStore } from '../src/lib/capabilities/store';
 import { type Capabilities, DEMO_CAPABILITIES } from '../src/lib/capabilities/types';
 import { CronManager } from '../src/pages/control/CronManager';
-import { DlqControl } from '../src/pages/control/DlqControl';
+import { DlqPro } from '../src/pages/control/DlqPro';
 import { JobActionsPanel } from '../src/pages/control/job/JobActionsPanel';
 import { JobsPro } from '../src/pages/control/JobsPro';
 import { ensureDom, settle } from './domSetup';
@@ -110,8 +110,8 @@ describe('the job list for a viewer', () => {
     await settle(60);
     expect(host.querySelector('a[href="/add-job"]')).not.toBeNull();
     expect(host.querySelector('a[href="/jobs/bulk-add"]')).not.toBeNull();
-    expect(host.querySelector('input[aria-label="Select all jobs on page"]')).not.toBeNull();
-    expect(host.querySelector('button[aria-label="Promote job"]')).not.toBeNull();
+    expect(host.querySelector('input[aria-label="Select all jobs on this page"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label^="Promote job"]')).not.toBeNull();
     unmount();
   });
 
@@ -123,7 +123,7 @@ describe('the job list for a viewer', () => {
     expect(host.querySelector('a[href="/add-job"]')).toBeNull();
     expect(host.querySelector('a[href="/jobs/bulk-add"]')).toBeNull();
     expect(host.querySelector('input[type="checkbox"]')).toBeNull();
-    expect(host.querySelector('button[aria-label="Promote job"]')).toBeNull();
+    expect(host.querySelector('button[aria-label^="Promote job"]')).toBeNull();
     unmount();
   });
 
@@ -189,33 +189,34 @@ describe('the job inspector actions for a viewer', () => {
   });
 });
 
-describe('the DLQ control page for a viewer and where retry is closed', () => {
+describe('the DLQ page draws no control it cannot run', () => {
   const buttons = (host: HTMLElement) => labels(host).map((label) => label.trim());
+  const bulk = (host: HTMLElement) =>
+    buttons(host).filter((label) => /^(Retry|Purge) (all|this)/.test(label));
 
-  test('a deployment without DLQ retry offers no Retry all, to anyone', async () => {
+  test('an operator is offered no bulk retry or purge: the server has neither', async () => {
     serveCaps(OPERATOR);
-    const page = routed(createElement(DlqControl));
+    const page = routed(createElement(DlqPro));
     await settle();
-    expect(buttons(page.host)).toContain('Purge');
-    expect(buttons(page.host)).not.toContain('Retry all');
+    expect(bulk(page.host)).toEqual([]);
+    expect(buttons(page.host)).toContain('Export this page to CSV');
     page.unmount();
   });
 
   test('a viewer is offered neither bulk action', async () => {
     serveCaps(VIEWER);
-    const page = routed(createElement(DlqControl));
+    const page = routed(createElement(DlqPro));
     await settle();
-    expect(buttons(page.host)).not.toContain('Purge');
-    expect(buttons(page.host)).not.toContain('Retry all');
-    expect(buttons(page.host)).toContain('Export');
+    expect(bulk(page.host)).toEqual([]);
+    expect(buttons(page.host)).toContain('Export this page to CSV');
     page.unmount();
   });
 
-  test('where retry exists an operator sees Retry all', async () => {
+  test('where the server could retry, the page still draws no bulk button', async () => {
     serveCaps({ ...OPERATOR, unsupported: [] });
-    const page = routed(createElement(DlqControl));
+    const page = routed(createElement(DlqPro));
     await settle();
-    expect(buttons(page.host)).toContain('Retry all');
+    expect(bulk(page.host)).toEqual([]);
     page.unmount();
   });
 });

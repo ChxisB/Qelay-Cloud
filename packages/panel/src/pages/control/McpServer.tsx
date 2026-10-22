@@ -1,8 +1,13 @@
 import type { ReactNode } from 'react';
+import { SystemTabs } from '@/components/SystemTabs';
+import { Banner } from '@/components/ui/Banner';
+import { buttonClass } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { CodeBlock } from '@/components/ui/CodeBlock';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
+import { Tag } from '@/components/ui/Tag';
 import { CLI_ADD, EMBEDDED_CONFIG, TCP_CONFIG } from './mcp/setup';
 
 /**
@@ -84,24 +89,24 @@ const RESOURCES = [
 const PROMPTS = ['qelay_debug_queue', 'qelay_health_report', 'qelay_incident_response'];
 const TOOL_COUNT = CATEGORIES.reduce((sum, category) => sum + category.count, 0);
 
-function CodeBlock({ code }: { code: string }) {
+function Snippet({ code, label }: { code: string; label: string }) {
   return (
     <div className="relative min-w-0 max-w-full">
-      <div className="absolute right-2 top-2">
+      <div className="absolute right-2 top-2 z-[1]">
         <CopyButton value={code} />
       </div>
-      <pre className="max-w-full overflow-x-auto overscroll-x-contain rounded-lg border border-line bg-surface-2 p-4 pr-12 font-mono text-xs leading-relaxed text-fg">
+      <CodeBlock label={label} className="max-w-full overscroll-x-contain pr-14">
         {code}
-      </pre>
+      </CodeBlock>
     </div>
   );
 }
 
 function Chip({ children }: { children: ReactNode }) {
   return (
-    <span className="max-w-full break-all rounded-md border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-muted">
-      {children}
-    </span>
+    <Tag>
+      <span className="font-mono">{children}</span>
+    </Tag>
   );
 }
 
@@ -109,53 +114,58 @@ export function McpServer() {
   return (
     <div className="min-w-0 overflow-x-hidden">
       <PageHeader
-        title="MCP Server"
+        title="MCP server"
         description="Connect qelay to AI agents (Claude Desktop, Claude Code) over the Model Context Protocol."
         actions={
           <a
             href="https://chxisb.github.io/qelay-control-panel/docs/guide/mcp"
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={buttonClass('default', 'sm')}
           >
             Docs
           </a>
         }
       />
+      <SystemTabs current="/mcp" />
 
       <Card className="mb-6">
-        <p className="text-sm leading-relaxed text-muted">
-          qelay ships a Model Context Protocol server,{' '}
-          <span className="font-mono text-fg">qelay-mcp</span>, that lets an AI agent drive the
-          queue with tools, resources, and prompts. It is a separate{' '}
-          <span className="text-fg">stdio</span> process, launched by the MCP client (not by this
-          dashboard, and not part of the HTTP API), so this page is a setup and reference guide
-          rather than a live monitor. It needs the optional peer dependency{' '}
+        <p className="m-0 text-[13px] leading-relaxed text-muted">
+          qelay includes a server, <span className="font-mono text-fg">qelay-mcp</span>, that lets
+          an AI agent manage your queues through tools, resources and prompts. The agent starts it
+          on its own computer, not from this dashboard, so this page is a setup guide and not a live
+          monitor. It needs one extra package,{' '}
           <span className="font-mono text-fg">@modelcontextprotocol/sdk</span>.
         </p>
-        <p className="mt-3 text-sm leading-relaxed text-warning">
+      </Card>
+
+      <div className="mb-6">
+        <Banner tone="warn" title="Some tools are destructive">
           The upstream MCP includes destructive Cancel, Discard, Drain, Obliterate, DLQ Retry and
           DLQ Purge tools. They bypass this dashboard's flow-safety gates and have no atomic
           reverse-dependency or job-generation precondition. Grant MCP write access only after
           independently proving the workload is not flow-linked.
-        </p>
-      </Card>
+        </Banner>
+      </div>
 
       <Card className="mb-6">
         <CardHeader title="Install the MCP runtime" />
-        <p className="mb-3 text-sm text-muted">
+        <p className="m-0 mb-3 text-[13px] text-muted">
           Create a dedicated directory, install both packages, then replace the absolute path in the
           client configuration below. TCP mode connects to the existing broker.
         </p>
-        <CodeBlock
+        <Snippet
+          label="Install commands"
           code={
             'mkdir qelay-mcp-runtime\ncd qelay-mcp-runtime\nbun add --exact qelay@2.9.11 @modelcontextprotocol/sdk@1.30.0'
           }
         />
-        <p className="mt-3 text-sm text-warning">
-          In Qelay TCP mode, register_worker can return ID "0". Read list_workers and match the
-          unique worker name and queues before sending a heartbeat or unregistering.
-        </p>
+        <div className="mt-4">
+          <Banner tone="warn" title="Worker ID can come back as 0">
+            In Qelay TCP mode, register_worker can return ID "0". Read list_workers and match the
+            unique worker name and queues before sending a heartbeat or unregistering.
+          </Banner>
+        </div>
       </Card>
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -168,47 +178,47 @@ export function McpServer() {
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
         <Card className="min-w-0">
           <CardHeader title="Embedded mode (default)" />
-          <p className="mb-3 text-sm text-muted">
+          <p className="m-0 mb-3 text-[13px] text-muted">
             Direct SQLite access, no running server. Point <Chip>DATA_PATH</Chip> at the qelay
             database file. Best for a local agent on the same machine.
           </p>
-          <CodeBlock code={EMBEDDED_CONFIG} />
+          <Snippet label="Embedded mode configuration" code={EMBEDDED_CONFIG} />
         </Card>
 
         <Card className="min-w-0">
           <CardHeader title="TCP mode (remote server)" />
-          <p className="mb-3 text-sm text-muted">
+          <p className="m-0 mb-3 text-[13px] text-muted">
             Connect to a running qelay server over its TCP protocol port (<Chip>6789</Chip>,
             distinct from the HTTP admin API on 6790). Use a <Chip>QELAY_TOKEN</Chip> if the server
             has one.
           </p>
-          <CodeBlock code={TCP_CONFIG} />
+          <Snippet label="TCP mode configuration" code={TCP_CONFIG} />
         </Card>
       </div>
 
       <Card className="mb-6">
         <CardHeader title="Where to put it" />
-        <p className="mb-3 text-sm text-muted">
+        <p className="m-0 mb-3 text-[13px] text-muted">
           Add the JSON above to your MCP client config (for Claude Desktop, its{' '}
           <span className="font-mono text-fg">claude_desktop_config.json</span>). For Claude Code,
           register it from the CLI:
         </p>
-        <CodeBlock code={CLI_ADD} />
+        <Snippet label="Claude Code command" code={CLI_ADD} />
       </Card>
 
       <Card className="mb-6">
         <CardHeader
           title="Tools"
-          action={<span className="text-xs text-faint">{TOOL_COUNT} total</span>}
+          action={<span className="text-[13px] font-semibold text-muted">{TOOL_COUNT} total</span>}
         />
         <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
           {CATEGORIES.map((c) => (
             <div key={c.name}>
               <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                <span className="text-sm font-medium text-fg">{c.name}</span>
-                <span className="text-xs text-faint">{c.count}</span>
+                <span className="text-[13px] font-bold text-fg">{c.name}</span>
+                <span className="tnum text-[13px] font-semibold text-muted">{c.count}</span>
               </div>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1.5">
                 {c.examples.map((e) => (
                   <Chip key={e}>{e}</Chip>
                 ))}
@@ -216,7 +226,7 @@ export function McpServer() {
             </div>
           ))}
         </div>
-        <p className="mt-4 text-xs text-faint">
+        <p className="m-0 mt-4 text-[13px] text-muted">
           Every tool name is prefixed <span className="font-mono">qelay_</span> (examples above drop
           it). Counts total {TOOL_COUNT}.
         </p>
@@ -226,7 +236,9 @@ export function McpServer() {
         <Card>
           <CardHeader
             title="Resources"
-            action={<span className="text-xs text-faint">{RESOURCES.length}</span>}
+            action={
+              <span className="tnum text-[13px] font-semibold text-muted">{RESOURCES.length}</span>
+            }
           />
           <div className="flex flex-wrap gap-2">
             {RESOURCES.map((r) => (
@@ -237,7 +249,9 @@ export function McpServer() {
         <Card>
           <CardHeader
             title="Prompts"
-            action={<span className="text-xs text-faint">{PROMPTS.length}</span>}
+            action={
+              <span className="tnum text-[13px] font-semibold text-muted">{PROMPTS.length}</span>
+            }
           />
           <div className="flex flex-wrap gap-2">
             {PROMPTS.map((p) => (

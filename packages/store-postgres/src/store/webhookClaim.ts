@@ -1,4 +1,5 @@
 import { openSecret, UnsupportedOptionError } from '@qelay-cloud/core';
+import type { WebhookDestination } from '@qelay-cloud/core';
 import type { StoreContext } from './context';
 import { runTransaction } from './retry';
 import { appendHistory, historyOf } from './webhookRows';
@@ -26,6 +27,8 @@ export const ABANDONED_ERROR = 'attempt abandoned: no result was recorded';
 interface HookRow {
   readonly id: string;
   readonly url: string;
+  readonly destination: WebhookDestination;
+  readonly target: string | null;
   readonly secret_sealed: string | null;
   readonly secret_previous_sealed: string | null;
   readonly secret_previous_until: number | string | bigint | null;
@@ -81,7 +84,7 @@ export async function claimDueDeliveries(
       const windowStart = now - (now % RATE_WINDOW_MS);
       // Webhooks with something due, least recently served first, so a busy one does not hide the rest.
       const hooks = await tx<HookRow[]>`
-        SELECT w.id, w.url, w.secret_sealed, w.secret_previous_sealed, w.secret_previous_until,
+        SELECT w.id, w.url, w.destination, w.target, w.secret_sealed, w.secret_previous_sealed, w.secret_previous_until,
                ${rate}::int - CASE WHEN w.rate_window_start = ${windowStart}
                                    THEN w.rate_window_count ELSE 0 END AS allowance
         FROM qcloud_webhooks w
@@ -215,6 +218,8 @@ export async function claimDueDeliveries(
       deliveryId: String(row.id),
       webhookId: row.webhook_id,
       url: claimed.hooks.get(row.webhook_id)!.url,
+      destination: claimed.hooks.get(row.webhook_id)!.destination,
+      target: claimed.hooks.get(row.webhook_id)!.target,
       attempt: claimed.attempts.get(String(row.id))!,
       event: row.event_name as ClaimedDelivery['event'],
       queue: row.queue,

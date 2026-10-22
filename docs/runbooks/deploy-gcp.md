@@ -191,7 +191,7 @@ Order matters because the control plane reads what the data plane made.
 4. **Plan, then apply the control plane.** `terraform -chdir=infra/gcp/control-plane plan` and read it: the two services,
    the job, three service accounts, bindings on resources (and one custom role with a single permission,
    `monitoring.timeSeries.list`, which is the only project-level grant: set `monitoring_read = false` to leave it out and
-   the Transport page shows depth and age as unavailable). The first apply of services may fail on an unreadable image:
+   the Job delivery page shows depth and age as unavailable). The first apply of services may fail on an unreadable image:
    push the images first.
 5. **Run the migration job** before traffic moves to a build that needs a new schema:
 

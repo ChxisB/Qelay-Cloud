@@ -3,6 +3,7 @@ import type {
   PendingConfirm,
   ToolEvent,
 } from '@/components/dashboard/stores/copilotStore';
+import { Button, iconButtonClass } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
 
 const STATUS_STYLE: Record<ToolEvent['status'], string> = {
@@ -30,10 +31,7 @@ export function PanelIconButton({
       aria-label={label}
       aria-pressed={active ?? undefined}
       onClick={onClick}
-      className={cn(
-        'rounded-md p-1.5 text-muted transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        active && 'bg-surface-2 text-fg'
-      )}
+      className={iconButtonClass(active ? 'default' : 'ghost', 'sm')}
     >
       <svg
         viewBox="0 0 24 24"
@@ -42,7 +40,7 @@ export function PanelIconButton({
         strokeWidth="1.6"
         strokeLinecap="round"
         strokeLinejoin="round"
-        className="size-4"
+        className="size-[18px]"
         aria-hidden="true"
       >
         {children}
@@ -57,8 +55,10 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <div
         className={cn(
-          'max-w-[85%] space-y-2',
-          isUser ? 'rounded-2xl rounded-br-sm bg-selected px-3 py-2' : 'w-full'
+          'max-w-[85%] space-y-2 rounded-[20px] px-4 py-3',
+          isUser
+            ? 'rounded-br-[6px] bg-primary text-primary-fg'
+            : 'w-full rounded-bl-[6px] bg-slate-tint'
         )}
       >
         {(message.tools?.length ?? 0) > 0 && (
@@ -67,7 +67,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
               <span
                 key={tool.id}
                 className={cn(
-                  'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]',
+                  'inline-flex items-center gap-1 rounded-full border bg-surface px-2.5 py-0.5 text-[12px] font-semibold',
                   STATUS_STYLE[tool.status]
                 )}
                 title={tool.error || (tool.mutates ? 'mutating action' : 'read')}
@@ -84,7 +84,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
           <div
             className={cn(
               'whitespace-pre-wrap break-words text-sm',
-              message.error ? 'text-danger' : 'text-fg'
+              message.error ? 'text-danger' : isUser ? 'text-primary-fg' : 'text-fg'
             )}
           >
             {message.content}
@@ -109,8 +109,8 @@ export function ConfirmCard({
 }) {
   const args = confirm.args as Record<string, unknown> | undefined;
   return (
-    <div className="rounded-lg border border-warning/50 bg-warning/10 px-3 py-2">
-      <div className="text-sm font-medium text-fg">Confirm: {confirm.label}</div>
+    <div className="rounded-[18px] border border-state-waiting-fg/40 bg-state-waiting-bg px-4 py-3">
+      <div className="text-sm font-bold text-fg">Confirm: {confirm.label}</div>
       {args && Object.keys(args).length > 0 && (
         <div className="mt-1 font-mono text-xs text-muted">
           {Object.entries(args)
@@ -119,21 +119,13 @@ export function ConfirmCard({
             .join('  ·  ')}
         </div>
       )}
-      <div className="mt-2 flex gap-2">
-        <button
-          type="button"
-          onClick={onConfirm}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-fg hover:opacity-90"
-        >
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button variant="primary" size="sm" onClick={onConfirm}>
           Confirm
-        </button>
-        <button
-          type="button"
-          onClick={onDecline}
-          className="rounded-lg border border-line px-3 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
-        >
+        </Button>
+        <Button size="sm" onClick={onDecline}>
           Decline
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { type FormEvent, useEffect, useState } from 'react';
+import { FlowKindTabs } from '@/components/FlowKindTabs';
 import { Button } from '@/components/ui/Button';
 import { ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -45,14 +46,15 @@ export function FlowPage({ repository = controlFlowRepository }: { repository?: 
   return (
     <div>
       <PageHeader
-        title="Job Flows"
-        description="Parents and the children they wait for: find a flow that is stuck, and release it."
+        title="Flows"
+        description="Work that runs in order. A job flow is a parent job and the children it waits for: find one that is stuck, and release it."
         actions={
           <Button size="sm" disabled={busy} onClick={refresh}>
             Refresh
           </Button>
         }
       />
+      <FlowKindTabs current="jobs" />
       <FlowSearch input={input} error={inputError} onInput={setInput} onSubmit={submit} />
       <div aria-live="polite">
         {error &&

@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, createRef, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
+import { useGlobalModalStore } from '../src/components/dashboard/stores/globalModalStore';
 import { QueryRunner, RowDetailDrawer, sanitizeQueryHistory } from '../src/pages/control/Database';
 import { ensureDom, settle } from './domSetup';
 
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window.confirm;
 const mounted = new Set<() => void>();
 
 const json = (value: unknown, status = 200) =>
@@ -104,6 +104,7 @@ function _dbExportResponse(
 
 beforeEach(() => {
   ensureDom();
+  useGlobalModalStore.getState().reset();
   localStorage.removeItem('qelay-db-history');
   useConnectionStore.setState({
     baseUrl: 'http://server-a.test',
@@ -116,7 +117,6 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
   localStorage.removeItem('qelay-db-history');
   useConnectionStore.setState({
     baseUrl: '/api',

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { OfflineBanner } from '@/components/ui/feedback';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
+import { StatusGlyph } from '@/components/ui/StatusBadge';
 import { bq } from '@/lib/bq';
 import type { QueueSummaryFull } from '@/lib/bqTypes';
 import { errorRate, formatCompact, formatNumber } from '@/lib/format';
@@ -48,7 +49,7 @@ export function MetricsPro() {
     <div>
       <PageHeader
         title="Metrics"
-        description="Real-time performance telemetry for your queues."
+        description="How fast jobs go in and out, and which queues are dropping work."
         live={live}
       />
       {error && (
@@ -60,32 +61,43 @@ export function MetricsPro() {
         />
       )}
       {summaryLoading && (
-        <div role="status" className="mb-4 text-sm text-muted">
+        <div role="status" className="mb-4 text-[13px] text-muted">
           Loading per-queue metrics…
         </div>
       )}
       {!series.latest && !series.error && (
-        <div role="status" className="mb-4 text-sm text-muted">
+        <div role="status" className="mb-4 text-[13px] text-muted">
           Connecting live telemetry…
         </div>
       )}
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         <StatCard
-          label="Total Completed"
+          label="Total completed"
           value={stats ? formatCompact(stats.completed) : '—'}
           tone="green"
           hint="recorded jobs"
+          spark={series.complete}
         />
         <StatCard
-          label="Total Failed"
+          label="Total failed"
           value={failedTotal == null ? '—' : formatNumber(failedTotal)}
           tone={failedTotal ? 'red' : 'default'}
-          hint="recorded jobs"
+          hint={
+            failedTotal ? (
+              <span className="inline-flex items-center gap-1.5">
+                <StatusGlyph state="failed" small />
+                recorded jobs
+              </span>
+            ) : (
+              'recorded jobs'
+            )
+          }
         />
         <StatCard
           label="Push/sec"
           value={throughput ? throughput.pushPerSec.toFixed(1) : '—'}
           hint="jobs/sec"
+          spark={series.push}
         />
         <StatCard
           label="Pull/sec"

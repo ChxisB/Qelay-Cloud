@@ -2,22 +2,21 @@ import { cn } from '@/lib/cn';
 import { QelayMark } from './QelayMark';
 
 /**
- * Horizontal lockup: mark, "Qelay" wordmark and the "Control panel" subtitle.
- * Text colours come from theme tokens so the lockup reads on both grounds; the
- * mark keeps its own gradient. The subtitle uses `muted` (not `faint`) because
- * the light sidebar is `#F1F5F9`, where `faint` falls under 4.5:1.
+ * Horizontal lockup: the Q mark in a rounded app-icon tile, the "Qelay" wordmark and the
+ * "Cloud console" subtitle. The tile carries the brand gradient with a dark glyph, as the design
+ * draws it; the text takes theme tokens so it reads on both grounds.
  */
 export function QelayLogo({ className }: { className?: string }) {
   return (
-    <div className={cn('flex items-center gap-2.5', className)}>
-      <QelayMark size={34} decorative />
-      <div className="flex flex-col gap-1">
-        <span className="text-[20px] font-extrabold leading-none tracking-[-0.045em] text-fg">
+    <div className={cn('flex items-center gap-3', className)}>
+      <span className="grid size-8 shrink-0 place-items-center rounded-[10px] bg-[linear-gradient(135deg,var(--brand-1),var(--brand-2))] text-on-ok">
+        <QelayMark size={21} variant="mono" decorative />
+      </span>
+      <div className="flex flex-col">
+        <span className="text-[15px] font-bold leading-[1.1] tracking-[-0.03em] text-fg">
           Qelay
         </span>
-        <span className="text-[10px] font-semibold uppercase leading-none tracking-[0.18em] text-muted">
-          Control panel
-        </span>
+        <span className="text-xs font-semibold leading-[1.1] text-faint">Cloud console</span>
       </div>
     </div>
   );

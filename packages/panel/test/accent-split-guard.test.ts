@@ -39,7 +39,9 @@ describe('accent split', () => {
     expect(offenders(/['"]accent['"]/)).toEqual([]);
   });
 
-  test('a solid orange fill never carries white text (2.61:1)', () => {
+  // `primary` is dark green in the light theme and pale mint in the dark one, so fixed white text
+  // is unreadable in one of them. The pair is `bg-primary text-primary-fg`.
+  test('a solid primary fill never carries fixed white text', () => {
     const bad = LINES.filter(
       (line) => /bg-primary(?![\w/-])/.test(line.text) && /text-white/.test(line.text)
     );

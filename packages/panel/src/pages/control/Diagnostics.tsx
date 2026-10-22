@@ -1,8 +1,10 @@
+import { HealthTabs } from '@/components/HealthTabs';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { LoadingState, OfflineBanner } from '@/components/ui/feedback';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
+import { Wash } from '@/components/ui/Wash';
 import { api } from '@/lib/api';
 import { bq } from '@/lib/bq';
 import { useCanOperate } from '@/lib/capabilities/useCapabilities';
@@ -124,6 +126,7 @@ export function Diagnostics() {
         description="Server health, storage, memory and connections."
         live={!!data && !hasPartialError}
       />
+      <HealthTabs current="/diagnostics" />
       {pollError && (
         <OfflineBanner
           message={`Diagnostics refresh failed — ${pollError.message}`}
@@ -151,7 +154,7 @@ export function Diagnostics() {
           compact
         />
         <StatCard label="Version" value={h?.version ? `v${h.version}` : '—'} compact />
-        <StatCard label="Uptime" value={formatUptime(h?.uptime)} compact />
+        <StatCard label="Uptime" value={formatUptime(h?.uptime)} compact steady />
         <StatCard
           label="Disk"
           value={!diskKnown ? 'Unavailable' : disk.diskFull ? 'Full' : 'Healthy'}
@@ -166,7 +169,12 @@ export function Diagnostics() {
             title="Connectivity"
             action={
               <Button size="sm" onClick={doPing}>
-                Ping{ping ? ` · ${ping}` : ''}
+                Ping
+                {ping && (
+                  <span key={ping} className="motion-fade">
+                    {` · ${ping}`}
+                  </span>
+                )}
               </Button>
             }
           />
@@ -216,7 +224,11 @@ export function Diagnostics() {
             />
             <Mini k="RSS" v={h?.memory ? formatBytes(h.memory.rss * 1024 * 1024) : '—'} />
           </div>
-          {gcMsg && <p className="mt-3 text-xs text-muted">{gcMsg}</p>}
+          {gcMsg && (
+            <p key={gcMsg} className="motion-arrive mt-3 text-[13px] text-muted">
+              {gcMsg}
+            </p>
+          )}
         </Card>
       </div>
 
@@ -232,7 +244,9 @@ function Row({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex items-center justify-between py-2.5">
       <dt className="text-muted">{k}</dt>
-      <dd className="font-medium text-fg">{v}</dd>
+      <dd className="m-0 font-bold text-fg">
+        <Wash value={v} />
+      </dd>
     </div>
   );
 }

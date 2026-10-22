@@ -1,11 +1,19 @@
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
 import { formatMs, formatNumber } from '@/lib/format';
+import { useRowArrivals } from '@/lib/useRowArrivals';
 import { fmtRate, type RunRecord } from './engine';
 
 /** Recent runs, newest first, with copy + JSON export for comparison. */
 export function RunHistory({ history, onClear }: { history: RunRecord[]; onClear: () => void }) {
+  // The runs there when the page opens rise in a stagger; a run that finishes later slides in on its own.
+  const arrival = useRowArrivals(
+    'history',
+    history.map((r) => String(r.id)),
+    true
+  );
   if (!history.length) return null;
   const json = JSON.stringify(history, null, 2);
   const download = () => {
@@ -20,54 +28,50 @@ export function RunHistory({ history, onClear }: { history: RunRecord[]; onClear
 
   return (
     <Card padded={false} className="mt-6 overflow-hidden">
-      <div className="flex items-center justify-between border-b border-line px-5 py-3">
-        <h3 className="text-base font-semibold text-fg">Run history</h3>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-4">
+        <h3 className="m-0 text-lg font-bold text-fg">Run history</h3>
         <div className="flex items-center gap-2">
           <CopyButton value={json} />
-          <Button size="sm" variant="ghost" onClick={download}>
+          <Button size="sm" onClick={download}>
             Export JSON
           </Button>
-          <Button size="sm" variant="ghost" onClick={onClear}>
+          <Button size="sm" onClick={onClear}>
             Clear
           </Button>
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-line text-left eyebrow text-muted light:bg-surface-2">
-              <th className="px-4 py-2 font-semibold">Mode</th>
-              <th className="px-4 py-2 text-right font-semibold">Prod</th>
-              <th className="px-4 py-2 text-right font-semibold">Wkr</th>
-              <th className="px-4 py-2 text-right font-semibold">Pushed</th>
-              <th className="px-4 py-2 text-right font-semibold">Done</th>
-              <th className="px-4 py-2 text-right font-semibold">Push/s</th>
-              <th className="px-4 py-2 text-right font-semibold">Done/s</th>
-              <th className="px-4 py-2 text-right font-semibold">p95</th>
-              <th className="px-4 py-2 text-right font-semibold">Dur</th>
+      <TableScroll>
+        <Table>
+          <THead>
+            <tr>
+              <Th>Mode</Th>
+              <Th right>Prod</Th>
+              <Th right>Wkr</Th>
+              <Th right>Pushed</Th>
+              <Th right>Done</Th>
+              <Th right>Push/s</Th>
+              <Th right>Done/s</Th>
+              <Th right>p95</Th>
+              <Th right>Dur</Th>
             </tr>
-          </thead>
+          </THead>
           <tbody>
-            {history.map((r) => (
-              <tr key={r.id} className="border-b border-line last:border-0 hover:bg-surface-2/40">
-                <td className="px-4 py-2 capitalize text-muted">{r.mode}</td>
-                <td className="px-4 py-2 text-right tnum text-muted">{r.producers}</td>
-                <td className="px-4 py-2 text-right tnum text-muted">{r.workers}</td>
-                <td className="px-4 py-2 text-right tnum text-fg">{formatNumber(r.pushed)}</td>
-                <td className="px-4 py-2 text-right tnum text-success">
-                  {formatNumber(r.completed)}
-                </td>
-                <td className="px-4 py-2 text-right tnum text-fg">{fmtRate(r.pushPerSec)}/s</td>
-                <td className="px-4 py-2 text-right tnum text-success">
-                  {fmtRate(r.donePerSec)}/s
-                </td>
-                <td className="px-4 py-2 text-right tnum text-muted">{formatMs(r.p95)}</td>
-                <td className="px-4 py-2 text-right tnum text-muted">{formatMs(r.durationMs)}</td>
-              </tr>
+            {history.map((r, i) => (
+              <Tr key={r.id} dense arrive={arrival(String(r.id), i)}>
+                <Td className="capitalize text-muted">{r.mode}</Td>
+                <Td className="text-right tnum text-muted">{r.producers}</Td>
+                <Td className="text-right tnum text-muted">{r.workers}</Td>
+                <Td className="text-right tnum">{formatNumber(r.pushed)}</Td>
+                <Td className="text-right tnum text-success">{formatNumber(r.completed)}</Td>
+                <Td className="text-right tnum">{fmtRate(r.pushPerSec)}/s</Td>
+                <Td className="text-right tnum text-success">{fmtRate(r.donePerSec)}/s</Td>
+                <Td className="text-right tnum text-muted">{formatMs(r.p95)}</Td>
+                <Td className="text-right tnum text-muted">{formatMs(r.durationMs)}</Td>
+              </Tr>
             ))}
           </tbody>
-        </table>
-      </div>
+        </Table>
+      </TableScroll>
     </Card>
   );
 }

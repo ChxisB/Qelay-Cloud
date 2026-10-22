@@ -1,10 +1,15 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { StatusGlyph } from '@/components/ui/StatusBadge';
+import { Wash } from '@/components/ui/Wash';
+import { cn } from '@/lib/cn';
+import { stagger } from '@/lib/stagger';
 import type { FleetNodeSnapshot } from './fleetClient';
 
+/** The glyph beside the word that already names the state, so colour is never the only cue. */
 function Dot({ ok, reachable }: { ok: boolean; reachable: boolean }) {
-  const color = !reachable ? 'bg-danger-fill' : ok ? 'bg-success' : 'bg-warning';
-  return <span className={`inline-block size-2 rounded-full ${color}`} />;
+  return <StatusGlyph small state={!reachable ? 'failed' : ok ? 'completed' : 'delayed'} />;
 }
 
 export function FleetNodeCard({
@@ -12,6 +17,7 @@ export function FleetNodeCard({
   active,
   busy,
   actionError,
+  arrive,
   onActivate,
   onAction,
 }: {
@@ -19,9 +25,13 @@ export function FleetNodeCard({
   active: boolean;
   busy?: string;
   actionError?: string;
+  /** The card's place in the first load's stagger; left out for a card a later poll adds. */
+  arrive?: number;
   onActivate: () => void;
   onAction: (action: 'start' | 'stop' | 'restart') => void;
 }) {
+  // Read once, at mount: the first poll's cards rise, and a card a later poll adds does not.
+  const [place] = useState(arrive);
   const { target, server, agent } = snapshot;
   const status = agent.status;
   const external = status?.managementMode === 'external';
@@ -34,12 +44,19 @@ export function FleetNodeCard({
       : (status?.storageMode ?? 'unknown');
 
   return (
-    <Card className={active ? 'border-link/60' : undefined}>
+    <Card
+      className={cn(
+        'transition-colors duration-(--duration-hover) ease-settle',
+        place !== undefined && 'motion-arrive',
+        active && 'border-link/60'
+      )}
+      style={place === undefined ? undefined : stagger(place)}
+    >
       <CardHeader
         title={target.name}
         action={
           active ? (
-            <span className="rounded-full bg-selected px-2 py-1 text-[10px] font-semibold uppercase text-link">
+            <span className="rounded-full bg-selected px-2.5 py-1 text-xs font-bold text-link">
               active
             </span>
           ) : (
@@ -54,18 +71,26 @@ export function FleetNodeCard({
         <dd className="flex min-w-0 items-center gap-2 text-muted">
           <Dot ok={server.healthy} reachable={server.reachable} />
           <span className="truncate" title={target.baseUrl}>
-            {server.reachable
-              ? `${server.healthy ? 'healthy' : 'degraded'}${server.version ? ` · v${server.version}` : ''}`
-              : `offline · ${server.error ?? 'unreachable'}`}
+            <Wash
+              value={
+                server.reachable
+                  ? `${server.healthy ? 'healthy' : 'degraded'}${server.version ? ` · v${server.version}` : ''}`
+                  : `offline · ${server.error ?? 'unreachable'}`
+              }
+            />
           </span>
         </dd>
         <dt className="text-faint">Agent</dt>
         <dd className="flex min-w-0 items-center gap-2 text-muted">
           <Dot ok={agent.healthy} reachable={agent.reachable} />
           <span className="truncate" title={target.agentBaseUrl}>
-            {agent.reachable
-              ? `${status?.status ?? 'connected'}${external ? ' · external' : ''}`
-              : `offline · ${agent.error ?? 'unreachable'}`}
+            <Wash
+              value={
+                agent.reachable
+                  ? `${status?.status ?? 'connected'}${external ? ' · external' : ''}`
+                  : `offline · ${agent.error ?? 'unreachable'}`
+              }
+            />
           </span>
         </dd>
         <dt className="text-faint">Storage</dt>
@@ -82,7 +107,7 @@ export function FleetNodeCard({
         )}
       </dl>
       {actionError && (
-        <p role="status" className="mt-3 text-xs text-danger">
+        <p role="status" className="motion-arrive mt-3 text-xs text-danger">
           {actionError}
         </p>
       )}

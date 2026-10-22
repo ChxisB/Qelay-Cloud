@@ -108,7 +108,7 @@ describe('QelayMark', () => {
 describe('QelayLogo', () => {
   test('is the mark, the wordmark and the subtitle', () => {
     const container = mount(<QelayLogo />);
-    expect(container.textContent).toBe('QelayControl panel');
+    expect(container.textContent).toBe('QelayCloud console');
     expect(container.querySelectorAll('svg').length).toBe(1);
   });
 

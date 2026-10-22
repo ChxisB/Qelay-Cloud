@@ -8,21 +8,17 @@ export const FLOW_PAGE_SIZE = 25;
 export const FLOW_MAX_INDENT = 24;
 export const FLOW_INDENT_PX = 16;
 
-// Chrome per state, on the job-state tokens (index.css). `waiting-children` reads as waiting; the
-// dashed border keeps it distinguishable from a plain waiting job.
-const STATE_STYLE: Record<string, string> = {
-  completed: 'border-state-completed-fg/50 bg-state-completed-bg text-state-completed-fg',
-  failed: 'border-state-failed-fg/50 bg-state-failed-bg text-state-failed-fg',
-  active: 'border-state-active-fg/50 bg-state-active-bg text-state-active-fg',
-  delayed: 'border-state-delayed-fg/50 bg-state-delayed-bg text-state-delayed-fg',
-  waiting: 'border-state-waiting-fg/50 bg-state-waiting-bg text-state-waiting-fg',
-  prioritized: 'border-state-prioritized-fg/50 bg-state-prioritized-bg text-state-prioritized-fg',
-  'waiting-children':
-    'border-dashed border-state-waiting-fg/60 bg-state-waiting-bg text-state-waiting-fg',
-};
-
-export const flowStateStyle = (state?: string) =>
-  (state && STATE_STYLE[state]) || 'border-line bg-surface-2 text-muted';
-
 export const shortFlowId = (id: string) =>
   id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
+
+/**
+ * The graph's cell (a square tile and the words under it), the tile's edge and the space between cells, in
+ * pixels. The tile is centred in the cell, and the lines run from tile to tile.
+ */
+export const GRAPH_NODE_WIDTH = 160;
+export const GRAPH_NODE_HEIGHT = 144;
+export const GRAPH_TILE = 72;
+export const GRAPH_COLUMN_GAP = 8;
+export const GRAPH_ROW_GAP = 8;
+/** A flow with more open jobs than this is shown as the list: a drawing of thousands of boxes helps nobody. */
+export const GRAPH_NODE_LIMIT = 300;

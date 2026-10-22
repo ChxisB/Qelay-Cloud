@@ -18,8 +18,6 @@ import {
 // Regression tests for stable control-page fixes (items 7 and 12).
 
 const realFetch = globalThis.fetch;
-const realConfirm = window.confirm;
-const realPrompt = window.prompt;
 
 installStableFixHooks();
 
@@ -31,14 +29,10 @@ beforeEach(() => {
     agentToken: 'agent-a-token',
     refreshMs: 3000,
   });
-  window.confirm = () => true;
-  window.prompt = () => 'RESTORE';
 });
 
 afterEach(() => {
   globalThis.fetch = realFetch;
-  window.confirm = realConfirm;
-  window.prompt = realPrompt;
 });
 
 const backupResult = (data: unknown) =>

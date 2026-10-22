@@ -1,8 +1,5 @@
 /// <reference types="vite/client" />
 
-// Fontsource variable packages ship CSS side-effect entry points with no types.
-declare module '@fontsource-variable/inter';
-
 interface ImportMetaEnv {
   /** Origin of the qelay HTTP server, e.g. https://queue.example.com. Empty → use the dev proxy at /api. */
   readonly VITE_QELAY_URL?: string;

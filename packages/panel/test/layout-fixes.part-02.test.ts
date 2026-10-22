@@ -59,7 +59,8 @@ describe('global modal arbitration', () => {
       expect(host.querySelectorAll('[role="dialog"]')).toHaveLength(1);
 
       act(() => window.dispatchEvent(new window.Event('command-palette:open')));
-      await settle(10);
+      // The Copilot stays mounted for its 180 ms exit.
+      await settle(260);
       const commandDialogs = host.querySelectorAll<HTMLElement>('[role="dialog"]');
       expect(commandDialogs).toHaveLength(1);
       expect(commandDialogs[0]?.getAttribute('aria-label')).toBe('Command palette');
@@ -73,14 +74,14 @@ describe('global modal arbitration', () => {
           })
         )
       );
-      await settle(10);
+      await settle(260);
       const authDialogs = host.querySelectorAll<HTMLElement>('[role="dialog"]');
       expect(authDialogs).toHaveLength(1);
       expect(authDialogs[0]?.getAttribute('aria-label')).toBe('Authentication required');
 
       // A lower-priority keyboard surface cannot hide the credential gate.
       act(() => window.dispatchEvent(new window.Event('command-palette:open')));
-      await settle(5);
+      await settle(260);
       expect(host.querySelectorAll('[role="dialog"]')).toHaveLength(1);
       expect(host.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe(
         'Authentication required'

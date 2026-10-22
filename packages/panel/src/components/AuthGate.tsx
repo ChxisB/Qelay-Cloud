@@ -10,8 +10,12 @@ import {
   mayRestoreModalFocus,
   useGlobalModalStore,
 } from '@/components/dashboard/stores/globalModalStore';
+import { Button, buttonClass } from '@/components/ui/Button';
+import { Field, Input } from '@/components/ui/form';
 import { getActiveSession } from '@/lib/auth/activeSession';
 import { bq } from '@/lib/bq';
+import { cn } from '@/lib/cn';
+import { usePresence } from '@/lib/usePresence';
 
 type AuthScope = 'server' | 'agent';
 type AuthRequiredDetail = { scope?: AuthScope; auth?: string; target?: string };
@@ -56,6 +60,8 @@ export function AuthGate() {
   const draft = useRef<{ identity: AuthIdentity; value: string } | null>(null);
   const activeModal = useGlobalModalStore((state) => state.active);
   const visible = locked && activeModal === 'authentication';
+  // The lock stays drawn while it leaves; everything else (focus, inert, the draft) follows `visible` at once.
+  const { mounted, leaving } = usePresence(visible);
 
   // Lock whenever the API reports a 401, remembering which backend rejected us.
   // The request carries the exact Authorization value and backend it used.
@@ -167,7 +173,7 @@ export function AuthGate() {
     useGlobalModalStore.getState().release('authentication');
   };
 
-  if (!visible) return null;
+  if (!mounted) return null;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -192,59 +198,66 @@ export function AuthGate() {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+    <div
+      inert={leaving || undefined}
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+    >
+      {/* Not a button, so there is no click outside to dismiss: only a token or Settings closes the lock. */}
+      <div
+        aria-hidden="true"
+        className={cn('fixed inset-0 bg-scrim', leaving ? 'motion-fade-out' : 'motion-fade')}
+      />
       <form
         ref={dialogRef}
         onSubmit={submit}
         role="dialog"
         aria-modal="true"
         aria-label="Authentication required"
-        className="w-full max-w-sm rounded-card border border-line-strong bg-surface p-6 shadow-2xl"
+        aria-describedby="auth-gate-reason"
+        className={cn(
+          'relative flex w-full max-w-md flex-col gap-4 rounded-card border border-line-strong bg-raised p-6 shadow-pop',
+          leaving ? 'motion-leave' : 'motion-pop'
+        )}
       >
-        <h2 className="text-lg font-semibold text-fg">Authentication required</h2>
+        <h2 className="m-0 text-2xl font-bold leading-[1.1] tracking-[-0.03em] text-fg">
+          Authentication required
+        </h2>
         {scope === 'agent' ? (
-          <p className="mt-1 text-sm text-muted">
+          <p id="auth-gate-reason" className="m-0 text-[13px] text-muted">
             The control agent at <span className="break-all font-mono text-fg">{bq.agentBase}</span>{' '}
             rejected the request (401). Enter its{' '}
             <span className="font-mono text-fg">AGENT_TOKEN</span> to continue.
           </p>
         ) : (
-          <p className="mt-1 text-sm text-muted">
+          <p id="auth-gate-reason" className="m-0 text-[13px] text-muted">
             The server at <span className="break-all font-mono text-fg">{baseUrl}</span> rejected
             the request (401). Enter its bearer token to continue.
           </p>
         )}
-        <input
-          ref={inputRef}
-          type="password"
-          value={value}
-          onInput={(e) => {
-            const nextValue = e.currentTarget.value;
-            setValue(nextValue);
-            const identity = acceptedIdentity.current;
-            draft.current = identity ? { identity, value: nextValue } : null;
-          }}
-          placeholder={scope === 'agent' ? 'AGENT_TOKEN' : 'Bearer token'}
-          aria-label={scope === 'agent' ? 'Agent token' : 'Bearer token'}
-          name={scope === 'agent' ? 'agent-token' : 'server-token'}
-          autoComplete="current-password"
-          className="mt-4 w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-fg outline-none placeholder:text-faint focus-visible:ring-2 focus-visible:ring-ring"
-        />
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <Link
-            to="/settings"
-            onClick={dismiss}
-            className="text-xs text-muted underline-offset-2 hover:text-fg hover:underline"
-          >
+        <Field label={scope === 'agent' ? 'Agent token' : 'Bearer token'}>
+          <Input
+            ref={inputRef}
+            type="password"
+            value={value}
+            onInput={(e) => {
+              const nextValue = e.currentTarget.value;
+              setValue(nextValue);
+              const identity = acceptedIdentity.current;
+              draft.current = identity ? { identity, value: nextValue } : null;
+            }}
+            placeholder={scope === 'agent' ? 'AGENT_TOKEN' : 'Bearer token'}
+            aria-label={scope === 'agent' ? 'Agent token' : 'Bearer token'}
+            name={scope === 'agent' ? 'agent-token' : 'server-token'}
+            autoComplete="current-password"
+          />
+        </Field>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link to="/settings" onClick={dismiss} className={buttonClass('default', 'md')}>
             Open Settings instead
           </Link>
-          <button
-            type="submit"
-            disabled={!value.trim()}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-          >
+          <Button type="submit" variant="primary" disabled={!value.trim()}>
             Unlock
-          </button>
+          </Button>
         </div>
       </form>
     </div>

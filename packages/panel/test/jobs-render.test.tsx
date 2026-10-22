@@ -164,7 +164,7 @@ describe('JobsPro layout', () => {
     expect(button(host, 'Clear')).toBeUndefined();
 
     await act(async () =>
-      host.querySelector<HTMLInputElement>('input[aria-label="Select job delayed-1"]')?.click()
+      host.querySelector<HTMLInputElement>('input[aria-label="Select job ed-1"]')?.click()
     );
     expect(host.textContent).toContain('1 selected');
     expect(button(host, 'Promote')).toBeDefined();
@@ -182,7 +182,9 @@ describe('JobsPro layout', () => {
     await settle(60);
 
     await act(async () =>
-      host.querySelector<HTMLInputElement>(`input[aria-label="Select job ${FULL_ID}"]`)?.click()
+      host
+        .querySelector<HTMLInputElement>(`input[aria-label="Select job ${FULL_ID.slice(-4)}"]`)
+        ?.click()
     );
     expect(button(host, 'Promote')).toBeUndefined();
     expect(host.textContent).toContain('No actions apply to the selected job states.');

@@ -1,5 +1,5 @@
+import { HealthTabs } from '@/components/HealthTabs';
 import { ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
-import { LinkButton } from '@/components/ui/LinkButton';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { api } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/format';
@@ -19,6 +19,7 @@ export function Deployment() {
     return (
       <div>
         <PageHeader title="Deployment" description="The deployment report is unavailable." />
+        <HealthTabs current="/deployment" />
         <ErrorState error={error} onRetry={refetch} />
       </div>
     );
@@ -26,24 +27,22 @@ export function Deployment() {
   if (!data) return null;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div>
       <PageHeader
         title="Deployment"
-        description={`Whether the database, the transport and the tick are healthy. Read ${formatRelativeTime(data.timestamp)}.`}
-        actions={
-          <LinkButton to="/transport" variant="ghost">
-            Transport
-          </LinkButton>
-        }
+        description={`Whether the database, the queue service and maintenance are healthy. Read ${formatRelativeTime(data.timestamp)}.`}
       />
-      {error && (
-        <OfflineBanner
-          message="Connection lost — showing the last successful reading."
-          onRetry={refetch}
-        />
-      )}
-      <WarningList warnings={data.warnings} />
-      <Facts deployment={data} />
+      <HealthTabs current="/deployment" />
+      <div className="flex flex-col gap-6">
+        {error && (
+          <OfflineBanner
+            message="Connection lost — showing the last successful reading."
+            onRetry={refetch}
+          />
+        )}
+        <WarningList warnings={data.warnings} />
+        <Facts deployment={data} />
+      </div>
     </div>
   );
 }

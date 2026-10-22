@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
-import { DlqControl } from '../src/pages/control/DlqControl';
 import { DlqPro } from '../src/pages/control/DlqPro';
 import { JobsPro } from '../src/pages/control/JobsPro';
 import {
@@ -146,33 +145,22 @@ describe('DLQ reason filters', () => {
     await waitFor(() => view.host.textContent?.includes('dead-failed') === true);
     expect(byName<HTMLSelectElement>(view.host, 'dlq-reason-filter').value).toBe('all');
   });
-
-  test('DlqControl resets a reason that no longer has entries to "all"', async () => {
-    const server = dlqServer();
-    const view = render(createElement(MemoryRouter, null, createElement(DlqControl)));
-    await waitFor(() => view.host.textContent?.includes('dead-stalled') === true);
-    change(byName(view.host, 'dlq-control-reason'), 'stalled');
-    expect(view.host.textContent).not.toContain('dead-failed');
-
-    server.state.stalledGone = true;
-    refocus();
-    await waitFor(() => view.host.textContent?.includes('dead-failed') === true);
-    expect(byName<HTMLSelectElement>(view.host, 'dlq-control-reason').value).toBe('all');
-  });
 });
 
-describe('DlqControl queue picker', () => {
+describe('DlqPro queue picker', () => {
   test('a selected queue that disappears from discovery is replaced by a live one', async () => {
     const server = dlqServer();
-    const view = render(createElement(MemoryRouter, null, createElement(DlqControl)));
+    const view = render(
+      createElement(MemoryRouter, { initialEntries: ['/dlq?queue=orders'] }, createElement(DlqPro))
+    );
     await waitFor(() => server.dlqUrls.some((url) => url.includes('/queues/orders/dlq?')));
-    expect(byName<HTMLSelectElement>(view.host, 'dlq-control-queue').value).toBe('orders');
+    expect(byName<HTMLSelectElement>(view.host, 'dlq-queue').value).toBe('orders');
 
     server.state.queues = [dashboardQueue('billing', 1)];
     refocus();
     await waitFor(() => server.dlqUrls.some((url) => url.includes('/queues/billing/dlq?')));
     await settle(10);
-    expect(byName<HTMLSelectElement>(view.host, 'dlq-control-queue').value).toBe('billing');
+    expect(byName<HTMLSelectElement>(view.host, 'dlq-queue').value).toBe('billing');
     expect(server.dlqUrls.at(-1)).toContain('/queues/billing/dlq?');
   });
 });

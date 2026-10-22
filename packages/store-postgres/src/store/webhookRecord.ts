@@ -2,6 +2,7 @@ import type { AttemptRecord, DeliveryPolicy } from '@qelay-cloud/core';
 import { resolveDeliveryPolicy, webhookAlertLevel, webhookRetryDelayMs } from '@qelay-cloud/core';
 import type { StoreContext } from './context';
 import { runTransaction } from './retry';
+import { settleIssues } from './webhookIssues';
 import {
   appendHistory,
   boundedError,
@@ -173,6 +174,12 @@ export async function recordAttempts(
             )}) AS c(id, ok, failed, streak, level, pause)
             WHERE w.namespace = ${ctx.namespace} AND w.id = c.id`;
           paused = next.filter((n) => n.pause).length;
+          await settleIssues(
+            tx,
+            ctx,
+            now,
+            new Map(counted.map(([id, n]) => [id, n.runs[n.runs.length - 1]!]))
+          );
         }
       }
       return {

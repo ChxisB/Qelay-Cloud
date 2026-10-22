@@ -3,13 +3,13 @@ import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { BackupOperationsPanel } from '../src/features/backups/ui/BackupOperationsPanel';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom } from './domSetup';
 
 ensureDom();
 const mounted = new Set<() => void>();
 const originalFetch = globalThis.fetch;
-const originalConfirm = window.confirm;
-const originalPrompt = window.prompt;
+let asked: ReturnType<typeof answerConfirms> | undefined;
 
 interface FetchRecord {
   authorization: string | null;
@@ -25,16 +25,14 @@ beforeEach(() => {
     agentToken: 'agent-a-token',
     refreshMs: 3000,
   });
-  window.confirm = () => true;
-  window.prompt = () => 'RESTORE';
+  asked = answerConfirms();
 });
 
 afterEach(() => {
   for (const unmount of mounted) unmount();
   mounted.clear();
   globalThis.fetch = originalFetch;
-  window.confirm = originalConfirm;
-  window.prompt = originalPrompt;
+  asked?.stop();
   useConnectionStore.setState({ baseUrl: '/api', token: '', agentToken: '', refreshMs: 3000 });
 });
 
@@ -49,7 +47,8 @@ describe('S3 operation target ownership', () => {
     click(button(view.host, 'Refresh'));
     await waitFor(() => transport.statusCalls() === 2);
     click(button(view.host, 'Restore'));
-    expect(button(view.host, 'Backup now').disabled).toBe(true);
+    // The question is answered on the next tick; the action then waits behind the status read still in flight.
+    await waitFor(() => button(view.host, 'Backup now').disabled);
 
     act(() => {
       useConnectionStore.setState({
@@ -98,7 +97,8 @@ describe('S3 operation target ownership', () => {
     click(button(view.host, 'Refresh'));
     await waitFor(() => transport.statusCalls() === 2);
     click(button(view.host, 'Apply configuration'));
-    expect(button(view.host, 'Backup now').disabled).toBe(true);
+    // The question is answered on the next tick; the action then waits behind the status read still in flight.
+    await waitFor(() => button(view.host, 'Backup now').disabled);
 
     view.unmount();
     heldStatus.resolve(statusResponse());

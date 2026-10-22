@@ -1,7 +1,7 @@
 # Runbook: bells are piling up, or no worker takes them
 
 **Alert.** GCP: "<name>: bells waiting" and "<name>: bells waiting and no worker running". AWS: `<name>-<queue>-queue-age`.
-`GET /deployment`: warning `doorbells_overdue`. The Transport page shows a queue with depth and an old oldest-bell age.
+`GET /deployment`: warning `doorbells_overdue`. The Job delivery page shows a queue with depth and an old oldest-waiting age.
 
 **What is safe.** A bell is not a job. The jobs are in Postgres, and a bell only wakes a worker. Waiting longer loses
 nothing; the cost is latency. Do not purge the broker's queue to make the number go down: the tick rings the jobs again, but
@@ -37,7 +37,7 @@ Two different problems look the same from outside. Tell them apart:
 
 ## Verify
 
-The oldest-bell age falls on the Transport page (the broker's number is approximate and can lag by about a minute), the
+The oldest-waiting age falls on the Job delivery page (the broker's number is approximate and can lag by about a minute), the
 queue's `counts` of waiting jobs fall, and the alert closes.
 
 ## Escalate

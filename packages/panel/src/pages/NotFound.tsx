@@ -1,16 +1,23 @@
-import { Link } from 'react-router-dom';
+import { EmptyState } from '@/components/ui/feedback';
+import { LinkButton } from '@/components/ui/LinkButton';
 
 export function NotFound() {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-      <h1 className="text-5xl font-bold text-faint">404</h1>
-      <p className="text-sm text-muted">This page does not exist.</p>
-      <Link
-        to="/"
-        className="rounded-lg border border-line bg-surface-2 px-4 py-2 text-sm font-medium text-fg hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        Back to Overview
-      </Link>
-    </div>
+    <EmptyState
+      code="404"
+      headingLevel={1}
+      title="That page does not exist"
+      hint="The link may be old, or the queue was removed. Check the address, or search for what you need."
+      action={
+        <>
+          <LinkButton to="/" variant="primary" size="sm">
+            Go to overview
+          </LinkButton>
+          <LinkButton to="/queues" size="sm">
+            Browse queues
+          </LinkButton>
+        </>
+      }
+    />
   );
 }

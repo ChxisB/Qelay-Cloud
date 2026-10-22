@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 
-const CSS = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
-const FONTS = readFileSync(new URL('../src/fonts.css', import.meta.url), 'utf8');
+// The palette is in tokens.css, imported by index.css; tokens go first so the @theme slice ends at index.css.
+const CSS = ['tokens', 'index']
+  .map((name) => readFileSync(new URL(`../src/${name}.css`, import.meta.url), 'utf8'))
+  .join('\n');
 
 type Rgb = readonly [number, number, number];
 type Rgba = readonly [number, number, number, number];
@@ -88,12 +90,12 @@ function ratio(theme: Theme, fg: string, bg: string): number {
 }
 
 describe('contrast helper', () => {
-  test('matches the values quoted in the design', () => {
+  test('matches the WCAG reference values', () => {
     expect(contrast(rgb('#000000'), rgb('#ffffff'))).toBeCloseTo(21, 5);
-    expect(contrast(rgb('#0b0f1a'), rgb('#ff7a00'))).toBeCloseTo(7.32, 1);
-    expect(contrast(rgb('#a98bff'), rgb('#0b0f1a'))).toBeCloseTo(7.13, 1);
-    expect(contrast(rgb('#7a3dff'), rgb('#0b0f1a'))).toBeCloseTo(3.59, 1);
-    expect(contrast(rgb('#64748b'), rgb('#0b0f1a'))).toBeCloseTo(4.02, 1);
+    expect(contrast(rgb('#1f4438'), rgb('#e0f3e6'))).toBeCloseTo(9.34, 1);
+    expect(contrast(rgb('#ffffff'), rgb('#1f4438'))).toBeCloseTo(10.81, 1);
+    expect(contrast(rgb('#7d8e9e'), rgb('#ffffff'))).toBeCloseTo(3.37, 1);
+    expect(contrast(rgb('#c8860b'), rgb('#ffffff'))).toBeCloseTo(3.06, 1);
   });
 });
 
@@ -103,7 +105,7 @@ const TEXT_ON_SURFACES: Record<Theme, { text: string[]; on: string[] }> = {
     on: ['bg', 'surface', 'surface-2'],
   },
   light: {
-    text: ['text', 'text-muted', 'link', 'danger', 'success', 'warning'],
+    text: ['text', 'text-muted', 'text-faint', 'link', 'danger', 'success', 'warning'],
     on: ['bg', 'surface', 'surface-2', 'sidebar'],
   },
 };
@@ -119,11 +121,31 @@ describe.each(['dark', 'light'] as const)('%s theme text contrast', (theme) => {
   }
 });
 
-describe('light --text-faint', () => {
-  // Documented limit: it is only AA on white surfaces, so it must not be used on --surface-2 / --sidebar.
-  for (const bg of ['bg', 'surface']) {
-    test(`--text-faint on --${bg} is at least 4.5:1`, () => {
-      expect(ratio('light', 'text-faint', bg)).toBeGreaterThanOrEqual(4.5);
+/** Opaque colour of token `name` on a selected row (the translucent wash sits over --surface). */
+function onSelected(theme: Theme, name: string): [Rgb, Rgb] {
+  const wash = over(parseColour(token(theme, 'selected')), seenOn(theme, 'surface', 'bg'));
+  return [over(parseColour(token(theme, name)), wash), wash];
+}
+
+describe.each(['dark', 'light'] as const)('%s theme selected row', (theme) => {
+  for (const fg of ['text', 'text-muted', 'text-faint', 'link']) {
+    test(`--${fg} on the selected wash is at least 4.5:1`, () => {
+      const [text, wash] = onSelected(theme, fg);
+      expect(contrast(text, wash)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+});
+
+describe.each(['dark', 'light'] as const)('%s theme non-text edges and glyphs', (theme) => {
+  for (const bg of ['bg', 'surface', 'surface-2']) {
+    test(`--line-strong on --${bg} is at least 3:1`, () => {
+      expect(ratio(theme, 'line-strong', bg)).toBeGreaterThanOrEqual(3);
+    });
+  }
+
+  for (const glyph of ['ok', 'warn', 'bad', 'active', 'idle', 'hl']) {
+    test(`--${glyph} on --surface is at least 3:1`, () => {
+      expect(ratio(theme, glyph, 'surface')).toBeGreaterThanOrEqual(3);
     });
   }
 });
@@ -135,11 +157,20 @@ describe.each(['dark', 'light'] as const)('%s theme primary action and focus', (
     ).toBeGreaterThanOrEqual(4.5);
   });
 
+  test('--primary stands out from the page ground by at least 3:1', () => {
+    expect(
+      contrast(seenOn(theme, 'primary', 'bg'), seenOn(theme, 'bg', 'bg'))
+    ).toBeGreaterThanOrEqual(3);
+  });
+
   for (const bg of ['bg', 'surface', 'surface-2']) {
     test(`--ring on --${bg} is at least 3:1`, () => {
       expect(ratio(theme, 'ring', bg)).toBeGreaterThanOrEqual(3);
     });
   }
+
+  test('the switch thumb (--on-ok) on the on track (--ok) is at least 3:1', () =>
+    expect(ratio(theme, 'on-ok', 'ok')).toBeGreaterThanOrEqual(3));
 });
 
 const STATES = ['waiting', 'prioritized', 'active', 'completed', 'failed', 'delayed'] as const;
@@ -168,6 +199,16 @@ describe('token registration', () => {
       'hover',
       'segment-active',
       'danger-fill',
+      'ok',
+      'warn',
+      'bad',
+      'active',
+      'idle',
+      'hl',
+      'rose',
+      'slate-tint',
+      'danger-tint',
+      'on-ok',
       ...STATES.flatMap((s) => [`state-${s}-bg`, `state-${s}-fg`]),
     ];
     for (const role of roles) {
@@ -177,11 +218,49 @@ describe('token registration', () => {
     }
   });
 
-  test('declares the Qelay radii', () => {
-    expect(theme).toContain('--radius-card: 14px;');
-    expect(theme).toContain('--radius-control: 10px;');
-    expect(theme).toContain('--radius-segment: 7px;');
-    expect(theme).toContain('--radius-kbd: 6px;');
+  test('card and popover shadows are per-theme tokens (shadow-panel, shadow-pop)', () => {
+    expect(theme).toContain('--shadow-panel: var(--panel-shadow);');
+    expect(theme).toContain('--shadow-pop: var(--pop-shadow);');
+    expect(TOKENS.dark.get('--panel-shadow')).toBe('none');
+    expect(TOKENS.light.get('--panel-shadow')).not.toBe('none');
+    expect(TOKENS.light.has('--pop-shadow') && TOKENS.dark.has('--pop-shadow')).toBe(true);
+  });
+
+  test('every role the panel was built on is still defined in both themes', () => {
+    const core = [
+      'bg',
+      'surface',
+      'surface-2',
+      'line',
+      'line-strong',
+      'text',
+      'text-muted',
+      'text-faint',
+      'sidebar',
+      'success',
+      'warning',
+      'danger',
+      'brand-1',
+      'brand-2',
+      'brand-3',
+    ];
+    for (const name of core) {
+      expect(TOKENS.dark.has(`--${name}`), `dark --${name}`).toBe(true);
+      expect(TOKENS.light.has(`--${name}`), `light --${name}`).toBe(true);
+    }
+  });
+
+  test('declares the compact radii: card 8, field 6, segment 6, key 4', () => {
+    expect(theme).toContain('--radius-card: 8px;');
+    expect(theme).toContain('--radius-control: 6px;');
+    expect(theme).toContain('--radius-segment: 6px;');
+    expect(theme).toContain('--radius-kbd: 4px;');
+  });
+
+  test('keyboard focus is one 2px ring with a 2px offset, in --ring', () => {
+    expect(CSS).toMatch(
+      /:focus-visible \{\s*outline: 2px solid var\(--ring\);\s*outline-offset: 2px;\s*\}/
+    );
   });
 
   test('the legacy --accent pair is gone from both themes and from @theme', () => {
@@ -194,26 +273,14 @@ describe('token registration', () => {
 });
 
 describe('type', () => {
-  test('Inter stays; JetBrains Mono and the stylistic feature flags are gone', () => {
-    expect(FONTS).toContain("font-family: 'Inter Variable'");
-    expect(FONTS).not.toMatch(/jetbrains/i);
-    expect(CSS).not.toMatch(/jetbrains/i);
-    expect(CSS).not.toContain('cv11');
-    expect(CSS).not.toContain('ss01');
-  });
-
-  test('the mono stack is the system stack', () => {
-    expect(CSS).toContain("--font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;");
-  });
-
-  test('.eyebrow is 11px / 600 / 0.18em / uppercase', () => {
+  test('.eyebrow is 11px / 600 / 0.08em / uppercase', () => {
     const eyebrow = CSS.slice(
       CSS.indexOf('.eyebrow {'),
       CSS.indexOf('}', CSS.indexOf('.eyebrow {'))
     );
     expect(eyebrow).toContain('font-size: 11px;');
     expect(eyebrow).toContain('font-weight: 600;');
-    expect(eyebrow).toContain('letter-spacing: 0.18em;');
+    expect(eyebrow).toContain('letter-spacing: 0.08em;');
     expect(eyebrow).toContain('text-transform: uppercase;');
   });
 });

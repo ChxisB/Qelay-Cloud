@@ -22,6 +22,8 @@ import { queueActionRoutes } from './queueOps';
 import { queueReadRoutes } from './queues';
 import { serverStatusRoutes } from './serverStatus';
 import { unsupportedRoutes } from './unsupported';
+import { webhookDestinationRoutes } from './webhookDestinations';
+import { webhookIssueRoutes } from './webhookIssues';
 import { webhookRoutes } from './webhooks';
 import { workerRoutes } from './workers';
 import { workflowRoutes } from './workflows';
@@ -67,6 +69,8 @@ export function jobsModule(
       ...queueConfigRoutes(ctx),
       ...cronRoutes(ctx),
       ...webhookRoutes(ctx, deps.webhookUrlPolicy ?? STRICT_URL_POLICY),
+      ...webhookIssueRoutes(ctx),
+      ...webhookDestinationRoutes(ctx, deps.webhookUrlPolicy ?? STRICT_URL_POLICY),
       ...workerRoutes(ctx),
       ...eventRoutes(ctx),
       ...flowRoutes(ctx),

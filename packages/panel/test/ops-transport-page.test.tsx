@@ -32,7 +32,7 @@ describe('the Transport page: doorbell health', () => {
         queue('slow', { store: { claimable: 40, notRung: 40, oldestNotRungAgeMs: 120_000 } }),
       ])
     );
-    expect(rowFor(page.host, 'slow')).toContain('the tick is behind');
+    expect(rowFor(page.host, 'slow')).toContain('maintenance is behind');
     page.unmount();
   });
 
@@ -41,7 +41,7 @@ describe('the Transport page: doorbell health', () => {
       transport([queue('orders', { deadLetterDepth: 3, deadLetterOldestAgeMs: 600_000 })])
     );
     const row = rowFor(page.host, 'orders');
-    expect(row).toContain('3 poison doorbells');
+    expect(row).toContain('3 failed notifications');
     expect(row).toContain('oldest 10m');
     page.unmount();
   });
@@ -68,7 +68,7 @@ describe('the Transport page: doorbell health', () => {
     const row = rowFor(page.host, 'mystery');
     expect(row).toContain('unknown');
     expect(row).toContain('not read');
-    expect(row).toContain('The broker did not answer');
+    expect(row).toContain('The queue service did not answer');
     // Three broker columns, all unknown.
     expect(row.match(/unknown/g)!.length).toBeGreaterThanOrEqual(3);
     page.unmount();
@@ -103,7 +103,7 @@ describe('the Transport page: doorbell health', () => {
       })
     );
     expect(page.text()).toContain('gcp-pubsub');
-    expect(page.text()).toContain('cannot delay a bell');
+    expect(page.text()).toContain('cannot hold a notification back');
     expect(page.text()).toContain('No ordering');
     page.unmount();
   });
@@ -178,7 +178,7 @@ describe('the Transport page: poison doorbells', () => {
     expect(links).toContain('/job?id=job-live');
     expect(links.some((href) => href?.includes('job-gone'))).toBe(false);
     expect(page.text()).toContain('job-gone');
-    expect(page.text()).toContain('undecodable bell');
+    expect(page.text()).toContain('unreadable notification');
     expect(page.text()).toContain('2m ago');
     page.unmount();
   });
@@ -199,7 +199,7 @@ describe('the Transport page: poison doorbells', () => {
     expect(page.text()).toContain('for operators');
     expect(seen.some((path) => path.startsWith('/transport/dead-letters'))).toBe(false);
     // The depth is still on the page: it is not a secret.
-    expect(rowFor(page.host, 'orders')).toContain('2 poison doorbells');
+    expect(rowFor(page.host, 'orders')).toContain('2 failed notifications');
     page.unmount();
   });
 
@@ -211,7 +211,7 @@ describe('the Transport page: poison doorbells', () => {
       }),
       { '/transport/dead-letters': SAMPLE }
     );
-    expect(page.text()).toContain('no dead-letter queue of doorbells');
+    expect(page.text()).toContain('does not keep a list of failed notifications');
     expect(seen.some((path) => path.startsWith('/transport/dead-letters'))).toBe(false);
     page.unmount();
   });
@@ -220,8 +220,8 @@ describe('the Transport page: poison doorbells', () => {
     const { page } = await show(POISON, {
       '/transport/dead-letters': { ...SAMPLE, available: false, reason: 'unreachable', items: [] },
     });
-    expect(page.text()).toContain('unknown (not empty)');
-    expect(page.text()).not.toContain('No poison doorbells in orders');
+    expect(page.text()).toContain('unknown (not none)');
+    expect(page.text()).not.toContain('No failed notifications in orders');
     page.unmount();
   });
 
@@ -229,7 +229,7 @@ describe('the Transport page: poison doorbells', () => {
     const { page } = await show(POISON, {
       '/transport/dead-letters': { ...SAMPLE, items: [] },
     });
-    expect(page.text()).toContain('No poison doorbells in orders');
+    expect(page.text()).toContain('No failed notifications in orders');
     page.unmount();
   });
 });

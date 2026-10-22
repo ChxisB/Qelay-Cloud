@@ -1,9 +1,14 @@
 import { QcloudError } from '@qelay-cloud/core';
 import {
   BatchTooLargeError,
+  DestinationInUseError,
+  DestinationLimitError,
+  DestinationNameTakenError,
   GroupFullError,
   PayloadTooComplexError,
   PayloadTooLargeError,
+  RouteChainError,
+  RouteCycleError,
   WebhookDisabledError,
   WebhookKeyError,
   WebhookLimitError,
@@ -97,6 +102,42 @@ export function toApiError(error: unknown, requestId: string): ApiError {
       409,
       'webhook_key_missing',
       'a signing secret needs QCLOUD_WEBHOOK_KEY, and this deployment has none; register the webhook without a secret or configure the key'
+    );
+  }
+  if (error instanceof DestinationLimitError) {
+    return new ApiError(
+      409,
+      'destination_limit',
+      'the namespace has the most destinations it may',
+      {
+        limit: error.limit,
+      }
+    );
+  }
+  if (error instanceof DestinationNameTakenError) {
+    return new ApiError(409, 'destination_name_taken', 'a destination already has that name');
+  }
+  if (error instanceof DestinationInUseError) {
+    return new ApiError(
+      409,
+      'destination_in_use',
+      'connections are made from the destination; delete or move them first',
+      { connections: error.connections }
+    );
+  }
+  if (error instanceof RouteCycleError) {
+    return new ApiError(
+      409,
+      'route_cycle',
+      'the route would make a loop: a queue would end up adding jobs to itself'
+    );
+  }
+  if (error instanceof RouteChainError) {
+    return new ApiError(
+      409,
+      'route_chain_too_long',
+      'the route would make a chain of routes longer than the most allowed',
+      { limit: error.limit }
     );
   }
   if (error instanceof WebhookDisabledError) {

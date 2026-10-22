@@ -128,7 +128,7 @@ export async function unlockDashboard(
   await dialog.getByRole('button', { name: 'Unlock' }).click();
   await accepted;
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
 }
 
 export async function expectAccessible(
@@ -136,6 +136,15 @@ export async function expectAccessible(
   testInfo: TestInfo,
   label: string
 ): Promise<void> {
+  // Contrast is read from the painted colour, so let the entrance and stagger animations finish first.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => undefined))
+    )
+  );
   const result = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
     .analyze();
@@ -153,4 +162,31 @@ export async function expectAccessible(
 
 export function expectNoBrowserErrors(errors: string[]): void {
   expect(errors, 'The production UI emitted browser errors').toEqual([]);
+}
+
+/**
+ * Open a "New …" create form. The form is behind that button while the list has items and is already
+ * showing while the list is empty, so the button is pressed only when it is there.
+ */
+export async function openCreateForm(page: Page, button: string): Promise<void> {
+  const open = page.getByRole('button', { name: button, exact: true });
+  if (await open.count()) await open.click();
+}
+
+/**
+ * Answers a question the page asks in its own dialog (`confirmInPage`), whose name is the question. `accept`
+ * presses the main button, named `confirmLabel`; `dismiss` presses Cancel.
+ */
+export async function answerQuestion(
+  page: Page,
+  question: string,
+  answer: 'accept' | 'dismiss',
+  confirmLabel: string
+): Promise<void> {
+  const dialog = page.getByRole('alertdialog', { name: question });
+  await expect(dialog).toBeVisible();
+  await dialog
+    .getByRole('button', { name: answer === 'accept' ? confirmLabel : 'Cancel', exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
 }

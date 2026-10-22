@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout';
+import { LegacyRedirect } from './components/LegacyRedirect';
 import { retryableLazy } from './lib/retryableLazy';
 import { OverviewPro } from './pages/control/OverviewPro';
 // Eager: the layout shell, the landing route ('/'), and the trivial 404 — so the
@@ -32,9 +33,6 @@ const Deployment = retryableLazy(() =>
 const Diagnostics = retryableLazy(() =>
   import('./pages/control/Diagnostics').then((m) => ({ default: m.Diagnostics }))
 );
-const DlqControl = retryableLazy(() =>
-  import('./pages/control/DlqControl').then((m) => ({ default: m.DlqControl }))
-);
 const DlqPro = retryableLazy(() =>
   import('./pages/control/DlqPro').then((m) => ({ default: m.DlqPro }))
 );
@@ -56,9 +54,6 @@ const McpServer = retryableLazy(() =>
 const MetricsPro = retryableLazy(() =>
   import('./pages/control/MetricsPro').then((m) => ({ default: m.MetricsPro }))
 );
-const QueueControl = retryableLazy(() =>
-  import('./pages/control/QueueControl').then((m) => ({ default: m.QueueControl }))
-);
 const QueueDetailPro = retryableLazy(() =>
   import('./pages/control/QueueDetailPro').then((m) => ({ default: m.QueueDetailPro }))
 );
@@ -77,8 +72,28 @@ const Transport = retryableLazy(() =>
 const UsagePro = retryableLazy(() =>
   import('./pages/control/UsagePro').then((m) => ({ default: m.UsagePro }))
 );
-const Webhooks = retryableLazy(() =>
-  import('./pages/control/Webhooks').then((m) => ({ default: m.Webhooks }))
+const Connections = retryableLazy(() =>
+  import('./pages/control/gateway/Connections').then((m) => ({ default: m.Connections }))
+);
+const Events = retryableLazy(() =>
+  import('./pages/control/gateway/Events').then((m) => ({ default: m.Events }))
+);
+const GatewayMetrics = retryableLazy(() =>
+  import('./pages/control/gateway/Metrics').then((m) => ({ default: m.Metrics }))
+);
+const ConnectionPage = retryableLazy(() =>
+  import('./pages/control/gateway/ConnectionPage').then((m) => ({ default: m.ConnectionPage }))
+);
+const CreateConnection = retryableLazy(() =>
+  import('./pages/control/gateway/CreateConnection').then((m) => ({
+    default: m.CreateConnection,
+  }))
+);
+const Issues = retryableLazy(() =>
+  import('./pages/control/gateway/Issues').then((m) => ({ default: m.Issues }))
+);
+const Destinations = retryableLazy(() =>
+  import('./pages/control/gateway/Destinations').then((m) => ({ default: m.Destinations }))
 );
 const WorkersPro = retryableLazy(() =>
   import('./pages/control/WorkersPro').then((m) => ({ default: m.WorkersPro }))
@@ -88,29 +103,8 @@ const Workflows = retryableLazy(() =>
 );
 const Alerts = retryableLazy(() => import('./pages/Alerts').then((m) => ({ default: m.Alerts })));
 const Fleet = retryableLazy(() => import('./pages/Fleet').then((m) => ({ default: m.Fleet })));
-const Cron = retryableLazy(() => import('./pages/Cron').then((m) => ({ default: m.Cron })));
-const Dlq = retryableLazy(() => import('./pages/Dlq').then((m) => ({ default: m.Dlq })));
-const Jobs = retryableLazy(() => import('./pages/Jobs').then((m) => ({ default: m.Jobs })));
-const Logs = retryableLazy(() => import('./pages/Logs').then((m) => ({ default: m.Logs })));
-const Metrics = retryableLazy(() =>
-  import('./pages/Metrics').then((m) => ({ default: m.Metrics }))
-);
-const Overview = retryableLazy(() =>
-  import('./pages/Overview').then((m) => ({ default: m.Overview }))
-);
-const QueueDetail = retryableLazy(() =>
-  import('./pages/QueueDetail').then((m) => ({ default: m.QueueDetail }))
-);
-const Queues = retryableLazy(() => import('./pages/Queues').then((m) => ({ default: m.Queues })));
-const S3Backup = retryableLazy(() =>
-  import('./pages/S3Backup').then((m) => ({ default: m.S3Backup }))
-);
 const Settings = retryableLazy(() =>
   import('./pages/Settings').then((m) => ({ default: m.Settings }))
-);
-const Usage = retryableLazy(() => import('./pages/Usage').then((m) => ({ default: m.Usage })));
-const Workers = retryableLazy(() =>
-  import('./pages/Workers').then((m) => ({ default: m.Workers }))
 );
 
 export function App() {
@@ -119,17 +113,17 @@ export function App() {
       <Route element={<AppLayout />}>
         <Route path="/" element={<OverviewPro />} />
         <Route path="/fleet" element={<Fleet />} />
-        <Route path="/overview-classic" element={<Overview />} />
+        <Route path="/overview-classic" element={<LegacyRedirect />} />
         <Route path="/queues" element={<QueuesOverview />} />
-        <Route path="/queues-classic" element={<Queues />} />
+        <Route path="/queues-classic" element={<LegacyRedirect />} />
         <Route path="/queues/:name" element={<QueueDetailPro />} />
-        <Route path="/queues-classic/:name" element={<QueueDetail />} />
+        <Route path="/queues-classic/:name" element={<LegacyRedirect />} />
         <Route path="/jobs" element={<JobsPro />} />
-        <Route path="/jobs-classic" element={<Jobs />} />
+        <Route path="/jobs-classic" element={<LegacyRedirect />} />
         <Route path="/dlq" element={<DlqPro />} />
-        <Route path="/dlq-classic" element={<Dlq />} />
+        <Route path="/dlq-classic" element={<LegacyRedirect />} />
         <Route path="/cron" element={<CronManager />} />
-        <Route path="/cron-classic" element={<Cron />} />
+        <Route path="/cron-classic" element={<LegacyRedirect />} />
         <Route path="/flows" element={<Flows />} />
         <Route path="/workflows" element={<Workflows />} />
         <Route path="/workflows/executions" element={<Navigate to="/workflows" replace />} />
@@ -143,20 +137,38 @@ export function App() {
         />
         <Route path="/workflows/archive" element={<Navigate to="/workflows" replace />} />
         <Route path="/metrics" element={<MetricsPro />} />
-        <Route path="/metrics-classic" element={<Metrics />} />
+        <Route path="/metrics-classic" element={<LegacyRedirect />} />
         <Route path="/workers" element={<WorkersPro />} />
-        <Route path="/workers-classic" element={<Workers />} />
+        <Route path="/workers-classic" element={<LegacyRedirect />} />
         <Route path="/logs" element={<LogsPro />} />
-        <Route path="/logs-classic" element={<Logs />} />
+        <Route path="/logs-classic" element={<LegacyRedirect />} />
         <Route path="/server" element={<ServerControl />} />
         <Route path="/add-job" element={<AddJob />} />
         <Route path="/jobs/bulk-add" element={<BulkAddJobs />} />
         <Route path="/job" element={<JobInspector />} />
-        <Route path="/queue-control" element={<QueueControl />} />
+        {/* Queue control is the Settings tab of each queue; DLQ control was a copy of the DLQ page. */}
+        <Route path="/queue-control" element={<Navigate to="/queues" replace />} />
         {/* Legacy alias: CronManager graduated to /cron; redirect keeps old bookmarks alive. */}
         <Route path="/cron-manager" element={<Navigate to="/cron" replace />} />
-        <Route path="/dlq-control" element={<DlqControl />} />
-        <Route path="/webhooks" element={<Webhooks />} />
+        <Route path="/dlq-control" element={<Navigate to="/dlq" replace />} />
+        {/* Webhooks are connections of the Event gateway; old links and bookmarks land on its first screen. */}
+        <Route path="/events-gateway" element={<Connections />} />
+        <Route path="/events-gateway/events" element={<Events />} />
+        <Route path="/events-gateway/metrics" element={<GatewayMetrics />} />
+        <Route path="/events-gateway/issues" element={<Issues />} />
+        <Route path="/events-gateway/destinations" element={<Destinations />} />
+        <Route path="/events-gateway/connections/new" element={<CreateConnection />} />
+        <Route path="/events-gateway/connections/:id" element={<ConnectionPage tab="overview" />} />
+        <Route
+          path="/events-gateway/connections/:id/metrics"
+          element={<ConnectionPage tab="metrics" />}
+        />
+        <Route
+          path="/events-gateway/connections/:id/settings"
+          element={<ConnectionPage tab="settings" />}
+        />
+        <Route path="/webhooks" element={<Navigate to="/events-gateway" replace />} />
+        <Route path="/webhooks/:id" element={<Navigate to="/events-gateway" replace />} />
         <Route path="/diagnostics" element={<Diagnostics />} />
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/transport" element={<Transport />} />
@@ -165,9 +177,9 @@ export function App() {
         <Route path="/database" element={<Database />} />
         <Route path="/mcp" element={<McpServer />} />
         <Route path="/usage" element={<UsagePro />} />
-        <Route path="/usage-classic" element={<Usage />} />
+        <Route path="/usage-classic" element={<LegacyRedirect />} />
         <Route path="/s3" element={<S3BackupPro />} />
-        <Route path="/s3-classic" element={<S3Backup />} />
+        <Route path="/s3-classic" element={<LegacyRedirect />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<NotFound />} />
       </Route>

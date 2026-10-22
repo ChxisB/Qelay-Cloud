@@ -40,7 +40,7 @@ Tests that need Postgres use one isolated schema per test file (`test/support/db
 > Not run: it starts containers.
 
 ```bash notrun
-docker compose -f docker-compose.test.yml up -d --wait     # Postgres 16 on 127.0.0.1:55432
+docker compose -f docker-compose.test.yml up -d --wait     # Postgres 18 on 127.0.0.1:55432
 QCLOUD_REQUIRE_DB=1 bun test
 docker compose -f docker-compose.test.yml down
 ```

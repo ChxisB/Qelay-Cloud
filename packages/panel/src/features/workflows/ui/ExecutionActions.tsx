@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
 import { useCanOperate } from '@/lib/capabilities/useCapabilities';
 import type { WorkflowNotice } from '../application/workflowMessages';
@@ -50,24 +51,30 @@ export function ExecutionActions({ execution, pending, notice, onAction, onDismi
   const frozen = open ? { id: execution.id, version: open.version } : execution;
 
   return (
-    <section aria-label="Execution actions" className="space-y-3 rounded-lg border border-line p-3">
+    <section
+      aria-label="Execution actions"
+      className="space-y-3 rounded-card border border-line bg-surface p-4"
+    >
       {notice && (
-        <div
-          role={notice.kind === 'error' ? 'alert' : 'status'}
-          className={`flex items-start justify-between gap-3 text-xs ${notice.kind === 'error' ? 'text-danger' : 'text-success'}`}
+        <Banner
+          tone={notice.kind === 'error' ? 'problem' : 'ok'}
+          title={notice.kind === 'error' ? 'Action failed' : 'Action done'}
+          action={
+            <Button size="sm" variant="ghost" onClick={onDismissNotice}>
+              Dismiss
+            </Button>
+          }
         >
-          <span>{notice.text}</span>
-          <button type="button" onClick={onDismissNotice} className="shrink-0 text-faint underline">
-            Dismiss
-          </button>
-        </div>
+          {' '}
+          {notice.text}
+        </Banner>
       )}
       {!operator ? (
-        <p className="text-xs text-faint">
+        <p className="text-[13px] text-muted">
           Your role can look at workflow executions but not change them.
         </p>
       ) : actions.length === 0 ? (
-        <p className="text-xs text-faint">
+        <p className="text-[13px] text-muted">
           Nothing can be done to this run in its state ({execution.state}).
         </p>
       ) : (

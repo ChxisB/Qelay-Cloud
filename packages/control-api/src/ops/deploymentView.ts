@@ -1,4 +1,6 @@
-import { budget, LATEST_VERSION } from '@qelay-cloud/store-postgres';
+import { webhookPausedBy } from '@qelay-cloud/core';
+import type { WebhookRecord } from '@qelay-cloud/store-postgres';
+import { budget, LATEST_VERSION, MAX_ISSUE_PAGE } from '@qelay-cloud/store-postgres';
 import type { DeploymentResponse } from '../opsTypes';
 import { READINESS_DEADLINE_MS, schemaStateOf } from '../routes/health';
 import type { OpsContext } from './context';
@@ -13,7 +15,7 @@ async function readings(ctx: OpsContext, fresh: boolean) {
   const store = ctx.jobs?.store;
   const deadline = READINESS_DEADLINE_MS;
   let latencyMs: number | null = null;
-  const [databaseOk, tick, schema, usage, workers, scan, webhooks] = await Promise.all([
+  const [databaseOk, tick, schema, usage, workers, scan, webhooks, ignored] = await Promise.all([
     settled(async () => {
       const started = performance.now();
       await readiness.database();
@@ -26,8 +28,12 @@ async function readings(ctx: OpsContext, fresh: boolean) {
     store ? settled(() => store.workers.list(), deadline) : null,
     store ? settled(() => scanDoorbells(ctx, fresh), deadline) : null,
     store ? settled(() => store.webhooks.list(), deadline) : null,
+    // At most one live issue per route and 100 routes, so one page holds every ignored one.
+    store
+      ? settled(() => store.webhooks.issues({ status: 'ignored', limit: MAX_ISSUE_PAGE }), deadline)
+      : null,
   ]);
-  return { databaseOk, latencyMs, tick, schema, usage, workers, scan, webhooks };
+  return { databaseOk, latencyMs, tick, schema, usage, workers, scan, webhooks, ignored };
 }
 
 /** `GET /deployment`: version, schema, database, connections, tick, workers and the warnings from them. */
@@ -115,15 +121,28 @@ async function build(ctx: OpsContext, fresh: boolean): Promise<DeploymentRespons
     },
     warnings: deploymentWarnings({
       ...parts,
-      webhooks:
-        read.webhooks === null
-          ? null
-          : {
-              failing: read.webhooks.filter((h) => h.disabledReason === null && h.alertLevel > 0)
-                .length,
-              paused: read.webhooks.filter((h) => h.disabledReason !== null).length,
-            },
+      webhooks: webhookCounts(
+        read.webhooks,
+        new Set(read.ignored?.items.map((issue) => issue.webhookId))
+      ),
     }),
     timestamp: clock.now(),
+  };
+}
+
+/**
+ * What Home warns about: routes failing, and routes the failure streak paused. An operator's own pause is not a
+ * fault, and a route whose issue the operator ignored has been looked at: neither is counted. When the ignored
+ * issues could not be read the set is empty, so the warning errs toward showing.
+ */
+function webhookCounts(
+  routes: readonly WebhookRecord[] | null,
+  ignored: ReadonlySet<string>
+): { failing: number; paused: number } | null {
+  if (routes === null) return null;
+  const heard = routes.filter((route) => !ignored.has(route.id));
+  return {
+    failing: heard.filter((route) => route.disabledReason === null && route.alertLevel > 0).length,
+    paused: heard.filter((route) => webhookPausedBy(route) === 'failures').length,
   };
 }

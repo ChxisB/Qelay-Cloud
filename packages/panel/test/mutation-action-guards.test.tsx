@@ -3,13 +3,15 @@ import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
+import { useToastStore } from '../src/components/dashboard/stores/toastStore';
 import { AddJob } from '../src/pages/control/AddJob';
 import { BulkAddJobs } from '../src/pages/control/BulkAddJobs';
 import { CronManager } from '../src/pages/control/CronManager';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 
 const realFetch = globalThis.fetch;
-const realConfirm = window.confirm;
+let stopAnswering = () => {};
 const mounted = new Set<() => void>();
 
 const json = (body: unknown, status = 200) =>
@@ -90,7 +92,7 @@ const queuePage = {
 
 beforeEach(() => {
   ensureDom();
-  window.confirm = () => true;
+  stopAnswering = answerConfirms().stop;
   useConnectionStore.setState({
     baseUrl: 'http://server-a.test',
     token: 'token-a',
@@ -102,7 +104,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  window.confirm = realConfirm;
+  stopAnswering();
   useConnectionStore.setState({
     baseUrl: '/api',
     token: '',
@@ -196,7 +198,7 @@ describe('non-idempotent form mutexes', () => {
       return Promise.resolve(json({ ok: false, error: 'unexpected request' }, 500));
     }) as typeof fetch;
 
-    const { host } = render(createElement(BulkAddJobs));
+    const { host } = render(createElement(MemoryRouter, null, createElement(BulkAddJobs)));
     await settle(3);
     setValue(host.querySelector<HTMLInputElement>('[name="bulk-target-queue"]')!, 'orders');
     setValue(
@@ -256,6 +258,13 @@ describe('non-idempotent form mutexes', () => {
 
     const { host } = render(createElement(CronManager));
     await settle(5);
+    // The list has a schedule, so the form is behind the "New schedule" button.
+    expect(host.querySelector('form')).toBeNull();
+    act(() =>
+      [...host.querySelectorAll('button')]
+        .find((button) => button.textContent === 'New schedule')!
+        .click()
+    );
     setValue(host.querySelector<HTMLInputElement>('[name="cron-name"]')!, 'daily');
     setValue(host.querySelector<HTMLInputElement>('[name="cron-queue"]')!, 'orders');
     setValue(host.querySelector<HTMLInputElement>('[name="cron-expression"]')!, '0 9 * * *');
@@ -273,10 +282,14 @@ describe('non-idempotent form mutexes', () => {
       );
       await settle(5);
     });
-    expect(host.textContent).toContain('Cron upsert acknowledged');
+    // The create worked: the person is told, and the form closes behind it.
+    expect(useToastStore.getState().toasts.map((t) => t.title)).toContain('Schedule created');
+    expect(host.querySelector('form')).toBeNull();
 
     const remove = host.querySelector<HTMLButtonElement>('[aria-label="Delete cron existing"]')!;
     dispatchTwice(remove, 'click');
+    // The page asks first; however many answers come, the lease lets one DELETE through.
+    await settle(5);
     expect(deletes).toBe(1);
     await act(async () => {
       deletePending.resolve(json({ ok: true }));

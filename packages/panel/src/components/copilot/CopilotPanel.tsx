@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { useCopilotStore } from '@/components/dashboard/stores/copilotStore';
-import { Field, Input, Select } from '@/components/ui/form';
-import { normalizeCustomProviderBaseURL, PROVIDERS, providerById } from '@/lib/copilot/providers';
+import { useGlobalModalStore } from '@/components/dashboard/stores/globalModalStore';
+import { Button } from '@/components/ui/Button';
+import { Tag } from '@/components/ui/Tag';
+import { cn } from '@/lib/cn';
+import { normalizeCustomProviderBaseURL } from '@/lib/copilot/providers';
 import { abortActive, clearChat, sendMessage } from '@/lib/copilot/runtime';
+import { CopilotConfig } from './CopilotConfig';
 import { ConfirmCard, MessageBubble, PanelIconButton } from './CopilotPanelParts';
+
+// A suggestion is a pill that may wrap onto two lines, so it is not `buttonClass` (which never wraps).
+const CHIP =
+  'inline-flex min-h-8 items-center rounded-[22px] border border-line-strong px-4 py-2 text-left text-[13px] font-bold leading-snug text-fg ' +
+  'transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ' +
+  'disabled:cursor-not-allowed disabled:opacity-50';
 
 const SUGGESTIONS = [
   'Which queues are backing up right now?',
@@ -11,9 +22,8 @@ const SUGGESTIONS = [
   'Summarize server health and worker status.',
 ];
 
-export function CopilotPanel() {
-  const { config, setConfig, messages, pending, busy, setOpen, resolveConfirm } = useCopilotStore();
-  const def = providerById(config.provider);
+export function CopilotPanel({ leaving = false }: { leaving?: boolean }) {
+  const { config, messages, pending, busy, setOpen, resolveConfirm } = useCopilotStore();
   const customBaseValid =
     config.provider !== 'custom' || normalizeCustomProviderBaseURL(config.baseURL) !== null;
   const configured =
@@ -30,7 +40,9 @@ export function CopilotPanel() {
   }, [messages, pending]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && useGlobalModalStore.getState().active !== 'confirm') setOpen(false);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [setOpen]);
@@ -48,17 +60,6 @@ export function CopilotPanel() {
     void sendMessage(t);
   };
 
-  const changeProvider = (id: string) => {
-    const p = providerById(id);
-    setConfig({
-      provider: id,
-      // Named providers use their code-defined endpoint. Never copy it into the
-      // editable/persisted field where a stale value could later look trusted.
-      baseURL: '',
-      model: p?.models[0] ?? '',
-    });
-  };
-
   return (
     <>
       <button
@@ -66,7 +67,10 @@ export function CopilotPanel() {
         tabIndex={-1}
         aria-label="Close Copilot"
         onClick={() => setOpen(false)}
-        className="fixed inset-0 z-[55] cursor-default bg-black/30"
+        className={cn(
+          'fixed inset-0 z-[55] cursor-default bg-scrim',
+          leaving ? 'motion-fade-out pointer-events-none' : 'motion-fade'
+        )}
       />
       <aside
         ref={dialogRef}
@@ -74,15 +78,24 @@ export function CopilotPanel() {
         role="dialog"
         aria-modal="true"
         aria-label="Copilot"
-        className="fixed inset-y-0 right-0 z-[60] flex w-full max-w-md flex-col border-l border-line bg-surface shadow-xl"
+        className={cn(
+          'fixed inset-y-0 right-0 z-[60] flex w-full max-w-[580px] flex-col border-l border-line-strong bg-surface shadow-pop',
+          leaving ? 'motion-slide-out pointer-events-none' : 'motion-slide'
+        )}
       >
         {/* Header */}
-        <header className="flex items-center gap-2 border-b border-line px-4 py-3">
-          <span className="font-semibold text-fg">Copilot</span>
-          <span className="rounded bg-selected px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-link">
-            experimental
-          </span>
-          <div className="ml-auto flex items-center gap-1">
+        <header className="flex items-start gap-3 border-b border-line px-4 py-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-faint">
+              Copilot
+              <Tag>experimental</Tag>
+            </div>
+            <h2 className="mt-1 text-xl font-bold text-fg">Ask Qelay</h2>
+            <p className="mt-0.5 text-sm text-muted">
+              Reads your queues. Changes always ask first.
+            </p>
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <PanelIconButton
               label="Settings"
               active={showConfig}
@@ -93,10 +106,14 @@ export function CopilotPanel() {
             </PanelIconButton>
             <PanelIconButton
               label="Clear chat"
-              onClick={() => {
+              onClick={async () => {
                 if (
                   messages.length === 0 ||
-                  window.confirm('Clear the entire Copilot conversation from this browser?')
+                  (await confirmInPage({
+                    question: 'Clear the entire Copilot conversation from this browser?',
+                    confirmLabel: 'Clear chat',
+                    danger: true,
+                  }))
                 ) {
                   clearChat();
                 }
@@ -111,90 +128,8 @@ export function CopilotPanel() {
         </header>
 
         {showConfig && (
-          <div className="space-y-3 border-b border-line bg-surface-2/50 px-4 py-3">
-            <Field label="Provider">
-              <Select
-                name="copilot-provider"
-                autoComplete="off"
-                value={config.provider}
-                onChange={(e) => changeProvider(e.target.value)}
-              >
-                {PROVIDERS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            {def?.id === 'custom' && (
-              <Field label="Base URL" htmlFor="copilot-base-url">
-                <Input
-                  id="copilot-base-url"
-                  name="copilot-base-url"
-                  value={config.baseURL}
-                  onChange={(e) => setConfig({ baseURL: e.target.value })}
-                  placeholder="https://api.example.com/v1"
-                  autoComplete="off"
-                  inputMode="url"
-                  spellCheck={false}
-                />
-                {!customBaseValid && (
-                  <span className="text-xs text-warning">
-                    Enter a full http(s) endpoint without credentials, query, or fragment.
-                  </span>
-                )}
-              </Field>
-            )}
-            <Field label="Model" htmlFor="copilot-model">
-              <Input
-                id="copilot-model"
-                name="copilot-model"
-                list="copilot-models"
-                value={config.model}
-                onChange={(e) => setConfig({ model: e.target.value })}
-                placeholder="model id"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <datalist id="copilot-models">
-                {(def?.models ?? []).map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-            </Field>
-            <Field label="API key">
-              <Input
-                name="copilot-api-key"
-                type="password"
-                value={config.apiKey}
-                onChange={(e) => setConfig({ apiKey: e.target.value })}
-                placeholder="your provider API key"
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </Field>
-            <p className="text-xs text-faint">
-              Chat and tool results (live queue/job data) are sent directly from your browser to the
-              provider you configure.
-            </p>
-            <p className="text-xs text-faint">
-              Key stays in memory for this session only, never saved to disk.{' '}
-              {def?.keyUrl && (
-                <a
-                  href={def.keyUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-link hover:underline"
-                >
-                  Get a key
-                </a>
-              )}
-            </p>
-            {def && !def.browserDirect && (
-              <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
-                {def.note ?? 'This provider may block direct browser calls (CORS).'}
-              </p>
-            )}
+          <div className="px-4 pt-5">
+            <CopilotConfig customBaseValid={customBaseValid} />
           </div>
         )}
 
@@ -202,30 +137,30 @@ export function CopilotPanel() {
         <div
           ref={scrollRef}
           aria-live="polite"
-          className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4"
+          className="flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-3"
         >
           {messages.length === 0 && (
-            <div className="space-y-3 pt-6">
+            <div className="space-y-4 pt-2">
               <p className="text-sm text-muted">
                 Ask about your queues, jobs, DLQ, workers, or crons. I read live data and can
                 propose only promote and pause/resume. Every action names its target server and
                 waits for your confirmation.
               </p>
-              <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
                 {SUGGESTIONS.map((s) => (
                   <button
                     type="button"
                     key={s}
                     onClick={() => submit(s)}
                     disabled={!configured}
-                    className="block w-full rounded-lg border border-line px-3 py-2 text-left text-sm text-muted transition-colors hover:border-link/50 hover:text-fg disabled:opacity-50"
+                    className={CHIP}
                   >
                     {s}
                   </button>
                 ))}
               </div>
               {!configured && (
-                <p className="text-xs text-warning">
+                <p className="text-xs font-semibold text-state-waiting-fg">
                   Set a provider, model, and API key above to start.
                 </p>
               )}
@@ -238,7 +173,7 @@ export function CopilotPanel() {
 
         {/* Pending confirmations pinned above the input */}
         {pending.length > 0 && (
-          <div className="space-y-2 border-t border-line px-4 py-3">
+          <div className="space-y-3 border-t border-line px-4 py-4">
             {pending.map((p) => (
               <ConfirmCard
                 key={p.id}
@@ -251,8 +186,8 @@ export function CopilotPanel() {
         )}
 
         {/* Input */}
-        <div className="border-t border-line px-4 py-3">
-          <div className="flex items-end gap-2">
+        <div className="border-t border-line px-4 py-4">
+          <div className="flex items-end gap-3">
             <textarea
               name="copilot-message"
               aria-label="Message to Copilot"
@@ -268,25 +203,18 @@ export function CopilotPanel() {
               rows={2}
               placeholder={configured ? 'Ask the Copilot…' : 'Add an API key in settings first'}
               disabled={!configured}
-              className="min-h-0 flex-1 resize-none rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-fg outline-none placeholder:text-faint focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              className="min-h-12 flex-1 resize-none rounded-control border border-line-strong bg-surface px-4 py-3 text-[13px] font-medium text-fg placeholder:text-faint focus-visible:border-ring focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-55"
             />
             {busy ? (
-              <button
-                type="button"
-                onClick={() => abortActive()}
-                className="rounded-lg border border-line px-3 py-2 text-sm text-muted hover:bg-surface-2 hover:text-fg"
-              >
-                Stop
-              </button>
+              <Button onClick={() => abortActive()}>Stop</Button>
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="primary"
                 onClick={() => submit(input)}
                 disabled={!input.trim() || !configured}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               >
                 Send
-              </button>
+              </Button>
             )}
           </div>
         </div>

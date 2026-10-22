@@ -6,6 +6,7 @@ import {
   addJobCloneDefaults,
   MAX_DELAY_MS,
   numberString,
+  OPTION_LABELS,
   parseAddJobNumbers,
   parseRepeat,
   queueNameError,
@@ -113,7 +114,7 @@ export function buildAddJobSubmission(values: AddJobFormValues, now = Date.now()
   );
   if (!numeric.ok) return failure(numeric.msg);
   if (numeric.options.groupMaxSize !== undefined && !groupId) {
-    return failure('Group max size requires a Group ID');
+    return failure(`${OPTION_LABELS.groupMaxSize} needs a Group ID`);
   }
 
   let effectiveDelay = numeric.options.delay;
@@ -144,7 +145,7 @@ export function buildAddJobSubmission(values: AddJobFormValues, now = Date.now()
 
   const count = Number(values.count);
   if (!Number.isSafeInteger(count) || count < 1 || count > 10000) {
-    return failure('Count must be a whole number from 1 to 10000');
+    return failure('How many jobs must be a whole number from 1 to 10000');
   }
   return {
     ok: true,

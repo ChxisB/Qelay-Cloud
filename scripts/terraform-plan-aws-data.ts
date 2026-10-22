@@ -24,8 +24,8 @@ export function checkDatabase(plan: Plan, checks: Checks, maxConnections: number
   if (db === undefined) return;
   const a = after(db);
   checks.ok(
-    'PostgreSQL 16',
-    get(a, 'engine') === 'postgres' && String(get(a, 'engine_version')).startsWith('16')
+    'PostgreSQL 18',
+    get(a, 'engine') === 'postgres' && String(get(a, 'engine_version')).startsWith('18')
   );
   checks.ok('the storage is encrypted', get(a, 'storage_encrypted') === true);
   checks.ok('deletion protection is on', get(a, 'deletion_protection') === true);
@@ -47,7 +47,7 @@ export function checkDatabase(plan: Plan, checks: Checks, maxConnections: number
   const parameters = attr(group, 'parameter');
   const parameter = (name: string) =>
     Array.isArray(parameters) ? parameters.find((p) => get(p, 'name') === name) : undefined;
-  checks.ok('the parameter group is postgres16', attr(group, 'family') === 'postgres16');
+  checks.ok('the parameter group is postgres18', attr(group, 'family') === 'postgres18');
   checks.ok(
     "max_connections is the budget's number, applied at the next reboot",
     get(parameter('max_connections'), 'value') === String(maxConnections) &&

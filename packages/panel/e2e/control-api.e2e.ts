@@ -20,6 +20,16 @@ import {
 } from './fixtures';
 import { clickNavLink } from './navigation';
 
+/** Add job, Bulk add and the job inspector are reached from the Jobs page, not the sidebar. */
+async function openFromJobs(page: Page, link: string, route: string, heading: string) {
+  await visit(page, '/jobs', OPERATOR, 'Jobs');
+  await page.locator('#main').getByRole('link', { name: link, exact: true }).click();
+  await expect(page).toHaveURL(`${OPERATOR.appUrl}${route}`);
+  await expect(
+    page.locator('#main').getByRole('heading', { name: heading, level: 1 })
+  ).toBeVisible();
+}
+
 /**
  * Follows a nav link. The address changes before the lazy page has rendered, so a caller that goes
  * on to use the page names its heading and waits for that, or it would act on the previous page.
@@ -46,7 +56,7 @@ test('an operator adds a job, sees it listed, and pauses and resumes its queue',
   const queue = `flow-${testInfo.project.name}-${testInfo.retry}`;
   await unlockDashboard(page);
 
-  await visit(page, '/add-job', OPERATOR, 'Add Job');
+  await openFromJobs(page, 'Add job', '/add-job', 'Add job');
   await page.getByLabel('Queue', { exact: true }).fill(queue);
   await page.getByLabel('Job name', { exact: true }).fill('main-flow');
   await page.getByLabel('Data (JSON)').fill('{"step":"add"}');
@@ -62,10 +72,11 @@ test('an operator adds a job, sees it listed, and pauses and resumes its queue',
   await page.getByLabel('Queue', { exact: true }).selectOption(queue);
   await expect(page.getByRole('row').filter({ hasText: 'main-flow' })).toBeVisible();
 
-  await visit(page, '/queue-control', OPERATOR, 'Queue Control');
-  await page.getByRole('combobox', { name: 'Queue', exact: true }).selectOption(queue);
-  await page.getByRole('button', { name: 'Pause', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
+  // Queue control is the Settings tab of the queue's own page.
+  await goInApp(page, `/queues/${queue}?tab=settings`);
+  await expect(page.getByRole('heading', { name: queue, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Pause queue', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Resume queue', exact: true })).toBeVisible();
   const isPaused = async () => {
     const response = await page.request.get(`${E2E_APP_URL}/api/queues/${queue}/paused`, {
       headers: { Authorization: `Bearer ${E2E_SERVER_TOKEN}` },
@@ -74,8 +85,8 @@ test('an operator adds a job, sees it listed, and pauses and resumes its queue',
     return (await response.json()).paused;
   };
   expect(await isPaused()).toBe(true);
-  await page.getByRole('button', { name: 'Resume', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume queue', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pause queue', exact: true })).toBeVisible();
   expect(await isPaused()).toBe(false);
   expectNoBrowserErrors(browserErrors);
 });
@@ -94,7 +105,7 @@ test('a failed job is not offered a retry, and the server refuses one that is fo
   const { id } = await seeded.json();
 
   await unlockDashboard(page);
-  await visit(page, '/job');
+  await openFromJobs(page, 'Find by ID', '/job', 'Job inspector');
   await page.getByLabel('Job ID', { exact: true }).fill(id);
   await page.getByRole('button', { name: 'Look up', exact: true }).click();
   await expect(page.locator('#main').getByText('seeded failure').first()).toBeVisible();

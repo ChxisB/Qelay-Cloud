@@ -9,10 +9,14 @@ import { ApiError } from '../errors';
 import type { Route } from '../http/router';
 import type { JobsContext } from '../jobs/context';
 import {
+  allDeliveriesQuery,
   deliveriesQuery,
   enabledBody,
+  patchBody,
   previewBody,
+  retryFailedBody,
   rotateBody,
+  statsQuery,
   toDeliveryWire,
   toIssuedWire,
   toWebhookWire,
@@ -39,6 +43,12 @@ const webhookNotFound = (id: string): ApiError =>
  * is the create or rotate of a webhook given none: the store made one, and this is the only time it
  * is shown. The URL can carry a token in its path, so a
  * read-only caller sees only its origin; the audit trail records a webhook's id, never its URL.
+ *
+ * A webhook is a route (D11): its destination is `http` (the URL) or `queue` (a job added to `target`,
+ * which has no address to judge). The store refuses a route that would loop and the error map answers
+ * 409. `GET /webhooks/deliveries` and `GET /webhooks/stats` read across routes, for the console's Events
+ * and Metrics screens (`GET /webhooks/stats?groupBy=webhook` is the connections list's, one entry per route);
+ * the router prefers their literal paths to `/webhooks/:id`.
  */
 export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route[] {
   const { store } = ctx;
@@ -63,6 +73,45 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
     },
     {
       method: 'GET',
+      path: '/webhooks/deliveries',
+      access: 'read',
+      async handle(context) {
+        const page = await store.webhooks.deliveriesAll(
+          withoutUndefined(context.query(allDeliveriesQuery))
+        );
+        const via = new Map(
+          (await store.webhooks.list()).map((hook) => [hook.id, hook.destination])
+        );
+        return {
+          ok: true,
+          data: {
+            deliveries: page.items.map((d) => toDeliveryWire(d, via.get(d.webhookId))),
+            next: page.next,
+          },
+        };
+      },
+    },
+    {
+      method: 'GET',
+      path: '/webhooks/stats',
+      access: 'read',
+      async handle(context) {
+        const { groupBy, ...query } = context.query(statsQuery);
+        if (groupBy === undefined) {
+          return { ok: true, data: { stats: await store.webhooks.stats(withoutUndefined(query)) } };
+        }
+        if (query.webhook !== undefined) {
+          throw new ApiError(400, 'invalid_request', 'webhook cannot be combined with groupBy');
+        }
+        const { since, until, buckets } = query;
+        const grouped = await store.webhooks.statsByWebhook(
+          withoutUndefined({ since, until, buckets })
+        );
+        return { ok: true, data: grouped };
+      },
+    },
+    {
+      method: 'GET',
       path: '/webhooks/:id',
       access: 'read',
       async handle({ params, principal }) {
@@ -77,19 +126,29 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
       access: 'write',
       async handle(context) {
         const body = await context.json(webhookBody);
-        const verdict = validateWebhookUrl(body.url, policy);
-        if (!verdict.ok) {
-          throw new ApiError(400, verdict.code, verdict.message, { option: 'url' });
+        // A `queue` route has no address; one given to it, or missing from an `http` route, is the store's 400.
+        if (body.url !== undefined && body.destination !== 'queue') {
+          const verdict = validateWebhookUrl(body.url, policy);
+          if (!verdict.ok) {
+            throw new ApiError(400, verdict.code, verdict.message, { option: 'url' });
+          }
         }
         const webhook = await store.webhooks.create(
           {
-            url: body.url,
+            ...(body.destination === undefined ? {} : { destination: body.destination }),
+            ...(body.url === undefined ? {} : { url: body.url }),
+            ...(body.target == null ? {} : { target: body.target }),
+            ...(body.destinationId == null ? {} : { destinationId: body.destinationId }),
             events: body.events,
             ...(body.queue == null ? {} : { queue: body.queue }),
             ...(body.secret == null ? {} : { secret: body.secret }),
             ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
             ...(body.filter == null ? {} : { filter: body.filter }),
             ...(body.shape == null ? {} : { shape: body.shape }),
+            ...(body.name == null ? {} : { name: body.name }),
+            ...(body.description == null ? {} : { description: body.description }),
+            ...(body.delayMs == null ? {} : { delayMs: body.delayMs }),
+            ...(body.dedupe == null ? {} : { dedupe: body.dedupe }),
           },
           context.principal!.subject
         );
@@ -116,12 +175,24 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
       },
     },
     {
+      method: 'PATCH',
+      path: '/webhooks/:id',
+      access: 'write',
+      async handle(context) {
+        const body = await context.json(patchBody);
+        // Only the named fields change. The audit entry has the webhook's id from the path, never what it was changed to.
+        const webhook = await store.webhooks.update(context.params.id!, withoutUndefined(body));
+        if (webhook === null) throw webhookNotFound(context.params.id!);
+        return { ok: true, data: { webhook: toWebhookWire(webhook, 'operator') } };
+      },
+    },
+    {
       method: 'PUT',
       path: '/webhooks/:id/enabled',
       access: 'write',
       async handle(context) {
-        const { enabled } = await context.json(enabledBody);
-        const webhook = await store.webhooks.setEnabled(context.params.id!, enabled);
+        const { enabled, mode } = await context.json(enabledBody);
+        const webhook = await store.webhooks.setEnabled(context.params.id!, enabled, mode);
         if (webhook === null) throw webhookNotFound(context.params.id!);
         return { ok: true, data: { webhook: toWebhookWire(webhook, 'operator') } };
       },
@@ -172,10 +243,26 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
           withoutUndefined(context.query(deliveriesQuery))
         );
         if (page === null) throw webhookNotFound(context.params.id!);
+        const via = (await store.webhooks.get(context.params.id!))?.destination;
         return {
           ok: true,
-          data: { deliveries: page.items.map(toDeliveryWire), next: page.next },
+          data: { deliveries: page.items.map((d) => toDeliveryWire(d, via)), next: page.next },
         };
+      },
+    },
+    {
+      method: 'POST',
+      path: '/webhooks/:id/deliveries/retry',
+      access: 'write',
+      async handle(context) {
+        const body = await context.json(retryFailedBody);
+        const result = await store.webhooks.retryFailed(
+          context.params.id!,
+          withoutUndefined({ before: body.before, limit: body.limit })
+        );
+        if (result === null) throw webhookNotFound(context.params.id!);
+        context.audit(`webhook=${context.params.id}`);
+        return { ok: true, data: { retried: result.retried } };
       },
     },
     {

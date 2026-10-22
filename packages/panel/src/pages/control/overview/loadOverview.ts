@@ -52,6 +52,7 @@ export async function loadOverview(): Promise<OverviewSnapshot> {
     dlqQueues: queuePages
       ? queuePages.queues.filter((q) => q.dlq > 0).map((q) => ({ name: q.name, dlq: q.dlq }))
       : null,
+    pausedQueues: summary.filter((q) => q.paused).map((q) => q.name),
     // Recorded jobs, unlike stats.totalFailed (a session counter that resets on restart).
     failedTotal: sum(counts, (c) => c.failed),
     readyTotal: waitingTotal + prioritizedTotal,

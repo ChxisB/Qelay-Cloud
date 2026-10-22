@@ -32,25 +32,25 @@ export function deploymentWarnings(parts: Parts): DeploymentWarning[] {
     add(
       'transport_unreachable',
       'critical',
-      `The ${parts.transport.name} broker was unreachable the last time it was used. Jobs still run from the database; the tick rings them when the broker is back.`
+      `The ${parts.transport.name} queue service was unreachable the last time it was used. Jobs still run from the database; maintenance tells workers about them when it is back.`
     );
   }
   if (tick.state === 'never') {
-    add('tick_never_ran', 'critical', 'No maintenance tick has completed yet.');
+    add('tick_never_ran', 'critical', 'No maintenance run has completed yet.');
   } else if (tick.state === 'stale') {
     add(
       'tick_stale',
       'critical',
-      `No tick has completed in the last ${spoken(tick.staleAfterMs)}. Delayed jobs, retries and lost doorbells are not being handled.`
+      `No maintenance run has completed in the last ${spoken(tick.staleAfterMs)}. Delayed jobs, retries and missed worker notifications are not being handled.`
     );
   } else if (tick.state === 'late') {
     add(
       'tick_late',
       'warning',
-      `The last tick completed more than ${spoken(tick.lateAfterMs)} ago.`
+      `The last maintenance run completed more than ${spoken(tick.lateAfterMs)} ago.`
     );
   } else if (tick.state === 'unknown') {
-    add('tick_unknown', 'warning', "The tick's state could not be read.");
+    add('tick_unknown', 'warning', "Maintenance's state could not be read.");
   }
   if (schema.state === 'ahead') {
     add(
@@ -96,7 +96,7 @@ export function deploymentWarnings(parts: Parts): DeploymentWarning[] {
     add(
       'doorbells_overdue',
       doorbells.oldestNotRungAgeMs >= tick.staleAfterMs ? 'critical' : 'warning',
-      `Claimable jobs have waited ${spoken(doorbells.oldestNotRungAgeMs)} for a doorbell: the tick is behind.`
+      `Jobs ready to run have waited ${spoken(doorbells.oldestNotRungAgeMs)} for workers to be told: maintenance is behind.`
     );
   }
   if (parts.webhooks !== null && parts.webhooks.paused > 0) {

@@ -4,15 +4,17 @@ import { ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedbac
 import { PageHeader } from '@/components/ui/PageHeader';
 import { formatBytes, formatUptime } from '@/lib/format';
 import { usePolledData } from '@/lib/usePolledData';
-import { attentionFor } from './overview/attention';
+import { AttentionList } from './home/AttentionList';
+import { buildCards, HomeCards } from './home/HomeCards';
+import { homeIssues } from './home/model';
+import { useHomeFeeds } from './home/useHomeFeeds';
+import { JobFlow } from './overview/JobFlow';
 import { loadOverview } from './overview/loadOverview';
 import { EMPTY_OVERVIEW } from './overview/model';
-import { NeedsAttention } from './overview/NeedsAttention';
 import { OverviewHeader } from './overview/OverviewHeader';
-import { OverviewTiles } from './overview/OverviewTiles';
 import { QueueHealthTable } from './overview/QueueHealthTable';
 import { RecentActivity } from './overview/RecentActivity';
-import { StatusStrip } from './overview/StatusStrip';
+import { StatusStripView } from './overview/StatusStrip';
 import { ThroughputCard } from './overview/ThroughputCard';
 import { appendSample, gapLimitMs, type ThroughputPoint } from './overview/throughputHistory';
 
@@ -45,11 +47,13 @@ export function OverviewPro() {
     { paused }
   );
 
-  if (loading && !data && !error) return <LoadingState label="Loading overview…" />;
+  const feeds = useHomeFeeds(paused);
+
+  if (loading && !data && !error) return <LoadingState label="Loading home…" />;
   if (error && !data) {
     return (
       <div>
-        <PageHeader title="Overview" description="Real-time system health is unavailable." />
+        <PageHeader title="Home" description="Real-time system health is unavailable." />
         <ErrorState error={error} onRetry={refetch} />
       </div>
     );
@@ -57,7 +61,21 @@ export function OverviewPro() {
 
   const snapshot = data ?? EMPTY_OVERVIEW;
   const { stats, memory } = snapshot.overview;
-  const attention = attentionFor(snapshot);
+  const { deployment, transport, gateway, gatewayOpen, breaches } = feeds;
+  const issues = homeIssues({
+    snapshot,
+    deployment: deployment.data,
+    transport: transport.data,
+    routes: gateway.data?.routes ?? [],
+    breaches,
+  });
+  const pending = (feed: { data: unknown; error: unknown; loading: boolean }) =>
+    feed.loading && !feed.data && !feed.error;
+  const unavailable = [
+    ...(!deployment.data && deployment.error ? ['Health', 'Workers'] : []),
+    ...(!transport.data && transport.error ? ['Job delivery'] : []),
+    ...(gatewayOpen && !gateway.data && gateway.error ? ['Event gateway'] : []),
+  ];
   // A truthy `error` means the latest poll failed; keep rendering the last known data.
   const degraded = !!error;
 
@@ -89,9 +107,14 @@ export function OverviewPro() {
           onRetry={refetch}
         />
       )}
-      <StatusStrip />
-      {attention && <NeedsAttention attention={attention} />}
-      <OverviewTiles snapshot={snapshot} />
+      <StatusStripView data={deployment.data} error={deployment.error} />
+      <AttentionList
+        issues={issues}
+        settled={![deployment, transport, ...(gatewayOpen ? [gateway] : [])].some(pending)}
+        unavailable={unavailable}
+      />
+      <HomeCards cards={buildCards(snapshot, feeds)} />
+      <JobFlow snapshot={snapshot} />
       <div className="flex flex-wrap items-stretch gap-6">
         <ThroughputCard points={history.current.points} />
         <RecentActivity />

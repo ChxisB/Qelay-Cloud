@@ -9,11 +9,11 @@ export function ThroughputCard({ points }: { points: ThroughputPoint[] }) {
   return (
     <section
       aria-label="Throughput"
-      className="flex min-w-0 flex-[2_1_420px] flex-col gap-4 rounded-card border border-line bg-surface p-5"
+      className="flex min-w-0 flex-[2_1_420px] flex-col gap-4 rounded-card border border-line bg-surface p-4"
     >
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2.5">
         <div className="flex flex-col gap-[3px]">
-          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Throughput</h2>
+          <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Throughput</h2>
           <p className="text-xs text-muted">Jobs per second, {windowTitle(span)}</p>
         </div>
         <div className="flex items-center gap-4 text-xs text-muted">

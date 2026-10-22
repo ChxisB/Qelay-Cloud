@@ -4,8 +4,8 @@ import { containsTruncation, hasValue, printValue } from '../domain/workflowDisp
 export function Fact({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
-      <dt className="text-faint">{label}</dt>
-      <dd className="mt-0.5 break-words text-muted">{value}</dd>
+      <dt className="text-xs font-bold text-faint">{label}</dt>
+      <dd className="mt-0.5 break-words text-fg">{value}</dd>
     </div>
   );
 }
@@ -25,18 +25,18 @@ export function PayloadView({
   empty?: string;
   label?: string;
 }) {
-  if (!hasValue(value)) return <p className="text-xs text-faint">{empty}</p>;
+  if (!hasValue(value)) return <p className="text-xs text-muted">{empty}</p>;
   const cut = truncated === true || containsTruncation(value);
   return (
     <div className="space-y-1">
       {cut && (
-        <p role="note" className="text-xs text-warning">
+        <p role="note" className="text-xs font-semibold text-warning">
           Part of this value is cut at the server's size limit.
         </p>
       )}
       <pre
         aria-label={label}
-        className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-surface-2 p-3 font-mono text-xs leading-5 text-muted"
+        className="max-h-80 overflow-auto rounded-control border border-line bg-slate-tint p-4 font-mono text-xs leading-5 break-words whitespace-pre-wrap text-fg"
       >
         {printValue(value)}
       </pre>

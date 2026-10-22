@@ -22,7 +22,6 @@ import {
   rateLimitArgs,
 } from '../src/pages/control/queue/QueueActions';
 import { duplicateKeys } from '../src/pages/control/server/EnvVarsEditor';
-import { discoverAllQueues, Jobs, jobDataName, MAX_ALL_QUEUE_JOB_FANOUT } from '../src/pages/Jobs';
 import { ensureDom, renderHook, settle } from './domSetup';
 
 // Regression tests for the "job-queue-pages" audit package: honest reporting of
@@ -31,8 +30,6 @@ import { ensureDom, renderHook, settle } from './domSetup';
 // (ConfigForms) and two off-by-one/pluralization readouts.
 
 const realFetch = globalThis.fetch;
-
-const realConfirm = window.confirm;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -90,17 +87,13 @@ export {
   Diagnostics,
   deferred,
   describe,
-  discoverAllQueues,
   duplicateKeys,
   ensureDom,
   expect,
   JobActionsPanel,
   JobInspector,
   JobLogs,
-  Jobs,
-  jobDataName,
   json,
-  MAX_ALL_QUEUE_JOB_FANOUT,
   MemoryRouter,
   MetricsPro,
   parseFailureStack,
@@ -108,7 +101,6 @@ export {
   previewDelays,
   promoteCountArgs,
   rateLimitArgs,
-  realConfirm,
   realFetch,
   remainingRetries,
   render,
@@ -126,12 +118,10 @@ export function installTestHooks() {
   beforeEach(() => {
     ensureDom();
     useConnectionStore.setState({ baseUrl: 'http://srv', token: '', agentToken: '' });
-    window.confirm = () => true;
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    window.confirm = realConfirm;
     useConnectionStore.setState({ baseUrl: '/api', token: '', agentToken: '' });
   });
 }

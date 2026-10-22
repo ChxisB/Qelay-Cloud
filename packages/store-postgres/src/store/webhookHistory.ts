@@ -43,7 +43,7 @@ export async function listDeliveries(
   });
 }
 
-const STATUSES: readonly string[] = ['pending', 'sending', 'delivered', 'failed'];
+export const STATUSES: readonly string[] = ['pending', 'sending', 'delivered', 'failed'];
 
 /** A delivery id from a caller, as the number it stands for; anything else is refused by name. */
 function cursor(value: string | undefined): number | null {

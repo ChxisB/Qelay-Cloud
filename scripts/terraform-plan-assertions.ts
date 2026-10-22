@@ -46,7 +46,7 @@ export function checkDatabase(plan: Plan, checks: Checks, maxConnections: number
   if (instance === undefined) return;
   const db = after(instance);
   const settings = (...path: Array<string | number>) => get(db, 'settings', 0, ...path);
-  checks.ok('PostgreSQL 16', get(db, 'database_version') === 'POSTGRES_16');
+  checks.ok('PostgreSQL 18', get(db, 'database_version') === 'POSTGRES_18');
   checks.ok('deletion protection (API)', get(db, 'deletion_protection') === true);
   checks.ok(
     'deletion protection (instance setting)',

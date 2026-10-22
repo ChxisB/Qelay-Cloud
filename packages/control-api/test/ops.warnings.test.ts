@@ -151,10 +151,10 @@ describe('deploymentWarnings', () => {
     test('a short wait is the tick being on time', () => {
       expect(warn(waited(59_999))).toEqual([]);
     });
-    test('a wait as long as the late threshold says the tick is behind', () => {
+    test('a wait as long as the late threshold says maintenance is behind', () => {
       const [warning] = warn(waited(60_000));
       expect(warning).toMatchObject({ code: 'doorbells_overdue', severity: 'warning' });
-      expect(warning!.message).toContain('the tick is behind');
+      expect(warning!.message).toContain('maintenance is behind');
     });
     test('a wait as long as the stale threshold is critical', () => {
       expect(warn(waited(300_000))[0]).toMatchObject({

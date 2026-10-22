@@ -3,12 +3,16 @@
 An operator registers a URL and the job events it wants. Qelay-Cloud POSTs each matching event to it, **at least once**.
 Written for two readers: the operator who sets webhooks up, and the engineer who writes the receiver.
 
+A webhook is the `http` destination of an [event gateway](event-gateway.md) route. This page is the reference for that
+destination: the request, the signature, retries and where a URL may point. A route can instead add a job to another
+queue (`destination: "queue"`), which has no URL, no secret and none of the checks below.
+
 What a webhook is not: a way to move job data (the body has none), an ordered stream (see
 [What is not promised](#what-is-not-promised)) or a fan-out service (see [Volume](#volume)).
 
 ## Registering one
 
-Panel: **Webhooks** (operators only). Control API: `POST /webhooks`, with the `operator` role; every call that changes a
+Panel: **Event gateway**, Connections (operators only). Control API: `POST /webhooks`, with the `operator` role; every call that changes a
 webhook leaves one audit row naming `webhook=<id>` and nothing else (no URL, no secret).
 
 | Field | Meaning |
@@ -19,6 +23,10 @@ webhook leaves one audit row naming `webhook=<id>` and nothing else (no URL, no 
 | `secret` | Optional, 16 to 256 characters. **Every delivery is signed** when the deployment has `QCLOUD_WEBHOOK_KEY`: with no `secret`, the service generates one (see [Rotating the secret](#rotating-the-secret)). Without the key a webhook has no secret and is sent unsigned (`signed: false`) |
 | `filter` | Optional. Only events it lets through are sent. Needs the delivery writer on (see [Filters and shapes](#filters-and-shapes)) |
 | `shape` | Optional. A template for the body. Needs the delivery writer on, as above |
+| `delayMs` | Optional, 1,000 to 3,600,000 (1 second to 1 hour). Each delivery is due this long after its event. Needs the delivery writer on (see [Delay and de-duplication](#delay-and-de-duplication)) |
+| `dedupe` | Optional. `{ windowMs, fields }`: drop repeats of an event inside a window. Needs the delivery writer on, as above |
+| `name`, `description` | Optional, at most 80 and 500 characters. What the operator calls the webhook; they change nothing about delivery |
+| `destinationId` | Optional. Takes the address from a [saved destination](event-gateway.md#saved-destinations) instead of `url`; it cannot be combined with `url` |
 
 At most **100** webhooks per namespace. The Control API never returns a secret you gave, and no read returns any secret:
 the one exception is a secret the service generated, which comes back **once**, as `data.secret` of the create or
@@ -77,14 +85,14 @@ either. Switch the namespace to the writer, which makes them from the event jour
 ```bash
 qcloud-tick webhook-writer on      # from the journal's end now; events before it are not delivered
 qcloud-tick webhook-writer status  # {"mode":"writer"|"trigger"|"stopping","commitSeq":...,"eventId":...}
-qcloud-tick webhook-writer off     # back to the trigger; refused while a webhook has a filter or shape
+qcloud-tick webhook-writer off     # back to the trigger; refused while a webhook has a filter, shape, delay or dedupe
 ```
 
 All three are safe to repeat and **lose no event in either direction**: on, the trigger stops for that namespace and the
 writer starts at the journal's end (an overlap is deduplicated by the delivery's unique key); off, the trigger resumes
 first, the writer catches up, and the last step waits for every job transaction that skipped its deliveries to commit
 before it removes the writer's cursor. The tick's sender step and `qcloud-tick send` both do the writing (one pass per beat; a second writer finds
-the cursor taken and does nothing), so with `QCLOUD_WEBHOOK_BATCH=0` and no `send` process nothing is written. Creating a webhook with a filter or shape while the writer is off is refused: `400 unsupported_option` for
+the cursor taken and does nothing), so with `QCLOUD_WEBHOOK_BATCH=0` and no `send` process nothing is written. Creating or changing a webhook to have a filter, shape, delay or de-duplication while the writer is off is refused: `400 unsupported_option` for
 `writer`.
 
 What the writer changes for a receiver: deliveries are made **a few seconds after** the job's commit, not in it; a job
@@ -128,6 +136,31 @@ when it has none (without one the key is dropped, and an array entry becomes `nu
   shows in the history, and a retry of it is refused again.
 - The delivery's id is not a field (the row does not exist yet): it is in the `X-Webhook-Id` header, as always.
 
+### Delay and de-duplication
+
+Two more rules of the writer, with the same needs and the same limits as a filter and a shape. An event meets a webhook's
+rules in this order: **filter, de-duplication, shape, delay**, then the sender's rate limit and retries.
+
+- **`delayMs`** makes each delivery as usual, but not due until `delayMs` after the event (1 second to 1 hour). A delayed
+  delivery is waiting like any other: it expires after 24 hours of being due and is not sent while the webhook is off.
+- **`dedupe`** is `{ windowMs, fields }`. `windowMs` is 1 second to 24 hours; `fields` is at least one of `event`, `queue`,
+  `jobId`, `state` and `error`. Of the events the webhook accepts, the **first** with a given value of those fields is
+  sent, and later ones with the same values inside the window are **dropped, not recorded** (there is no delivery row to
+  retry). The window starts at the first event and a repeat does not extend it. The writer keeps a hash of the values
+  (never the values) in `qcloud_webhook_dedupe`, in its own transaction, and the tick prunes it once a window has ended.
+  This does not make a receiver idempotent: a retry of one delivery is still the same delivery, and a receiver dedupes on
+  `X-Webhook-Id` as before.
+
+### Changing one
+
+`PATCH /webhooks/{id}` (operator) changes the `name`, `description`, `events`, `filter`, `shape`, `delayMs` and `dedupe`.
+A key that is absent is left alone and `null` clears a name, description, filter, shape, delay or de-duplication; `events`
+cannot be empty, and an empty body is `400`. The same checks as at creation apply (a rule needs the writer on:
+`400 unsupported_option`). A change applies to events **from then on**: deliveries already made keep the body they were made
+with. The source queue, the address and the secret are not editable here: add a new webhook and delete the old one, edit
+the saved destination it came from, or [rotate the secret](#rotating-the-secret). The audit row holds the webhook's id and
+no value. The panel's Settings tab is this call.
+
 ### Trying one before saving it
 
 `POST /webhooks/preview` (operator) takes `{ filter?, shape?, event: { event, queue, jobId, occurredAt?, state?, error?,
@@ -140,7 +173,8 @@ which, and the first fault.
 - **A gap loses events.** If the journal's retention (see [limits.md](limits.md)) removes events before the writer reads
   them, those events make no deliveries; the writer reports it as the gauge `webhooks.writer_gaps` (1). Run a sender
   process so the writer is never hours behind.
-- **A webhook sees only events after it was enabled.** Re-enabling does not replay what happened while it was off.
+- **A webhook sees only events after it was enabled.** Enabling a webhook that was disabled does not replay what happened
+  while it was off; a webhook that was **paused** (held) does send what it collected ([below](#pausing-a-webhook-hold-or-ignore)).
 - **Job data is not available** to a filter or shape, today.
 
 ## Verifying a signature
@@ -227,8 +261,25 @@ off, and with it the levels). At level 4 the webhook is **paused**: `enabled` be
 - **Enabling it again** (`PUT /webhooks/{id}/enabled`, or the panel) clears the pause and the count, and sends what was
   held. Fix the receiver first: nothing is replayed beyond those 24 hours, and a failed delivery that exhausted before the
   pause stays `failed` until you retry it.
-- Disabling a webhook by hand sets no reason and is never a pause; late results from deliveries already out do not pause it.
+- Disabling a webhook by hand (mode `ignore`) sets no reason and is never a pause; late results from deliveries already out
+  do not pause it.
 - Pausing is decided where results are recorded, so a webhook with several deliveries in flight can pass the threshold by a few.
+
+## Pausing a webhook: hold or ignore
+
+`PUT /webhooks/{id}/enabled` takes `{ "enabled": false, "mode": "hold" | "ignore" }`; `mode` defaults to `ignore`, which is
+what the call did before it existed, and is moot when turning a webhook on. Turning one off stops the sender at once, retries
+included. There are **three** off states, and `pausedBy` on a read says which:
+
+| State | How it happens | New events | `pausedBy` | Enabling |
+| --- | --- | --- | --- | --- |
+| Disabled (**ignore**) | `mode: ignore`, the panel's **Disable** | Not collected | `null` | Sends nothing from the time it was off |
+| Paused by an operator (**hold**) | `mode: hold`, the panel's **Pause**; `disabledReason` is `paused by an operator` | Collected, and wait | `operator` | Sends what was held |
+| Paused for failing | [Auto-pause](#when-a-receiver-keeps-failing); `disabledReason` is `20 failed deliveries in a row` | Collected, and wait | `failures` | Clears the count and sends what was held |
+
+What waits expires after 24 hours like any unsent delivery, in both held states. Deliveries already waiting when a webhook is
+disabled stay and go out when it is enabled, unless they have expired. Turning a held or failing webhook off with `ignore`
+ends the hold. `hold` on a webhook paused for failing keeps its reason and its failure streak.
 
 ## Rotating the secret
 

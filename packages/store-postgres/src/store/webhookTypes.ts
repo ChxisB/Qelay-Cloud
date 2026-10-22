@@ -2,6 +2,8 @@ import type {
   AttemptRecord,
   DeliveredEvent,
   DeliveryStatus,
+  WebhookDedupe,
+  WebhookDestination,
   WebhookEvent,
   WebhookFilter,
   WebhookShape,
@@ -9,8 +11,17 @@ import type {
 
 /** What an operator registers. */
 export interface WebhookSpec {
-  /** Where deliveries are POSTed. The store checks only the length: the address rules are `core`'s `validateWebhookUrl`. */
-  readonly url: string;
+  /** `http` (the default) POSTs to `url`; `queue` adds a job to `target` (D11). */
+  readonly destination?: WebhookDestination;
+  /** Where deliveries are POSTed; `http` only. The store checks only the length: the address rules are `core`'s `validateWebhookUrl`. */
+  readonly url?: string;
+  /** The queue a `queue` route adds jobs to, in this namespace; needs a source `queue`, and is refused when it would make a loop. */
+  readonly target?: string | null;
+  /**
+   * Makes the webhook from a saved destination: its kind and address are copied, so the spec gives this or `destination`,
+   * `url` and `target`, not both. A change to the destination reaches the webhook; removing it is refused while it is used.
+   */
+  readonly destinationId?: string | null;
   /** At least one. Duplicates are merged. */
   readonly events: readonly WebhookEvent[];
   /** Only this queue's events. Null or omitted: every queue's. */
@@ -30,18 +41,50 @@ export interface WebhookSpec {
   readonly filter?: WebhookFilter | null;
   /** The body template (`validateShape`); same condition. Null or omitted: the default body. */
   readonly shape?: WebhookShape | null;
+  /** What the operator calls it (at most 80 characters) and a note (at most 500). Blank or null: none. */
+  readonly name?: string | null;
+  readonly description?: string | null;
+  /** A delivery is made when the event is, and is due this many milliseconds later (1 s to 1 h). Writer only. */
+  readonly delayMs?: number | null;
+  /** Drops an event whose chosen fields repeat inside the window (`validateDedupe`). Writer only. */
+  readonly dedupe?: WebhookDedupe | null;
+}
+
+/**
+ * What `update` may change. A key that is present is set (null clears it, except `events`, which cannot be empty);
+ * an absent one is left alone. The source queue, the destination and the secret are not editable: remove and add, or rotate.
+ * A `filter`, `shape`, `delayMs` or `dedupe` needs the delivery writer, as at creation.
+ */
+export interface WebhookPatch {
+  readonly name?: string | null;
+  readonly description?: string | null;
+  readonly events?: readonly WebhookEvent[];
+  readonly filter?: WebhookFilter | null;
+  readonly shape?: WebhookShape | null;
+  readonly delayMs?: number | null;
+  readonly dedupe?: WebhookDedupe | null;
 }
 
 /** A webhook as listings show it. The secret is never part of it, sealed or not: `signed` says there is one. */
 export interface WebhookRecord {
   readonly id: string;
+  readonly destination: WebhookDestination;
+  /** The empty string for a `queue` route. */
   readonly url: string;
+  /** The queue of a `queue` route, else null. */
+  readonly target: string | null;
+  /** The saved destination the address was copied from, else null. */
+  readonly destinationId: string | null;
   readonly events: readonly WebhookEvent[];
   readonly queue: string | null;
   readonly signed: boolean;
   readonly enabled: boolean;
   readonly filter: WebhookFilter | null;
   readonly shape: WebhookShape | null;
+  readonly name: string | null;
+  readonly description: string | null;
+  readonly delayMs: number | null;
+  readonly dedupe: WebhookDedupe | null;
   readonly createdBy: string;
   readonly createdAt: number;
   /** When the last attempt to deliver to it started. */
@@ -103,6 +146,33 @@ export interface DeliveryQuery {
   readonly status?: DeliveryStatus;
 }
 
+/** Deliveries of every webhook of the namespace (the console's Events screen). */
+export interface AllDeliveriesQuery extends DeliveryQuery {
+  /** Only this webhook's. */
+  readonly webhook?: string;
+  /** Epoch milliseconds: only deliveries whose event happened at or after / before these. */
+  readonly since?: number;
+  readonly until?: number;
+}
+
+/** `retryFailed`: which of a webhook's failed deliveries to put back. */
+export interface RetryFailedOptions {
+  /** A delivery id: only older ones. */
+  readonly before?: string;
+  /** At most this many, newest first. Default and maximum `MAX_BULK_RETRY`. */
+  readonly limit?: number;
+}
+
+export type {
+  GroupBucket,
+  GroupStatsQuery,
+  StatsBucket,
+  StatsQuery,
+  WebhookGroupStat,
+  WebhookGroupStats,
+  WebhookStats,
+} from './webhookStatsTypes';
+
 export type RetryResult =
   | { readonly outcome: 'retried'; readonly delivery: DeliveryRecord }
   | { readonly outcome: 'not_found' }
@@ -121,7 +191,12 @@ export interface ClaimOptions {
 export interface ClaimedDelivery {
   readonly deliveryId: string;
   readonly webhookId: string;
+  /** Where an `http` route POSTs; the empty string for a `queue` route. */
   readonly url: string;
+  /** What the route delivers to (D11). A sender that predates it reads only `url`. */
+  readonly destination: WebhookDestination;
+  /** The queue a `queue` route adds a job to; null for `http`. */
+  readonly target: string | null;
   /** The attempt's number, from 1; it is what `record` is fenced by. */
   readonly attempt: number;
   readonly event: DeliveredEvent;

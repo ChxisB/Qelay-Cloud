@@ -8,14 +8,13 @@ import { ConnectionBadge } from '../src/components/layout/ConnectionBadge';
 import { useActivityStream } from '../src/lib/useActivityStream';
 import { alertConnectionIdentity, useAlertRuntimeStore } from '../src/lib/useAlertEngine';
 import { Alerts } from '../src/pages/Alerts';
-import { DlqControl } from '../src/pages/control/DlqControl';
+import { CronManager } from '../src/pages/control/CronManager';
+import { DlqPro } from '../src/pages/control/DlqPro';
 import { JobsPro } from '../src/pages/control/JobsPro';
+import { OverviewPro } from '../src/pages/control/OverviewPro';
+import { S3BackupPro } from '../src/pages/control/S3BackupPro';
 import { ProcessLogs } from '../src/pages/control/server/ProcessLogs';
 import { UsagePro } from '../src/pages/control/UsagePro';
-import { Cron } from '../src/pages/Cron';
-import { Dlq } from '../src/pages/Dlq';
-import { Overview } from '../src/pages/Overview';
-import { S3Backup } from '../src/pages/S3Backup';
 import { ensureDom, renderHook, settle } from './domSetup';
 
 const realFetch = globalThis.fetch;
@@ -42,22 +41,21 @@ export {
   alertConnectionIdentity,
   beforeEach,
   ConnectionBadge,
-  Cron,
+  CronManager,
   createElement,
   createRoot,
-  Dlq,
-  DlqControl,
+  DlqPro,
   describe,
   ensureDom,
   expect,
   JobsPro,
   MemoryRouter,
-  Overview,
+  OverviewPro,
   ProcessLogs,
   realFetch,
   render,
   renderHook,
-  S3Backup,
+  S3BackupPro,
   settle,
   test,
   UsagePro,

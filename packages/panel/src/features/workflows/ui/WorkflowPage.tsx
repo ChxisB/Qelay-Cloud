@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { FlowKindTabs } from '@/components/FlowKindTabs';
 import { Button } from '@/components/ui/Button';
 import { ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -49,14 +50,15 @@ export function WorkflowPage({
   return (
     <div>
       <PageHeader
-        title="Workflows"
-        description="Durable runs of multi-step workflows: find one that is waiting or stuck, and act on it."
+        title="Flows"
+        description="Work that runs in order. A workflow run is a multi-step workflow that survives restarts: find one that is waiting or stuck, and act on it."
         actions={
           <Button size="sm" disabled={loading} onClick={() => void refetch()}>
             Refresh
           </Button>
         }
       />
+      <FlowKindTabs current="workflows" />
       <div aria-live="polite">
         {error &&
           (list || isConnectionFailure(error) ? (

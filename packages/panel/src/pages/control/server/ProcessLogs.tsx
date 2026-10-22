@@ -3,12 +3,14 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
-import { SegmentedControl } from '@/components/ui/form';
-import { IconSearch } from '@/components/ui/icons';
+import { Input, SegmentedControl } from '@/components/ui/form';
+import { LogLine, LogScroll } from '@/components/ui/LogViewer';
 import { bq } from '@/lib/bq';
 import type { ServerLogLine } from '@/lib/bqTypes';
 import { cn } from '@/lib/cn';
 import { stripAnsi } from '@/lib/format';
+import { stagger } from '@/lib/stagger';
+import { useFreshAfter } from '@/lib/useFreshAfter';
 import { usePolledData } from '@/lib/usePolledData';
 
 const STREAMS = ['all', 'stdout', 'stderr', 'sys'] as const;
@@ -17,8 +19,35 @@ type StreamFilter = (typeof STREAMS)[number];
 const clock = (ts: number): string =>
   `${new Date(ts).toLocaleTimeString([], { hour12: false })}.${String(ts % 1000).padStart(3, '0')}`;
 
-const toneFor = (stream: ServerLogLine['stream']): string =>
-  stream === 'stderr' ? 'text-danger' : stream === 'sys' ? 'text-link' : 'text-muted';
+/** Lines that slide in at once; a burst bigger than this shows the last of them sliding and the rest already there. */
+const MAX_ARRIVING = 8;
+
+const levelFor = (stream: ServerLogLine['stream']) =>
+  stream === 'stderr' ? 'error' : stream === 'sys' ? 'cmd' : 'info';
+
+/** One line. Where it slides in is read once, when it appears: a later poll, a filter or Times must not replay it. */
+function ProcessLine({
+  line,
+  showTime,
+  arrive,
+}: {
+  line: ServerLogLine;
+  showTime: boolean;
+  arrive: number | undefined;
+}) {
+  const [place] = useState(arrive);
+  return (
+    <LogLine
+      level={levelFor(line.stream)}
+      wrap
+      className={cn('pl-4', place !== undefined && 'motion-arrive')}
+      style={place === undefined ? undefined : stagger(place)}
+    >
+      {showTime && <span className="mr-3 text-log-faint select-none">{clock(line.ts)}</span>}
+      {line.line}
+    </LogLine>
+  );
+}
 
 export function downloadProcessLogs(content: string, timestamp = Date.now()): void {
   const blob = new Blob([content], { type: 'text/plain' });
@@ -46,6 +75,12 @@ export function ProcessLogs() {
   const { data, error, loading, refetch } = usePolledLogs();
   const lines = useMemo(() => data?.lines ?? [], [data]);
 
+  // The newest line's number, read from the whole list so a filter never slides old lines in. A list that is
+  // already there when the page opens has nothing fresh; lines a later poll adds are the ones that slide.
+  const tail = lines.at(-1)?.seq;
+  const seenTail = useFreshAfter(data ? (tail ?? -1) : undefined);
+  const freshAfter = seenTail === Number.NEGATIVE_INFINITY ? (tail ?? -1) : seenTail;
+
   const [stream, setStream] = useState<StreamFilter>('all');
   const [search, setSearch] = useState('');
   const [follow, setFollow] = useState(true);
@@ -64,6 +99,8 @@ export function ProcessLogs() {
           (!term || l.line.toLowerCase().includes(term))
       );
   }, [lines, stream, search]);
+
+  const arriving = shown.filter((l) => l.seq > freshAfter).slice(-MAX_ARRIVING);
 
   // Follow the tail only while enabled, so scrolling up to read isn't yanked back.
   // Follow the tail whenever new lines arrive.
@@ -85,23 +122,36 @@ export function ProcessLogs() {
 
   return (
     <Card padded={false} className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3.5">
-        <h2 className="mr-2 text-[15px] font-semibold tracking-tight text-fg">Process logs</h2>
-        <SegmentedControl options={STREAMS} value={stream} onChange={setStream} />
-        <div className="relative min-w-40 flex-1">
-          <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-faint" />
-          <input
+      <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-4">
+        <h2 className="m-0 mr-2 text-lg font-bold text-fg">Process logs</h2>
+        <SegmentedControl options={STREAMS} value={stream} onChange={setStream} label="Stream" />
+        <div className="min-w-48 flex-1">
+          <Input
+            type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Filter log lines"
             name="process-log-filter"
             autoComplete="off"
             placeholder="Filter…"
-            className="h-8 w-full rounded-control border border-line-strong bg-surface-2 pl-8 pr-2 text-xs text-fg placeholder:text-faint focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30 light:bg-surface"
           />
         </div>
-        <Toggle on={follow} onClick={() => setFollow((v) => !v)} label="Follow" />
-        <Toggle on={showTimes} onClick={() => setShowTimes((v) => !v)} label="Times" />
+        <Button
+          size="sm"
+          variant={follow ? 'primary' : 'default'}
+          aria-pressed={follow}
+          onClick={() => setFollow((v) => !v)}
+        >
+          Follow
+        </Button>
+        <Button
+          size="sm"
+          variant={showTimes ? 'primary' : 'default'}
+          aria-pressed={showTimes}
+          onClick={() => setShowTimes((v) => !v)}
+        >
+          Times
+        </Button>
         <CopyButton value={asText} />
         <Button size="sm" onClick={download} disabled={shown.length === 0}>
           Download
@@ -109,7 +159,7 @@ export function ProcessLogs() {
       </div>
 
       {error && data && (
-        <div className="border-b border-line px-5 pt-3 font-sans">
+        <div className="border-b border-line px-4 pt-4">
           <OfflineBanner
             message={`Process-log refresh failed — showing the last received lines. ${error.message}`}
             onRetry={refetch}
@@ -117,33 +167,45 @@ export function ProcessLogs() {
         </div>
       )}
 
-      <div
-        ref={scrollRef}
-        className="max-h-96 min-h-40 overflow-y-auto bg-bg p-5 font-mono text-xs leading-relaxed light:bg-surface-2"
-      >
-        {loading && !data && !error ? (
-          <div className="font-sans">
-            <LoadingState label="Loading process logs…" />
-          </div>
-        ) : error && !data ? (
-          <div className="font-sans">
-            <ErrorState error={error} onRetry={refetch} />
-          </div>
-        ) : shown.length === 0 ? (
-          <p className="text-faint">
-            {lines.length === 0 ? 'No output yet.' : 'No lines match the current filter.'}
-          </p>
-        ) : (
-          shown.map((l) => (
-            <div key={l.seq} className={cn('whitespace-pre-wrap', toneFor(l.stream))}>
-              {showTimes && <span className="mr-2 text-faint">{clock(l.ts)}</span>}
-              {l.line}
-            </div>
-          ))
-        )}
-      </div>
+      {loading && !data && !error ? (
+        <div className="min-h-40 p-4">
+          <LoadingState label="Loading process logs…" />
+        </div>
+      ) : error && !data ? (
+        <div className="min-h-40 p-4">
+          <ErrorState error={error} onRetry={refetch} />
+        </div>
+      ) : (
+        <div className="bg-log-bg text-log-fg">
+          <LogScroll
+            ref={scrollRef}
+            role="region"
+            aria-label="Process output"
+            tabIndex={0}
+            className="min-h-40 pt-3"
+          >
+            {shown.length === 0 ? (
+              <p className="m-0 px-4 text-log-dim">
+                {lines.length === 0 ? 'No output yet.' : 'No lines match the current filter.'}
+              </p>
+            ) : (
+              shown.map((l) => {
+                const place = arriving.indexOf(l);
+                return (
+                  <ProcessLine
+                    key={l.seq}
+                    line={l}
+                    showTime={showTimes}
+                    arrive={place < 0 ? undefined : place}
+                  />
+                );
+              })
+            )}
+          </LogScroll>
+        </div>
+      )}
 
-      <div className="flex items-center justify-between border-t border-line px-5 py-2.5 text-[11px] text-faint">
+      <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-3 text-[13px] text-muted">
         <span>
           {error && !data
             ? 'logs unavailable'
@@ -154,24 +216,6 @@ export function ProcessLogs() {
         <span>{error ? 'refresh failed' : follow ? 'following tail' : 'paused'}</span>
       </div>
     </Card>
-  );
-}
-
-function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={on}
-      className={cn(
-        'h-8 rounded-control border px-2.5 text-xs transition-colors',
-        on
-          ? 'border-link/40 bg-selected text-link'
-          : 'border-line bg-surface-2 text-muted hover:text-fg'
-      )}
-    >
-      {label}
-    </button>
   );
 }
 

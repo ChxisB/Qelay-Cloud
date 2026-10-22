@@ -29,15 +29,16 @@
 #   docker compose -f docker-compose.test.yml --profile tls down
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     ports:
       - '127.0.0.1:55432:5432'
     environment:
       POSTGRES_USER: qcloud
       POSTGRES_PASSWORD: qcloud
       POSTGRES_DB: qcloud_test
+    # Postgres 18+ images keep PGDATA at /var/lib/postgresql/18/docker, so the parent is the mount, not .../data.
     tmpfs:
-      - /var/lib/postgresql/data
+      - /var/lib/postgresql
     # Durability is irrelevant for throwaway test data; fsync off makes schema churn faster.
     command: ['postgres', '-c', 'fsync=off', '-c', 'max_connections=200']
     healthcheck:
@@ -111,7 +112,7 @@ services:
 
   postgres-tls:
     profiles: ['tls']
-    image: postgres:16
+    image: postgres:18
     ports:
       - '127.0.0.1:55433:5432'
     environment:
@@ -121,7 +122,7 @@ services:
     volumes:
       - ./test/support/pgbouncer/.tls:/export
     tmpfs:
-      - /var/lib/postgresql/data
+      - /var/lib/postgresql
     # The certificate names localhost and 127.0.0.1, so verify-full works against the published port.
     command:
       - bash

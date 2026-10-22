@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import type { ServerTargetClient } from '../src/lib/bq';
 import type { ServerStatus } from '../src/lib/bqTypes';
@@ -9,15 +10,17 @@ import { DEFAULT_CONFIG } from '../src/pages/control/benchmark/engine';
 import { type BenchmarkLoopContext, createConsumer } from '../src/pages/control/benchmark/runLoops';
 import { freshBenchmarkStats } from '../src/pages/control/benchmark/runtimeState';
 import { ServerControl } from '../src/pages/control/ServerControl';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window.confirm;
 const mounted = new Set<() => void>();
+let asked: ReturnType<typeof answerConfirms>;
 
 beforeEach(() => {
+  asked = answerConfirms();
   useConnectionStore.setState({
     baseUrl: 'http://server-a.test',
     token: 'server-a-token',
@@ -29,7 +32,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
+  asked.stop();
   useConnectionStore.setState({ baseUrl: '/api', token: '', agentToken: '', refreshMs: 3000 });
 });
 
@@ -155,7 +158,6 @@ describe('late lifecycle failures', () => {
   test('pending restart keeps the global lifecycle lock across unmount and remount', async () => {
     const firstRestart = deferred<Response>();
     let restarts = 0;
-    globalThis.window.confirm = () => true;
     globalThis.fetch = (async (input) => {
       const path = new URL(String(input)).pathname;
       if (path === '/control/restart') {
@@ -177,12 +179,14 @@ describe('late lifecycle failures', () => {
     const first = renderServer();
     await settle(15);
     clickRestart(first.host);
+    await settle(10);
     expect(restarts).toBe(1);
     first.unmount();
 
     const replacement = renderServer();
     await settle(15);
     clickRestart(replacement.host);
+    await settle(10);
     expect(restarts).toBe(1);
 
     firstRestart.resolve(Response.json(serverStatus()));
@@ -229,7 +233,7 @@ function renderServer(): { host: HTMLElement; unmount: () => void } {
     mounted.delete(unmount);
   };
   mounted.add(unmount);
-  act(() => root.render(createElement(ServerControl)));
+  act(() => root.render(createElement(MemoryRouter, null, createElement(ServerControl))));
   return { host, unmount };
 }
 

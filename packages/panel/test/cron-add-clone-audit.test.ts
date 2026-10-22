@@ -36,7 +36,7 @@ describe('CronManager Qelay contract', () => {
     for (const schedule of ['0 0 L * *', '0 0 1W * *', '0 0 * * 1#2', '0 0 ? * *']) {
       const result = buildCronBody(cronValues(schedule));
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.msg).toContain('not supported by Qelay');
+      if (!result.ok) expect(result.msg).toContain('is not supported');
     }
   });
 
@@ -122,6 +122,11 @@ describe('CronManager Qelay contract', () => {
 
     const view = render(createElement(CronManager));
     await settle(10);
+    act(() =>
+      [...view.host.querySelectorAll('button')]
+        .find((button) => button.textContent === 'New schedule')!
+        .click()
+    );
     setInput(view.host.querySelector<HTMLInputElement>('[name="cron-name"]')!, 'hourly-report');
     setInput(view.host.querySelector<HTMLInputElement>('[name="cron-queue"]')!, 'reports');
     setInput(view.host.querySelector<HTMLInputElement>('[name="cron-expression"]')!, '@hourly');

@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes } from 'react';
+import type { ComponentProps } from 'react';
 import { cn } from '@/lib/cn';
 import { IconSearch } from './icons';
 import { Kbd } from './Kbd';
@@ -13,7 +13,7 @@ export function SearchField({
   className,
   shortcut,
   ...props
-}: InputHTMLAttributes<HTMLInputElement> & {
+}: ComponentProps<'input'> & {
   containerClassName?: string;
   /** Shortcut hint shown at the end of the field, e.g. "⌘K". */
   shortcut?: string;
@@ -21,8 +21,8 @@ export function SearchField({
   return (
     <div
       className={cn(
-        'flex h-9 min-w-0 items-center gap-2 rounded-control border border-line-strong bg-surface-2 px-3 text-muted',
-        'transition-colors light:bg-surface',
+        'flex min-h-8 min-w-0 items-center gap-2.5 rounded-control border border-line-strong bg-surface py-0 pl-4 pr-3 text-faint',
+        'transition-colors',
         'focus-within:border-ring focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring',
         containerClassName
       )}
@@ -30,7 +30,7 @@ export function SearchField({
       <IconSearch className="size-4 shrink-0" />
       <input
         className={cn(
-          'min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder:text-muted',
+          'min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder:text-faint',
           className
         )}
         {...props}

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/form';
 import { removeAvailability, removeBody, retryableNodes, retryBody } from '../domain/flowActions';
 import type { FlowTree } from '../domain/flowTree';
 import type { FlowActionBody, FlowActionName, FlowView } from '../domain/flowWire';
@@ -20,7 +21,10 @@ export function FlowActionsBar({ view, tree, pending, onAction }: Props) {
   const busy = pending !== null;
 
   return (
-    <section aria-label="Flow actions" className="space-y-3 rounded-lg border border-line p-3">
+    <section
+      aria-label="Flow actions"
+      className="space-y-3 rounded-card border border-line bg-surface p-4"
+    >
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
@@ -40,7 +44,7 @@ export function FlowActionsBar({ view, tree, pending, onAction }: Props) {
             Remove flow…
           </Button>
         )}
-        {!removal.ok && <span className="text-xs text-faint">{removal.reason}</span>}
+        {!removal.ok && <span className="text-[13px] text-muted">{removal.reason}</span>}
       </div>
       {removing && removal.ok && (
         <form
@@ -54,7 +58,7 @@ export function FlowActionsBar({ view, tree, pending, onAction }: Props) {
             onAction(removeBody(view));
           }}
         >
-          <p className="text-xs text-muted">
+          <p className="text-[13px] text-muted">
             This deletes all {view.nodes.length} jobs of the flow, finished ones too, and cannot be
             undone. Type{' '}
             <span translate="no" className="break-all font-mono text-fg">
@@ -62,14 +66,14 @@ export function FlowActionsBar({ view, tree, pending, onAction }: Props) {
             </span>{' '}
             to confirm.
           </p>
-          <input
+          <Input
             name="confirm-flow-root"
             aria-label="Type the root job ID to confirm"
             autoComplete="off"
             spellCheck={false}
             value={typed}
             onChange={(event) => setTyped(event.target.value)}
-            className="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-sm text-fg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="font-mono text-sm"
           />
           <div className="flex gap-2">
             <Button type="submit" size="sm" variant="danger" disabled={typed !== view.root || busy}>

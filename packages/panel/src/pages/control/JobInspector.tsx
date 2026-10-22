@@ -1,5 +1,7 @@
 import { useLocation, useSearchParams } from 'react-router-dom';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { getBaseUrl, useConnectionStore } from '@/components/dashboard/stores/connectionStore';
+import { Banner } from '@/components/ui/Banner';
 import { BqError } from '@/lib/bq';
 import { isVersionConflict } from '@/lib/errorBody';
 import { createJobLookup } from './jobInspector/createJobLookup';
@@ -60,12 +62,16 @@ export function JobInspector() {
     setParams(mode === 'custom' ? { custom: key } : { id: key });
   };
 
-  const act: JobAction = async (label, operation, confirmMessage) => {
+  const act: JobAction = async (label, operation, confirm) => {
     // A ref closes the same-tick double-click window before state can render.
     if (!state.job || state.actionBusy.current || state.lookupAbort.current) return;
+    // The job may have changed while the question was open, so the checks run again after it.
+    if (confirm) {
+      if (!(await confirmInPage(confirm))) return;
+      if (!state.job || state.actionBusy.current || state.lookupAbort.current) return;
+    }
     const target = currentJobLookupTarget();
     if (!sameJobLookupTarget(state.jobTarget.current, target)) return;
-    if (confirmMessage && !window.confirm(confirmMessage)) return;
 
     const generation = ++state.actionGen.current;
     const actionJobId = state.job.id;
@@ -138,11 +144,14 @@ export function JobInspector() {
       />
 
       {state.msg && (
-        <div
-          role="status"
-          className={state.msg.ok ? 'mb-4 text-sm text-success' : 'mb-4 text-sm text-danger'}
-        >
-          {state.msg.text}
+        <div className="mb-6">
+          {state.msg.ok ? (
+            <Banner tone="ok" title={state.msg.text} />
+          ) : (
+            <Banner tone="problem" title="The action did not go through">
+              {state.msg.text}
+            </Banner>
+          )}
         </div>
       )}
 

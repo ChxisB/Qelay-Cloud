@@ -42,6 +42,7 @@ export {
 export type {
   AddJobBody,
   AddWebhookBody,
+  AllWebhookDeliveriesQuery,
   Backoff,
   BulkJobBody,
   CreateCronBody,
@@ -59,8 +60,29 @@ export type {
   WebhookDeliveriesQuery,
   WebhookDeliveryFull,
   WebhookDeliveryStatus,
+  WebhookDestination,
+  WebhookStatsBucketFull,
+  WebhookStatsFull,
+  WebhookStatsQuery,
 } from './bq/types';
 export { WEBHOOK_EVENTS } from './bq/types';
+export type {
+  AddDestinationBody,
+  DestinationFull,
+  DestinationPatchBody,
+  WebhookDedupeFull,
+  WebhookGroupStatFull,
+  WebhookGroupStatsFull,
+  WebhookGroupStatsQuery,
+  WebhookIssueFull,
+  WebhookIssuesPage,
+  WebhookIssuesQuery,
+  WebhookIssueStatus,
+  WebhookPatchBody,
+  WebhookPausedBy,
+  WebhookPauseMode,
+} from './bq/gatewayTypes';
+export { WEBHOOK_DEDUPE_FIELDS, WEBHOOK_ISSUE_STATUSES } from './bq/gatewayTypes';
 
 export const bq = {
   ...serverInfoApi,

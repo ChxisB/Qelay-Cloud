@@ -17,33 +17,33 @@ test.beforeEach(async ({ request }) => {
   await control(request, '/upstream/start');
 });
 
-test('renders every off-navigation classic route against a real Control API', async ({
+test('sends every removed classic path to its page, keeping the query string', async ({
   page,
   browserErrors,
 }) => {
   await unlockDashboard(page);
 
   const routes = [
-    ['/overview-classic', 'Overview'],
-    ['/queues-classic', 'Queues'],
-    [`/queues-classic/${E2E_SEED_QUEUE}`, E2E_SEED_QUEUE],
-    ['/jobs-classic', 'Jobs Explorer'],
-    ['/dlq-classic', 'Dead Letter Queue'],
-    ['/cron-classic', 'Cron Jobs'],
-    ['/metrics-classic', 'Metrics'],
-    ['/workers-classic', 'Workers'],
-    ['/logs-classic', 'Activity Logs'],
-    ['/usage-classic', 'Usage'],
+    ['/overview-classic', ''],
+    ['/queues-classic', '/queues'],
+    [`/queues-classic/${E2E_SEED_QUEUE}?tab=jobs`, `/queues/${E2E_SEED_QUEUE}?tab=jobs`],
+    ['/jobs-classic', '/jobs'],
+    ['/dlq-classic', '/dlq'],
+    ['/cron-classic', '/cron'],
+    ['/metrics-classic', '/metrics'],
+    ['/workers-classic', '/workers'],
+    ['/logs-classic', '/logs'],
+    ['/usage-classic', '/usage'],
   ] as const;
 
-  for (const [path, heading] of routes) {
-    await navigateInApp(page, path);
-    await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible();
-    await expect(page.getByText('This page does not exist.')).toHaveCount(0);
+  for (const [path, landedAt] of routes) {
+    await navigateInApp(page, path, landedAt);
+    await expect(page.locator('#main h1').first()).toBeVisible();
+    await expect(page.getByText('That page does not exist')).toHaveCount(0);
   }
 
   // S3 backup belongs to a server that holds its own database; this deployment has none.
-  await navigateInApp(page, '/s3-classic');
+  await navigateInApp(page, '/s3-classic', '/s3');
   await expect(page.getByText('Not available in this deployment')).toBeVisible();
 
   expectNoBrowserErrors(browserErrors);
@@ -56,10 +56,11 @@ test('redirects the legacy cron route and renders the wildcard fallback', async 
   await unlockDashboard(page);
   await navigateInApp(page, '/cron-manager', '/cron');
   await expect(page).toHaveURL(`${E2E_APP_URL}/cron`);
-  await expect(page.getByRole('heading', { name: 'Cron Manager', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Cron jobs', level: 1 })).toBeVisible();
 
   await navigateInApp(page, '/definitely-not-a-route');
-  await expect(page.getByRole('heading', { name: '404', level: 1 })).toBeVisible();
-  await expect(page.getByText('This page does not exist.')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'That page does not exist', level: 1 })
+  ).toBeVisible();
   expectNoBrowserErrors(browserErrors);
 });

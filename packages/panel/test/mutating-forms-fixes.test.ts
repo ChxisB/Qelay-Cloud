@@ -19,7 +19,7 @@ describe('AddJob', () => {
   test('a backoff strategy without a base delay is rejected, not dropped', () => {
     const r = resolveBackoff(undefined, 'exponential');
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.msg).toContain('Backoff (ms)');
+    if (!r.ok) expect(r.msg).toContain('Wait between tries');
   });
 
   test('a blank backoff with no strategy still means "server default"', () => {

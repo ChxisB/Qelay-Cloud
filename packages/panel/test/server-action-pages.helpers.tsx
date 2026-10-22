@@ -2,19 +2,24 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
+import { useConfirmStore } from '../src/components/dashboard/stores/confirmStore';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
+import { useGlobalModalStore } from '../src/components/dashboard/stores/globalModalStore';
 import { useToastStore } from '../src/components/dashboard/stores/toastStore';
-import { DlqControl } from '../src/pages/control/DlqControl';
 import { DlqPro } from '../src/pages/control/DlqPro';
+import { Connections } from '../src/pages/control/gateway/Connections';
 import { JobsPro } from '../src/pages/control/JobsPro';
 import { QueuesOverview } from '../src/pages/control/QueuesOverview';
-import { Webhooks } from '../src/pages/control/Webhooks';
 import { WorkersPro } from '../src/pages/control/WorkersPro';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
+
+/** The Connections screen inside the router its tabs and links need. */
+const ConnectionsPage = () => createElement(MemoryRouter, null, createElement(Connections));
 
 const realFetch = globalThis.fetch;
 
-const realConfirm = window.confirm;
+let stopAnswering = () => {};
 
 const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { 'content-type': 'application/json' } });
@@ -89,10 +94,10 @@ export {
   afterEach,
   beforeEach,
   buttonByText,
+  ConnectionsPage,
   clickSameTick,
   createElement,
   createRoot,
-  DlqControl,
   DlqPro,
   dashboardQueue,
   deferred,
@@ -104,7 +109,6 @@ export {
   MemoryRouter,
   QueuesOverview,
   queueSummary,
-  realConfirm,
   realFetch,
   render,
   setInput,
@@ -112,11 +116,11 @@ export {
   test,
   useConnectionStore,
   useToastStore,
-  Webhooks,
   WorkersPro,
 };
 
-export function installTestHooks() {
+/** `yesToQuestions`: answer every in-page question yes, as `window.confirm = () => true` once did. Left off, a test answers its own. */
+export function installTestHooks({ yesToQuestions = false } = {}) {
   beforeEach(() => {
     ensureDom();
     useConnectionStore.setState({
@@ -126,12 +130,15 @@ export function installTestHooks() {
       refreshMs: 60_000,
     });
     useToastStore.setState({ toasts: [] });
-    window.confirm = () => true;
+    // A question left open by one test must not be the next test's first answer.
+    useConfirmStore.setState({ current: null, queue: [] });
+    useGlobalModalStore.getState().reset();
+    if (yesToQuestions) stopAnswering = answerConfirms().stop;
   });
 
   afterEach(() => {
+    stopAnswering();
     globalThis.fetch = realFetch;
-    window.confirm = realConfirm;
     useConnectionStore.setState({
       baseUrl: '/api',
       token: '',

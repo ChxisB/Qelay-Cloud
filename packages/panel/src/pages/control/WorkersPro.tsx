@@ -1,26 +1,19 @@
-import { useEffect, useState } from 'react';
-import { IconButton } from '@/components/ui/Button';
+import { useEffect, useMemo, useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
+import { Banner } from '@/components/ui/Banner';
 import { EmptyState, ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
-import { IconTrash, IconWorkers } from '@/components/ui/icons';
+import { IconCheck, IconWorkers } from '@/components/ui/icons';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
+import { StatusGlyph } from '@/components/ui/StatusBadge';
 import { bq } from '@/lib/bq';
 import { useCanOperate } from '@/lib/capabilities/useCapabilities';
-import { cn } from '@/lib/cn';
-import { formatNumber, formatRelativeTime } from '@/lib/format';
+import { formatNumber } from '@/lib/format';
 import { usePolledData } from '@/lib/usePolledData';
 import { assertSuccessfulMutationResponse, useServerActionGuard } from '@/lib/useServerActionGuard';
-import { SortButton } from './workers/SortButton';
+import { STALE_EXPLAINER, type Sort, type SortKey, WorkersTable } from './workers/WorkersTable';
 
 const MAX_ROWS = 100;
-
-const STALE_EXPLAINER = 'No heartbeat recently — derived from lastSeen';
-
-type SortKey = 'failed' | 'lastSeen';
-interface Sort {
-  key: SortKey;
-  dir: 'asc' | 'desc';
-}
 
 export function WorkersPro() {
   const canOperate = useCanOperate();
@@ -32,6 +25,19 @@ export function WorkersPro() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [sort, setSort] = useState<Sort | null>(null);
   const actionGuard = useServerActionGuard('workers-pro');
+
+  const workers = useMemo(() => data?.workers ?? [], [data]);
+  // Memoized: the table keeps a row that has just left in view, and finds out which by comparing this list.
+  const rows = useMemo(() => {
+    const sorted = sort
+      ? [...workers].sort((a, b) => {
+          const va = sort.key === 'failed' ? (a.failedJobs ?? 0) : (a.lastSeen ?? 0);
+          const vb = sort.key === 'failed' ? (b.failedJobs ?? 0) : (b.lastSeen ?? 0);
+          return sort.dir === 'asc' ? va - vb : vb - va;
+        })
+      : workers;
+    return sorted.slice(0, MAX_ROWS);
+  }, [workers, sort]);
 
   // scopeKey is the connection lifecycle boundary.
   useEffect(() => {
@@ -49,16 +55,7 @@ export function WorkersPro() {
     );
   }
 
-  const workers = data?.workers ?? [];
   const quarantinedWorkers = data?.quarantinedWorkers ?? [];
-  const sorted = sort
-    ? [...workers].sort((a, b) => {
-        const va = sort.key === 'failed' ? (a.failedJobs ?? 0) : (a.lastSeen ?? 0);
-        const vb = sort.key === 'failed' ? (b.failedJobs ?? 0) : (b.lastSeen ?? 0);
-        return sort.dir === 'asc' ? va - vb : vb - va;
-      })
-    : workers;
-  const rows = sorted.slice(0, MAX_ROWS);
   const toggleSort = (key: SortKey) =>
     setSort((s) =>
       s?.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }
@@ -68,12 +65,14 @@ export function WorkersPro() {
   const activeJobs = workers.reduce((sum, w) => sum + (w.activeJobs ?? 0), 0);
 
   const removeStaleRegistration = async (id: string) => {
-    if (
-      !window.confirm(
-        `Remove the stale registry record for worker "${id}"? This does not stop the worker process. Continue only after confirming that process is stopped; Qelay workers do not automatically re-register after their heartbeat record is removed.`
-      )
-    )
-      return;
+    const sure = await confirmInPage({
+      question: `Remove the stale registry record for worker "${id}"?`,
+      detail:
+        'This does not stop the worker process. Continue only after confirming that process is stopped; Qelay workers do not automatically re-register after their heartbeat record is removed.',
+      confirmLabel: 'Remove record',
+      danger: true,
+    });
+    if (!sure) return;
     const lease = actionGuard.begin(`worker:${id}`);
     if (!lease) return;
     setBusyIds((s) => new Set(s).add(id));
@@ -82,7 +81,7 @@ export function WorkersPro() {
       const response = await bq.unregisterWorker(id);
       assertSuccessfulMutationResponse(response, 'Remove stale worker registry record');
       if (!lease.isCurrent()) return;
-      setMsg({ ok: true, text: `Removed stale registry record for ${id} ✓` });
+      setMsg({ ok: true, text: `Removed stale registry record for ${id}` });
       void refetch();
     } catch (e) {
       if (!lease.isCurrent()) return;
@@ -102,7 +101,7 @@ export function WorkersPro() {
     <div>
       <PageHeader
         title="Workers"
-        description="Registered workers and their throughput."
+        description="Every process that claims jobs. One that stops reporting goes stale."
         live={!!data && !error}
       />
       {error && (
@@ -124,29 +123,45 @@ export function WorkersPro() {
             label="Stale"
             value={formatNumber(staleWorkers)}
             tone={staleWorkers ? 'amber' : 'default'}
+            hint={
+              staleWorkers ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <StatusGlyph state="delayed" small />
+                  No heartbeat recently
+                </span>
+              ) : undefined
+            }
             compact
           />
         </div>
-        <StatCard label="Active Jobs" value={formatNumber(activeJobs)} tone="active" compact />
+        <StatCard label="Active jobs" value={formatNumber(activeJobs)} tone="active" compact />
         <StatCard
           label="Quarantined"
           value={formatNumber(quarantinedWorkers.length)}
           tone={quarantinedWorkers.length ? 'red' : 'default'}
+          hint={
+            quarantinedWorkers.length ? (
+              <span className="inline-flex items-center gap-1.5">
+                <StatusGlyph state="failed" small />
+                Cannot be shown
+              </span>
+            ) : undefined
+          }
           compact
         />
       </div>
 
       {quarantinedWorkers.length > 0 && (
-        <div role="alert" className="mb-4 rounded-lg border border-danger/30 bg-danger/5 p-4">
-          <p className="text-sm font-medium text-danger">
-            {quarantinedWorkers.length} worker registration(s) contain values accepted by Qelay but
-            unsafe to render. Healthy workers remain available below.
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            Their status and active-job count are unknown, so this dashboard will not offer the
-            registry-only removal action for them.
-          </p>
-          <ul className="mt-2 space-y-1 text-xs text-muted">
+        <div className="mb-4">
+          <Banner
+            tone="problem"
+            title={`${quarantinedWorkers.length} worker registration(s) cannot be shown`}
+          >
+            They contain values accepted by Qelay but unsafe to render. Healthy workers remain
+            available below. Their status and active-job count are unknown, so this dashboard will
+            not offer the registry-only removal action for them.
+          </Banner>
+          <ul className="mt-2 space-y-1 px-1 text-xs text-muted">
             {quarantinedWorkers.slice(0, 20).map((issue) => (
               <li key={`${issue.index}:${issue.id ?? 'unknown'}`} className="truncate font-mono">
                 #{issue.index + 1} {issue.id ?? '(unaddressable id)'} — {issue.reason}
@@ -157,8 +172,16 @@ export function WorkersPro() {
       )}
 
       {msg && (
-        <div className={cn('mb-3 text-sm', msg.ok ? 'text-success' : 'text-danger')}>
-          {msg.text}
+        <div className="mb-4">
+          <Banner
+            tone={msg.ok ? 'ok' : 'problem'}
+            title={msg.ok ? 'Worker removed' : 'Removal failed'}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              {msg.ok && <IconCheck className="size-4 shrink-0 text-success" />}
+              {msg.text}
+            </span>
+          </Banner>
         </div>
       )}
 
@@ -173,105 +196,18 @@ export function WorkersPro() {
           }
         />
       ) : (
-        <div className="overflow-x-auto rounded-card border border-line bg-surface">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-line text-left eyebrow text-muted light:bg-surface-2">
-                <th className="px-4 py-2.5 font-semibold">Worker</th>
-                <th className="px-4 py-2.5 font-semibold">Queues</th>
-                <th className="px-4 py-2.5 font-semibold">Status</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Active</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Processed</th>
-                <th className="px-4 py-2.5 text-right font-semibold">
-                  <SortButton
-                    label="Failed"
-                    active={sort?.key === 'failed' ? sort.dir : null}
-                    onClick={() => toggleSort('failed')}
-                  />
-                </th>
-                <th className="px-4 py-2.5 text-right font-semibold">
-                  <SortButton
-                    label="Last Seen"
-                    active={sort?.key === 'lastSeen' ? sort.dir : null}
-                    onClick={() => toggleSort('lastSeen')}
-                  />
-                </th>
-                {canOperate && (
-                  <th className="w-16 px-4 py-2.5 text-right font-semibold">Actions</th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((w) => (
-                <tr key={w.id} className="border-b border-line last:border-0 hover:bg-surface-2/40">
-                  <td className="px-4 py-2.5">
-                    <div className="font-medium text-fg">{w.name || 'worker'}</div>
-                    <div className="font-mono text-[11px] text-faint">{w.id}</div>
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-muted">
-                    {w.queues.join(', ') || '—'}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span
-                      title={w.status === 'active' ? undefined : STALE_EXPLAINER}
-                      className={cn(
-                        'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                        w.status === 'active'
-                          ? 'bg-state-completed-bg text-state-completed-fg'
-                          : 'bg-state-delayed-bg text-state-delayed-fg'
-                      )}
-                    >
-                      {w.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum text-state-active-fg">
-                    {formatNumber(w.activeJobs)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum text-muted">
-                    {formatNumber(w.processedJobs)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum text-muted">
-                    {formatNumber(w.failedJobs)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-faint">
-                    {formatRelativeTime(w.lastSeen)}
-                  </td>
-                  {canOperate && (
-                    <td className="px-4 py-2.5">
-                      <div className="flex justify-end">
-                        {w.status === 'stale' && w.activeJobs === 0 ? (
-                          <IconButton
-                            aria-label={`Remove stale registry record for worker ${w.id}`}
-                            title="Registry cleanup only — does not stop the worker process"
-                            disabled={busyIds.has(w.id)}
-                            onClick={() => removeStaleRegistration(w.id)}
-                          >
-                            <IconTrash className="size-3.5" />
-                          </IconButton>
-                        ) : (
-                          <span
-                            className="text-xs text-faint"
-                            title={
-                              w.status === 'stale'
-                                ? 'Registry cleanup is blocked while active jobs are reported'
-                                : 'Only stale, idle registry records can be removed'
-                            }
-                          >
-                            —
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <WorkersTable
+          rows={rows}
+          canOperate={canOperate}
+          sort={sort}
+          onSort={toggleSort}
+          busyIds={busyIds}
+          onRemove={removeStaleRegistration}
+        />
       )}
 
       {workers.length > MAX_ROWS && (
-        <p className="mt-3 text-xs text-warning">
+        <p className="mt-3 text-[13px] font-semibold text-warning">
           Showing first {formatNumber(MAX_ROWS)} of {formatNumber(workers.length)} workers.
         </p>
       )}

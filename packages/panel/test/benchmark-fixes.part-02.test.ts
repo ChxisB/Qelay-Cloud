@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { formatNumber } from '../src/lib/format';
 import { Benchmark } from '../src/pages/control/Benchmark';
@@ -11,6 +12,7 @@ import {
   runnableQueueJobs,
   useBenchmark,
 } from '../src/pages/control/benchmark/useBenchmark';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, renderHook, settle } from './domSetup';
 
 // Regression tests for the benchmark audit fixes. Each one fails against the
@@ -19,11 +21,15 @@ import { ensureDom, renderHook, settle } from './domSetup';
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window?.confirm;
+let asked: ReturnType<typeof answerConfirms>;
+
+beforeEach(() => {
+  asked = answerConfirms(false); // never actually start the load in a test
+});
 
 afterEach(() => {
   globalThis.fetch = realFetch;
-  if (realConfirm) globalThis.window.confirm = realConfirm;
+  asked.stop();
   useConnectionStore.setState({ baseUrl: '/api', token: '' });
 });
 
@@ -39,7 +45,7 @@ function renderBenchmark(): Rendered {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
-  act(() => root.render(createElement(Benchmark)));
+  act(() => root.render(createElement(MemoryRouter, null, createElement(Benchmark))));
   return {
     container,
     unmount: () => {
@@ -78,11 +84,6 @@ const benchmarkCounts = (over: Record<string, number> = {}) => ({
 describe('Benchmark — pre-existing job safety', () => {
   test('confirm explains that the empty-queue safety check will refuse the run', async () => {
     useConnectionStore.setState({ baseUrl: 'http://srv', token: '' });
-    const prompts: string[] = [];
-    globalThis.window.confirm = (msg?: string) => {
-      prompts.push(String(msg));
-      return false; // never actually start the load in a test
-    };
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/counts')) {
@@ -101,9 +102,13 @@ describe('Benchmark — pre-existing job safety', () => {
       const run = buttonByText(r.container, 'Run benchmark');
       if (run) click(run);
       await settle(30);
-      expect(prompts.length).toBe(1);
-      expect(prompts[0]).toContain(`already holds ${formatNumber(5000)} job(s) across all states`);
-      expect(prompts[0]).toContain('safety preflight will refuse');
+      expect(asked.questions).toEqual([
+        { question: 'Run the benchmark?', confirmLabel: 'Run benchmark', danger: undefined },
+      ]);
+      expect(asked.details[0]).toContain(
+        `already holds ${formatNumber(5000)} job(s) across all states`
+      );
+      expect(asked.details[0]).toContain('safety preflight will refuse');
     } finally {
       r.unmount();
     }

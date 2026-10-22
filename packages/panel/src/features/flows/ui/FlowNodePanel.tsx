@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LinkButton } from '@/components/ui/LinkButton';
+import { StatusBadge, StatusPill } from '@/components/ui/StatusBadge';
 import { formatDateTime } from '@/lib/format';
 import {
   promoteAvailability,
@@ -9,7 +10,6 @@ import {
   retryAvailability,
   retryBody,
 } from '../domain/flowActions';
-import { flowStateStyle } from '../domain/flowConstants';
 import type { FlowTree } from '../domain/flowTree';
 import type { FlowActionBody, FlowNode, FlowView } from '../domain/flowWire';
 
@@ -54,11 +54,11 @@ export function FlowNodePanel({
           </div>
         </div>
         <Fact label="State">
-          <span
-            className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${flowStateStyle(node.state)}`}
-          >
-            {node.removed ? 'removed on completion' : node.state}
-          </span>
+          {node.removed ? (
+            <StatusPill state="waiting">removed on completion</StatusPill>
+          ) : (
+            <StatusBadge status={node.state} />
+          )}
         </Fact>
         <Fact label="Queue">{node.queue}</Fact>
         <Fact label="Attempts">{node.attempts}</Fact>
@@ -79,7 +79,7 @@ export function FlowNodePanel({
               translate="no"
               onClick={() => onSelect(node.parentId as string)}
               disabled={!tree.byId.has(node.parentId)}
-              className="break-all font-mono text-xs underline decoration-dotted enabled:hover:text-fg"
+              className="break-all rounded-control font-mono text-xs font-bold text-link underline decoration-dotted disabled:text-muted"
             >
               {node.parentId}
             </button>
@@ -87,7 +87,7 @@ export function FlowNodePanel({
         )}
         <ChildList nodes={children} onSelect={onSelect} />
         {node.error && (
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-line bg-surface-2 p-2 text-xs text-danger">
+          <pre className="max-h-40 overflow-auto rounded-control border border-line bg-slate-tint p-3 text-xs break-words whitespace-pre-wrap text-danger">
             {node.error}
           </pre>
         )}
@@ -108,12 +108,9 @@ export function FlowNodePanel({
           pending={pending}
           onAction={onAction}
         />
-        <Link
-          to={`/job?id=${encodeURIComponent(node.id)}`}
-          className="inline-block rounded-lg border border-line px-3 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
-        >
+        <LinkButton to={`/job?id=${encodeURIComponent(node.id)}`} size="sm">
           Open in Job Inspector
-        </Link>
+        </LinkButton>
       </Card>
     </aside>
   );
@@ -149,13 +146,13 @@ function ChildList({
               type="button"
               translate="no"
               onClick={() => onSelect(child.id)}
-              className="flex w-full items-center gap-2 text-left text-xs hover:text-fg"
+              className="flex min-h-8 w-full items-center gap-2 rounded-control text-left text-xs hover:bg-hover"
             >
-              <span
-                className={`rounded-full border px-1.5 text-[10px] ${flowStateStyle(child.state)}`}
-              >
-                {child.removed ? 'removed' : child.state}
-              </span>
+              {child.removed ? (
+                <StatusPill state="waiting">removed</StatusPill>
+              ) : (
+                <StatusBadge status={child.state} />
+              )}
               <span className="break-all font-mono">{child.id}</span>
             </button>
           </li>

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import {
   buildS3Environment,
@@ -13,7 +14,6 @@ import { ensureDom, settle } from './domSetup';
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window.confirm;
 const mounted = new Set<() => void>();
 
 const json = (value: unknown, status = 200) =>
@@ -121,7 +121,6 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
   localStorage.removeItem('qelay-db-history');
   useConnectionStore.setState({
     baseUrl: '/api',
@@ -190,7 +189,7 @@ describe('S3 storage checks and process-log downloads', () => {
       return Promise.resolve(json({ ok: true, data: { diskFull: false } }));
     }) as typeof fetch;
 
-    const view = render(createElement(S3BackupPro));
+    const view = render(createElement(MemoryRouter, null, createElement(S3BackupPro)));
     click(findButton(view.host, 'Check server storage'));
     await settle(5);
     act(() => useConnectionStore.setState({ baseUrl: 'http://server-b.test', token: 'bravo' }));

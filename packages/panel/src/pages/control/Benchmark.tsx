@@ -1,5 +1,7 @@
 import { type ChangeEvent, useEffect, useState } from 'react';
 import { useConnectionStore } from '@/components/dashboard/stores/connectionStore';
+import { SystemTabs } from '@/components/SystemTabs';
+import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
 import { IconPause, IconPlay } from '@/components/ui/icons';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -93,6 +95,8 @@ export function Benchmark() {
           (live.elapsedMs / (clampInt(shown.durationS, 1, LIMITS.durationS) * 1000)) * 100
         )
       : 0;
+  // A value over its limit turns its field red and dims Run (SX6); the hint beside it already names the limit.
+  const overLimit = BENCHMARK_NUM_KEYS.filter((key) => Number(draft[key]) > LIMITS[key]);
   const heading = phaseHeading(phase, shown.mode, Boolean(summary));
   const etaText = getEtaText(phase, live.etaMs);
 
@@ -100,7 +104,7 @@ export function Benchmark() {
     <div>
       <PageHeader
         title="Benchmark"
-        description="Drive real load against the server — producers bulk-enqueue jobs while simulated workers pull, process and ack them. Throughput is measured client-side; the queue genuinely fills and drains."
+        description="Test how much work this server can handle. It adds a lot of test jobs to a queue of its own and processes them, then shows how fast that went. It never touches your real queues."
         actions={
           phase === 'stopping' ? (
             <Button variant="danger" size="sm" disabled>
@@ -115,32 +119,34 @@ export function Benchmark() {
               variant="primary"
               size="sm"
               disabled={operations.cleaning}
-              onClick={operations.start}
+              aria-disabled={overLimit.length > 0 || undefined}
+              onClick={() => {
+                if (overLimit.length === 0) void operations.start();
+              }}
             >
               <IconPlay className="size-3.5" /> Run benchmark
             </Button>
           )
         }
       />
+      <SystemTabs current="/benchmark" />
 
       {live.error && (
-        <div className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-2 text-sm text-danger">
-          {live.error}
+        <div className="mb-6">
+          <Banner tone="problem" title="The benchmark hit an error">
+            {live.error}
+          </Banner>
         </div>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium uppercase tracking-wider text-faint">Presets</span>
+      <div role="group" aria-label="Presets" className="mb-6 flex flex-wrap items-center gap-2">
+        <span aria-hidden="true" className="text-[13px] font-extrabold text-fg">
+          Presets
+        </span>
         {Object.keys(PRESETS).map((name) => (
-          <button
-            key={name}
-            type="button"
-            disabled={active}
-            onClick={() => applyPreset(PRESETS[name])}
-            className="rounded-md border border-line bg-surface-2 px-2.5 py-1 text-xs text-muted transition-colors hover:border-line-strong hover:text-fg disabled:opacity-40"
-          >
+          <Button key={name} size="sm" disabled={active} onClick={() => applyPreset(PRESETS[name])}>
             {name}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -150,6 +156,7 @@ export function Benchmark() {
           active={active}
           cleaning={operations.cleaning}
           cleanResult={operations.cleanResult}
+          overLimit={overLimit}
           setField={setField}
           numberInput={numberInput}
           onClean={() => void operations.cleanup()}

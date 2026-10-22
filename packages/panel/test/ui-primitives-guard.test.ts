@@ -31,8 +31,8 @@ function offenders(lines: typeof UI, pattern: RegExp): string[] {
 }
 
 /**
- * The shapes come from tokens: cards `rounded-card` (14), controls `rounded-control` (10),
- * badges pills. The shared primitives therefore never hard-code a larger Tailwind radius, and
+ * The shapes come from tokens: cards `rounded-card` (28), fields `rounded-control` (14),
+ * buttons and badges pills. The shared primitives therefore never hard-code a larger Tailwind radius, and
  * the old card idiom does not creep back into pages.
  */
 describe('ui primitive radii', () => {
@@ -41,13 +41,9 @@ describe('ui primitive radii', () => {
   });
 
   test('rounded-md in ui/ is limited to the small intentional chips', () => {
-    // Pagination links + current page, the 24px CopyButton, the OfflineBanner retry. They are
-    // dense inline affordances, not controls on the components board.
-    const allowed = new Set([
-      'src/components/ui/Pagination.tsx',
-      'src/components/ui/CopyButton.tsx',
-      'src/components/ui/feedback.tsx',
-    ]);
+    // The 24px CopyButton: a dense inline affordance, not a control on the components board.
+    // Pagination and the feedback retry buttons use the Button pill now.
+    const allowed = new Set(['src/components/ui/CopyButton.tsx']);
     const files = offenders(UI, /rounded-md(?![\w-])/).map((where) => where.split(':')[0]);
     expect(files.filter((file) => !allowed.has(file ?? ''))).toEqual([]);
   });

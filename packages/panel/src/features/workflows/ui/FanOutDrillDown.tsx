@@ -79,7 +79,7 @@ export function FanOutDrillDown({
         {open ? 'Hide iterations' : `Show iterations (${formatNumber(fanOut.iterations)})`}
       </Button>
       {open && (
-        <div className="space-y-2 rounded-lg border border-line p-3">
+        <div className="space-y-2 rounded-control border border-line p-4">
           <SegmentedControl
             options={FILTERS}
             value={filter}
@@ -95,16 +95,14 @@ export function FanOutDrillDown({
             <>
               <ul
                 aria-label={`Iterations of ${step.name}, page ${page + 1}`}
-                className="divide-y divide-line/60"
+                className="divide-y divide-line"
               >
                 {iterations.page.items.map((item) => (
                   <li
                     key={item.name}
                     className="flex flex-wrap items-start gap-x-3 gap-y-1 py-2 text-xs"
                   >
-                    <span className="w-16 shrink-0 tabular-nums text-faint">
-                      #{item.loopIndex ?? '?'}
-                    </span>
+                    <span className="w-16 shrink-0 tnum text-muted">#{item.loopIndex ?? '?'}</span>
                     <StatusBadge status={item.status} />
                     <div className="min-w-0 flex-1">
                       {item.loopItem !== undefined && (
@@ -120,7 +118,7 @@ export function FanOutDrillDown({
                 ))}
               </ul>
               {iterations.page.items.length === 0 && (
-                <p className="text-xs text-faint">No iterations with this status.</p>
+                <p className="text-xs text-muted">No iterations with this status.</p>
               )}
               <Pagination
                 page={page}
@@ -150,8 +148,8 @@ function Count({
 }) {
   return (
     <div className="flex gap-1">
-      <dt className="text-faint">{label}</dt>
-      <dd className={`tabular-nums ${value > 0 && tone ? tone : ''}`}>
+      <dt className="text-muted">{label}</dt>
+      <dd className={`tnum ${value > 0 && tone ? tone : ''}`}>
         {formatNumber(value)}
         {note ? ` (${note})` : ''}
       </dd>

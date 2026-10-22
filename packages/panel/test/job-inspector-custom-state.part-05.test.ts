@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { JobInspector } from '../src/pages/control/JobInspector';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 
 const originalFetch = globalThis.fetch;
@@ -153,6 +154,7 @@ describe('Job Inspector custom-id lookup', () => {
   test('manual lookup cannot release a pending mutation lock or send a second POST', async () => {
     ensureDom();
     const slowPromote = deferred<Response>();
+    const yes = answerConfirms();
     let postCalls = 0;
     let canonicalReads = 0;
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -205,7 +207,10 @@ describe('Job Inspector custom-id lookup', () => {
       if (!promote || !lookupButton || !input) throw new Error('Inspector controls not found');
 
       act(() => promote.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
-      await settle(0);
+      await settle(10);
+      expect(yes.questions).toEqual([
+        { question: 'Promote this job?', confirmLabel: 'Promote', danger: undefined },
+      ]);
       expect(postCalls).toBe(1);
       expect(lookupButton.disabled).toBeTrue();
       expect(promote.disabled).toBeTrue();
@@ -229,6 +234,7 @@ describe('Job Inspector custom-id lookup', () => {
       expect(host.textContent).toContain('Promote ✓');
       expect(lookupButton.disabled).toBeFalse();
     } finally {
+      yes.stop();
       act(() => root.unmount());
       host.remove();
     }

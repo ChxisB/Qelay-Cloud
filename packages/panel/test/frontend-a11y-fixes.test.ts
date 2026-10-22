@@ -7,11 +7,10 @@ import {
   Input,
   installTestHooks,
   MemoryRouter,
-  NAV,
-  NavLink,
   NotFound,
   render,
   settle,
+  Sidebar,
   test,
   titleFor,
   useDocumentTitle,
@@ -48,17 +47,29 @@ describe('form and heading semantics', () => {
     unmount();
   });
 
-  test('the 404 code is the page h1', () => {
+  test('the 404 page has one h1, and the decorative 404 is hidden from assistive tech', () => {
     const { host, unmount } = render(createElement(MemoryRouter, {}, createElement(NotFound)));
-    expect(host.querySelector('h1')?.textContent).toBe('404');
+    expect(host.querySelectorAll('h1')).toHaveLength(1);
+    expect(host.querySelector('h1')?.textContent).toBe('That page does not exist');
+    expect(host.querySelector('[aria-hidden="true"]')?.textContent).toBe('404');
     unmount();
   });
 });
 
 describe('route titles and navigation semantics', () => {
-  test('classic and pro queue detail titles are decoded without throwing', () => {
+  test('a connection page and its tabs are titled as the Event gateway', () => {
+    for (const path of [
+      '/events-gateway/connections/hook-1',
+      '/events-gateway/connections/hook-1/metrics',
+      '/events-gateway/connections/hook-1/',
+    ]) {
+      expect(titleFor(path)).toBe('Gateway connection');
+    }
+    expect(titleFor('/events-gateway/connections')).toBe('Page not found');
+  });
+
+  test('queue detail titles are decoded without throwing', () => {
     expect(titleFor('/queues/email%20jobs')).toBe('email jobs · Queue');
-    expect(titleFor('/queues-classic/email%20jobs')).toBe('email jobs · Queue (classic)');
     expect(titleFor('/queues/%zz')).toContain('%zz');
   });
 
@@ -79,26 +90,13 @@ describe('route titles and navigation semantics', () => {
   });
 
   test('only the exact sidebar destination is aria-current', async () => {
-    const items = NAV.flatMap((group) => group.items);
-    const jobsItem = items.find((item) => item.to === '/jobs');
-    const bulkItem = items.find((item) => item.to === '/jobs/bulk-add');
     const { host, unmount } = render(
-      createElement(
-        MemoryRouter,
-        { initialEntries: ['/jobs/bulk-add'] },
-        createElement(
-          'nav',
-          {},
-          createElement(NavLink, { to: jobsItem?.to ?? '', end: jobsItem?.end }, 'Jobs'),
-          createElement(NavLink, { to: bulkItem?.to ?? '', end: bulkItem?.end }, 'Bulk Add')
-        )
-      )
+      createElement(MemoryRouter, { initialEntries: ['/jobs/bulk-add'] }, createElement(Sidebar))
     );
     await settle(1);
-    const jobs = host.querySelector<HTMLAnchorElement>('a[href="/jobs"]');
-    const bulk = host.querySelector<HTMLAnchorElement>('a[href="/jobs/bulk-add"]');
-    expect(jobs?.getAttribute('aria-current')).toBeNull();
-    expect(bulk?.getAttribute('aria-current')).toBe('page');
+    // Bulk add is a page of Jobs: Jobs is the one current link, not Jobs and Queues together.
+    const current = [...host.querySelectorAll('nav a[aria-current="page"]')];
+    expect(current.map((a) => a.getAttribute('href'))).toEqual(['/jobs']);
     unmount();
   });
 });

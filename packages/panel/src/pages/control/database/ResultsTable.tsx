@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
+import { Button } from '@/components/ui/Button';
+import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
 import { cn } from '@/lib/cn';
 import type { ColMeta, Sort } from './types';
 
 function Cell({ value, align }: { value: unknown; align: 'left' | 'right' }) {
-  if (value == null) return <span className="italic text-faint">NULL</span>;
+  if (value == null) return <span className="italic text-muted">NULL</span>;
   const s = typeof value === 'string' ? value : String(value);
   return (
     <span
@@ -54,29 +56,26 @@ export function ResultsTable({
   );
 
   return (
-    <div
+    <TableScroll
       className={cn(
-        'max-h-[70vh] overflow-auto rounded-card border border-line bg-surface transition-opacity',
+        'max-h-[70vh] overflow-y-auto rounded-card border border-line bg-surface transition-opacity',
         dimmed && 'pointer-events-none opacity-50'
       )}
     >
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left eyebrow text-muted">
+      <Table>
+        <THead sticky>
+          <tr>
             {onRowClick && (
-              <th className="sticky top-0 z-10 whitespace-nowrap border-b border-line bg-surface px-4 py-2.5 font-semibold">
+              <Th>
                 <span className="sr-only">Row actions</span>
-              </th>
+              </Th>
             )}
             {columns.map((c, ci) => {
               const meta = colMeta?.[c];
               return (
-                <th
+                <Th
                   key={c}
-                  className={cn(
-                    'sticky top-0 z-10 whitespace-nowrap border-b border-line bg-surface px-4 py-2.5 font-semibold',
-                    numericCols[ci] && 'text-right'
-                  )}
+                  right={numericCols[ci]}
                   aria-sort={
                     sort?.col === c
                       ? sort.dir === 'asc'
@@ -92,75 +91,76 @@ export function ResultsTable({
                       type="button"
                       onClick={() => onSort(c)}
                       aria-label={`Sort by ${c}`}
-                      className="inline-flex items-center gap-1 uppercase hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className={cn(
+                        'inline-flex min-h-8 items-center gap-1.5 rounded-control uppercase transition-colors hover:text-fg',
+                        sort?.col === c ? 'text-fg' : 'text-muted'
+                      )}
                     >
                       {c}
                       {meta?.primaryKey && (
-                        <span className="rounded bg-selected px-1 py-0.5 text-[9px] font-semibold text-link">
+                        <span
+                          title="Primary key: the column that identifies each row"
+                          className="rounded-control bg-slate-tint px-1.5 py-0.5 text-[12px] font-bold text-fg"
+                        >
                           PK
                         </span>
                       )}
-                      {meta?.type && (
-                        <span className="text-faint/70">{meta.type.toLowerCase()}</span>
-                      )}
-                      <span
-                        aria-hidden="true"
-                        className={sort?.col === c ? 'text-link' : 'text-faint/60'}
-                      >
+                      <span aria-hidden="true">
                         {sort?.col === c ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
                       </span>
                     </button>
                   ) : (
                     c
                   )}
-                </th>
+                </Th>
               );
             })}
           </tr>
-        </thead>
+        </THead>
         <tbody>
           {rows.map((r, ri) => (
-            <tr
+            <Tr
               // Rows are positional within one immutable result page.
               // oxlint-disable-next-line react/no-array-index-key -- rows have no stable id
               key={ri}
-              className="border-b border-line font-mono text-xs last:border-0 hover:bg-surface-2/40"
+              dense
+              className="font-mono text-[13px]"
             >
               {onRowClick && (
-                <td className="whitespace-nowrap px-4 py-2">
-                  <button
-                    type="button"
+                <Td className="whitespace-nowrap">
+                  <Button
+                    size="sm"
                     aria-label={`View row ${ri + 1} details`}
                     onClick={() => onRowClick(ri)}
-                    className="rounded-md border border-line px-2 py-1 font-sans text-[11px] font-medium text-muted transition-colors hover:border-line-strong hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    className="font-sans"
                   >
                     View
-                  </button>
-                </td>
+                  </Button>
+                </Td>
               )}
               {r.map((v, ci) => (
-                <td
+                <Td
                   // oxlint-disable-next-line react/no-array-index-key -- cells are positional
                   key={ci}
-                  className="whitespace-nowrap px-4 py-2 text-muted"
+                  className="whitespace-nowrap text-muted"
                 >
                   <div className="flex items-center gap-1">
                     <Cell value={v} align={numericCols[ci] ? 'right' : 'left'} />
                     {truncatedCells?.[ri]?.[ci] && (
                       <span
                         title="Value truncated — use the row's View action to read it in full"
-                        className="shrink-0 rounded bg-warning/15 px-1 text-[9px] font-semibold text-warning"
+                        className="shrink-0 rounded-control bg-slate-tint px-1.5 text-[12px] font-bold text-warning"
                       >
                         …
                       </span>
                     )}
                   </div>
-                </td>
+                </Td>
               ))}
-            </tr>
+            </Tr>
           ))}
         </tbody>
-      </table>
-    </div>
+      </Table>
+    </TableScroll>
   );
 }

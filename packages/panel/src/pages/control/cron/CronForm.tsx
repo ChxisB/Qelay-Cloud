@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { toast } from '@/components/dashboard/stores/toastStore';
 import { Button } from '@/components/ui/Button';
+import { Disclosure } from '@/components/ui/Disclosure';
+import { IconCheck } from '@/components/ui/icons';
 import type { CreateCronBody } from '@/lib/bq';
 import type { ServerActionLease } from '@/lib/useServerActionGuard';
 import { CronAdvancedFields } from './CronAdvancedFields';
@@ -55,7 +58,6 @@ export function CronForm({
   existingNames: ReadonlySet<string>;
 }) {
   const [values, setValues] = useState(INITIAL_VALUES);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { on: created, fire: fireCreated, reset: resetCreated } = useTransientFlag(3000);
@@ -85,13 +87,13 @@ export function CronForm({
       setError(conflict);
       return;
     }
-    if (
-      !window.confirm(
-        `Submit an upsert for cron "${built.body.name}"? Qelay has no atomic create-only condition. The dashboard will recheck immediately before writing, but another client using the same name at the same time could still be replaced. Continue only if you authorize last-writer-wins behavior for this globally unique name.`
-      )
-    ) {
-      return;
-    }
+    const sure = await confirmInPage({
+      question: `Create the schedule "${built.body.name}"?`,
+      detail:
+        'The dashboard checks the name just before saving, but if someone else creates a schedule with this exact name at the same moment, one of them will overwrite the other. Continue only if that is acceptable.',
+      confirmLabel: 'Create schedule',
+    });
+    if (!sure) return;
 
     const lease = beginCreate(built.body.name);
     if (!lease) return;
@@ -102,7 +104,7 @@ export function CronForm({
       if (!lease.isCurrent()) return;
       setValues((current) => ({ ...current, name: '', schedule: '', every: '' }));
       fireCreated();
-      toast.success('Cron upsert acknowledged', built.body.name);
+      toast.success('Schedule created', built.body.name);
       onAccepted();
     } catch (caught) {
       if (lease.isCurrent()) setError((caught as Error).message);
@@ -120,42 +122,40 @@ export function CronForm({
       }}
     >
       <CronPrimaryFields values={values} setValue={setValue} />
-      <div>
-        <button
-          type="button"
-          onClick={() => setShowAdvanced((visible) => !visible)}
-          aria-expanded={showAdvanced}
-          aria-controls="cron-advanced-options"
-          className="text-xs font-medium text-muted hover:text-fg"
-        >
-          {showAdvanced ? '− Hide advanced' : '+ Advanced options'}
-        </button>
-        {showAdvanced && <CronAdvancedFields values={values} setValue={setValue} />}
-      </div>
-      <div className="flex items-center gap-3">
-        <Button type="submit" variant="primary" size="sm" disabled={busy || !!nameConflict}>
-          {busy ? 'Saving…' : nameConflict ? 'Name already exists' : 'Submit upsert'}
+      <Disclosure summary="Advanced options: timezone, overlap, duplicates, retries">
+        <CronAdvancedFields values={values} setValue={setValue} />
+      </Disclosure>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit" variant="primary" disabled={busy || !!nameConflict}>
+          {busy ? 'Saving…' : nameConflict ? 'Name already exists' : 'Create schedule'}
         </Button>
         {nameConflict && !error && (
-          <span role="alert" className="max-w-2xl text-xs text-warning">
+          <span role="alert" className="max-w-2xl text-[13px] font-semibold text-warning">
             {nameConflict}
           </span>
         )}
         {error && (
-          <span role="alert" className="text-xs text-danger">
+          <span role="alert" className="text-[13px] font-semibold text-danger">
             {error}
           </span>
         )}
         {created && (
-          <span role="status" className="text-xs text-success">
-            Cron upsert acknowledged ✓
+          <span
+            role="status"
+            className="motion-pop inline-flex items-center gap-1 text-[13px] font-semibold text-success"
+          >
+            <IconCheck className="size-4" />
+            Schedule created
           </span>
         )}
       </div>
-      <p className="text-xs text-warning">
-        Creation is an upstream upsert, not an atomic create-only operation. Use a globally unique
-        name; the fail-closed preflight cannot eliminate a simultaneous write from another client.
-      </p>
+      <Disclosure summary="About schedule names">
+        <p className="text-[13px] text-muted">
+          Each name must be unique across the whole server. If the name is already taken, this form
+          stops and says so. In the rare case that someone else creates the same name at the same
+          moment, one of the two schedules replaces the other.
+        </p>
+      </Disclosure>
     </form>
   );
 }

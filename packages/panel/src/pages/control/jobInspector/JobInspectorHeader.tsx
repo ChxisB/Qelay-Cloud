@@ -1,7 +1,8 @@
-import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/form';
 import { IconDownload } from '@/components/ui/icons';
+import { LinkButton } from '@/components/ui/LinkButton';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SearchField } from '@/components/ui/SearchField';
 import { flowHref } from '@/features/flows/domain/flowUrlState';
@@ -40,27 +41,24 @@ export function JobInspectorHeader({
   return (
     <>
       <PageHeader
-        title="Job Inspector"
+        title="Job inspector"
         description="Look up any job by ID and drive its full lifecycle."
         actions={
           job ? (
             <>
               {hasFlowRelationship && (
-                <Link
-                  to={flowHref(job.flowRoot ?? job.id, job.id)}
-                  className="rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg"
-                >
+                <LinkButton size="sm" to={flowHref(job.flowRoot ?? job.id, job.id)}>
                   View flow
-                </Link>
+                </LinkButton>
               )}
-              <Link
+              <LinkButton
+                size="sm"
                 to="/add-job"
                 state={buildCloneState(job)}
                 title="Enqueue a new job pre-filled from this one"
-                className="rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg"
               >
                 Clone
-              </Link>
+              </LinkButton>
               <Button
                 size="sm"
                 onClick={() =>
@@ -70,46 +68,51 @@ export function JobInspectorHeader({
                   )
                 }
               >
-                <IconDownload className="size-3.5" /> Download JSON
+                <IconDownload className="size-4" /> Download JSON
               </Button>
             </>
           ) : undefined
         }
       />
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
-        <Select
-          name="job-lookup-mode"
-          autoComplete="off"
-          value={lookupBy}
-          aria-label="Lookup mode"
-          onChange={(event) => onModeChange(event.target.value as LookupMode)}
-          className="w-40"
-        >
-          <option value="id">By job ID</option>
-          <option value="custom">By custom ID</option>
-        </Select>
-        <SearchField
-          containerClassName="min-w-56 flex-1"
-          className="font-mono"
-          value={idInput}
-          aria-label={lookupBy === 'custom' ? 'Custom job ID' : 'Job ID'}
-          name="job-lookup-id"
-          autoComplete="off"
-          spellCheck={false}
-          maxLength={1024}
-          onInput={(event) => onInputChange(event.currentTarget.value)}
-          onKeyDown={(event) => event.key === 'Enter' && onSubmit(idInput)}
-          placeholder={
-            lookupBy === 'custom'
-              ? 'custom / idempotency id — Enter to look up'
-              : 'job id (UUID) — Enter to look up'
-          }
-        />
-        <Button variant="primary" disabled={loading || busy} onClick={() => onSubmit(idInput)}>
-          Look up
-        </Button>
-      </div>
+      <section aria-label="Look up a job" className="mb-6">
+        <Card>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="w-48">
+              <Select
+                name="job-lookup-mode"
+                autoComplete="off"
+                value={lookupBy}
+                aria-label="Lookup mode"
+                onChange={(event) => onModeChange(event.target.value as LookupMode)}
+              >
+                <option value="id">By job ID</option>
+                <option value="custom">By custom ID</option>
+              </Select>
+            </div>
+            <SearchField
+              containerClassName="min-w-56 flex-1"
+              className="font-mono"
+              value={idInput}
+              aria-label={lookupBy === 'custom' ? 'Custom job ID' : 'Job ID'}
+              name="job-lookup-id"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={1024}
+              onInput={(event) => onInputChange(event.currentTarget.value)}
+              onKeyDown={(event) => event.key === 'Enter' && onSubmit(idInput)}
+              placeholder={
+                lookupBy === 'custom'
+                  ? 'custom / idempotency id — Enter to look up'
+                  : 'job id (UUID) — Enter to look up'
+              }
+            />
+            <Button variant="primary" disabled={loading || busy} onClick={() => onSubmit(idInput)}>
+              Look up
+            </Button>
+          </div>
+        </Card>
+      </section>
     </>
   );
 }

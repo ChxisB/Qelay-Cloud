@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConnectionStore } from '@/components/dashboard/stores/connectionStore';
+import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { Textarea } from '@/components/ui/form';
 import { bq } from '@/lib/bq';
 import { formatNumber } from '@/lib/format';
 import {
@@ -160,7 +162,7 @@ export function QueryRunner({
           </div>
         }
       />
-      <textarea
+      <Textarea
         name="database-sql-query"
         autoComplete="off"
         ref={editorRef}
@@ -173,50 +175,51 @@ export function QueryRunner({
         spellCheck={false}
         aria-label="SQL query"
         placeholder="SELECT … — read-only: writes are rejected by the engine"
-        className="w-full resize-y rounded-lg border border-line bg-surface-2 p-3 font-mono text-xs text-fg placeholder:text-faint focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
+        className="resize-y font-mono"
       />
-      <p className="mt-1 text-[11px] text-faint">⌘/Ctrl+Enter runs. Connection is read-only.</p>
+      <p className="m-0 mt-1.5 text-[13px] text-muted">
+        ⌘/Ctrl+Enter runs. Connection is read-only.
+      </p>
 
       {history.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] uppercase tracking-wider text-faint">History</span>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-semibold text-muted">History</span>
           {history.map((h) => (
-            <button
+            <Button
               key={h}
-              type="button"
+              size="sm"
               onClick={() => setSql(h)}
               title={h}
-              className="max-w-56 truncate rounded-md border border-line bg-surface-2 px-2 py-1 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="max-w-56 font-mono text-[13px]"
             >
-              {h}
-            </button>
+              <span className="truncate">{h}</span>
+            </Button>
           ))}
-          <button
-            type="button"
-            onClick={clearHistory}
-            className="rounded-md px-2 py-1 text-[11px] text-faint transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Clear
-          </button>
+          <Button size="sm" onClick={clearHistory}>
+            Clear history
+          </Button>
         </div>
       )}
 
       {/* Always-mounted live region so the first result/error is announced. */}
       <div aria-live="polite">
         {visibleError && (
-          <p role="alert" className="mt-3 text-xs text-danger">
-            {visibleError}
-          </p>
+          <div className="mt-3">
+            <Banner tone="problem" title={visibleError} />
+          </div>
         )}
         {visibleResult && !visibleError && (
           <div className="mt-4">
             <div className="mb-2 flex flex-wrap items-center gap-3">
-              <p className="text-xs text-faint">
+              <p className="m-0 text-[13px] text-muted">
                 {visibleResult.truncated ? '≥ ' : ''}
                 {formatNumber(visibleResult.rowCount)} row
                 {visibleResult.rowCount === 1 ? '' : 's'} · {formatNumber(visibleResult.ms)} ms
                 {visibleResult.truncated && (
-                  <span className="text-warning"> — showing first {visibleResult.rows.length}</span>
+                  <span className="font-bold text-warning">
+                    {' '}
+                    — showing first {visibleResult.rows.length}
+                  </span>
                 )}
               </p>
               {visibleResult.rows.length > 0 && (
@@ -257,7 +260,7 @@ export function QueryRunner({
             {visibleResult.rows.length > 0 ? (
               <ResultsTable columns={visibleResult.columns} rows={visibleResult.rows} />
             ) : (
-              <p className="text-xs text-faint">Query returned no rows.</p>
+              <p className="m-0 text-[13px] text-muted">Query returned no rows.</p>
             )}
           </div>
         )}

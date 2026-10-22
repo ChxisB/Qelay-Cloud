@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { Database } from '../src/pages/control/Database';
 import { ensureDom, settle } from './domSetup';
@@ -8,7 +9,6 @@ import { ensureDom, settle } from './domSetup';
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window.confirm;
 const mounted = new Set<() => void>();
 
 const json = (value: unknown, status = 200) =>
@@ -116,7 +116,6 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
   localStorage.removeItem('qelay-db-history');
   useConnectionStore.setState({
     baseUrl: '/api',
@@ -170,7 +169,7 @@ describe('Database export, query, history, and drawer isolation', () => {
       return Promise.resolve(json({ ok: false, error: `unexpected ${url.pathname}` }, 500));
     }) as typeof fetch;
 
-    const view = render(createElement(Database));
+    const view = render(createElement(MemoryRouter, null, createElement(Database)));
     await settle(30);
     const alert = view.host.querySelector('[role="alert"]');
     expect(alert).not.toBeNull();
@@ -180,7 +179,7 @@ describe('Database export, query, history, and drawer isolation', () => {
     view.unmount();
 
     rowsPayload = { ...dbPage('jobs', 0, [['MALFORMED', 'EXTRA']], 1) };
-    const malformedView = render(createElement(Database));
+    const malformedView = render(createElement(MemoryRouter, null, createElement(Database)));
     await settle(30);
     const malformedAlert = malformedView.host.querySelector('[role="alert"]');
     expect(malformedAlert?.textContent).toContain('Malformed database rows response');
@@ -230,7 +229,7 @@ describe('Database export, query, history, and drawer isolation', () => {
       return Promise.resolve(json({ ok: false, error: `unexpected ${url.pathname}` }, 500));
     }) as typeof fetch;
 
-    const view = render(createElement(Database));
+    const view = render(createElement(MemoryRouter, null, createElement(Database)));
     await settle(30);
     const row = view.host.querySelector('tbody tr') as HTMLTableRowElement | null;
     expect(row).not.toBeNull();

@@ -1,7 +1,11 @@
 import { Card } from '@/components/ui/Card';
 
 function Code({ children }: { children: string }) {
-  return <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs text-fg">{children}</code>;
+  return (
+    <code className="rounded-control bg-slate-tint px-1.5 py-0.5 font-mono text-[13px] text-fg">
+      {children}
+    </code>
+  );
 }
 
 /**
@@ -11,25 +15,28 @@ function Code({ children }: { children: string }) {
  */
 export function AgentInfoCard({ agentBase }: { agentBase: string }) {
   return (
-    <Card className="px-6 py-4">
+    <Card className="px-4 py-4">
       <details className="group">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
-          <span className="text-[15px] font-semibold tracking-tight text-fg">
-            How server control works
+          <span className="text-lg font-bold text-fg">How server control works</span>
+          <span
+            aria-hidden="true"
+            className="text-xs text-muted transition-transform group-open:rotate-90"
+          >
+            ▶
           </span>
-          <span className="text-xs text-muted transition-transform group-open:rotate-90">▶</span>
         </summary>
 
         <div className="mt-4 space-y-4 text-sm leading-relaxed text-muted">
           <p>
             A browser can't start or stop an OS process, so the dashboard talks to a small local{' '}
-            <span className="font-medium text-fg">control agent</span> (<Code>{agentBase}</Code>)
-            that supervises the qelay server process — start, stop and restart — and streams its
-            logs back here.
+            <span className="font-bold text-fg">control agent</span> (<Code>{agentBase}</Code>) that
+            supervises the qelay server process — start, stop and restart — and streams its logs
+            back here.
           </p>
 
           <div>
-            <div className="mb-1 font-medium text-fg">Launch &amp; environment</div>
+            <div className="mb-1 font-bold text-fg">Launch &amp; environment</div>
             <p>
               The agent runs your <span className="text-fg">Command</span> and injects{' '}
               <Code>HTTP_PORT</Code> and <Code>TCP_PORT</Code>, plus <Code>QELAY_DATA_PATH</Code>{' '}
@@ -42,7 +49,7 @@ export function AgentInfoCard({ agentBase }: { agentBase: string }) {
           </div>
 
           <div>
-            <div className="mb-1 font-medium text-fg">When changes apply</div>
+            <div className="mb-1 font-bold text-fg">When changes apply</div>
             <p>
               Config is editable any time, but <span className="text-fg">Command</span>, ports and
               data path only take effect on the <span className="text-fg">next start/restart</span>{' '}
@@ -51,7 +58,7 @@ export function AgentInfoCard({ agentBase }: { agentBase: string }) {
           </div>
 
           <div>
-            <div className="mb-1 font-medium text-fg">Data path</div>
+            <div className="mb-1 font-bold text-fg">Data path</div>
             <p>
               Relative paths resolve against the <span className="text-fg">agent's</span> working
               directory. SQLite creates the database <span className="text-fg">file</span> but not
@@ -62,7 +69,7 @@ export function AgentInfoCard({ agentBase }: { agentBase: string }) {
           </div>
 
           <div>
-            <div className="mb-1 font-medium text-fg">Security</div>
+            <div className="mb-1 font-bold text-fg">Security</div>
             <p>
               The direct agent listener binds <Code>127.0.0.1</Code>, locks CORS to an allowlist
               (never <Code>*</Code>), and rejects a disallowed <Code>Origin</Code> or{' '}

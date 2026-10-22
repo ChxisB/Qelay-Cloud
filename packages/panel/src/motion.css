@@ -1,0 +1,262 @@
+/* Motion patterns: a page adds a class, never a keyframe. Times and curves are the tokens in tokens.css.
+   Only `transform` and `opacity` move. Every rule that applies motion sits inside the no-preference query, so
+   a reader who asks for none sees the final state at once (the reduce rule in index.css is the backstop).
+   Keyframes give only the start or the end, so an element keeps its own transform (a centred card, a bar's scale).
+   `--i` is an item's place in a list; the delay stops growing after the eighth. */
+
+@keyframes m-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes m-leave {
+  to {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes m-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes m-unfade {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes m-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+}
+@keyframes m-slide {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+@keyframes m-slide-out {
+  to {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+@keyframes m-sheet {
+  from {
+    opacity: 0;
+    transform: translateY(32px);
+  }
+}
+@keyframes m-sheet-out {
+  to {
+    opacity: 0;
+    transform: translateY(32px);
+  }
+}
+@keyframes m-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+@keyframes m-draw {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes m-draw-y {
+  from {
+    transform: scaleY(0);
+  }
+}
+@keyframes m-flash {
+  from {
+    opacity: 0.3;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes m-ping {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+@keyframes m-step {
+  from {
+    transform: translateX(var(--step));
+  }
+}
+@keyframes m-comet {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes m-comet-y {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+/* Without motion the sidebar highlight and the tab underline are not drawn (see below). */
+.nav-ind,
+.tab-ind {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .motion-arrive,
+  .motion-stagger > * {
+    animation: m-arrive var(--dur-enter) var(--ease-settle) backwards;
+    animation-delay: calc(min(var(--i, 0), 8) * var(--dur-stagger));
+  }
+  .motion-leave {
+    animation: m-leave var(--dur-exit) var(--ease-exit) forwards;
+  }
+  /* Overlay scrim, dialog or menu, drawer: the same three, named for what they are. */
+  .motion-fade {
+    animation: m-fade var(--dur-enter) var(--ease-settle) backwards;
+  }
+  .motion-fade-out {
+    animation: m-unfade var(--dur-exit) var(--ease-exit) forwards;
+  }
+  .motion-drop {
+    animation: m-drop var(--dur-enter) var(--ease-settle) backwards;
+  }
+  .motion-slide {
+    animation: m-slide var(--dur-enter) var(--ease-settle) backwards;
+  }
+  .motion-slide-out {
+    animation: m-slide-out var(--dur-exit) var(--ease-exit) forwards;
+  }
+  /* A sheet from the bottom edge. */
+  .motion-sheet {
+    animation: m-sheet var(--dur-enter) var(--ease-settle) backwards;
+  }
+  .motion-sheet-out {
+    animation: m-sheet-out var(--dur-exit) var(--ease-exit) forwards;
+  }
+  /* Overshoots: small switches and the token lock card only. */
+  .motion-pop {
+    animation: m-pop var(--dur-enter) var(--ease-pop) backwards;
+  }
+  /* A line from its left end; an item's own `--i` staggers a row of them. */
+  .motion-draw {
+    transform-origin: left center;
+    animation: m-draw var(--dur-draw) var(--ease-settle) backwards;
+    animation-delay: calc(min(var(--i, 0), 8) * var(--dur-stagger));
+  }
+  /* The same, downward, for a line that runs between rows. */
+  .motion-draw-y {
+    transform-origin: center top;
+    animation: m-draw-y var(--dur-draw) var(--ease-settle) backwards;
+    animation-delay: calc(min(var(--i, 0), 8) * var(--dur-stagger));
+  }
+  /* On an SVG group the line scales about its own box, not the whole canvas. */
+  svg .motion-draw {
+    transform-box: fill-box;
+  }
+  /* A bar set to `transform: scaleX(n)`: it draws in once, then eases to each new value. */
+  .motion-fill {
+    transform-origin: left center;
+    animation: m-draw var(--dur-draw) var(--ease-settle) backwards;
+    transition: transform var(--dur-enter) var(--ease-settle);
+  }
+  /* A wash over a figure that just changed. Restart it with a new React key (useChangeFlash). */
+  .motion-flash {
+    position: relative;
+  }
+  .motion-flash::after {
+    content: '';
+    position: absolute;
+    inset: -3px -8px;
+    border-radius: 10px;
+    background: var(--hl);
+    opacity: 0;
+    pointer-events: none;
+    animation: m-flash var(--dur-flow) ease-out 1 both;
+  }
+  /* A ring that goes out once from a pill whose state just changed. Restart it with a new React key. */
+  .motion-ping {
+    position: relative;
+  }
+  .motion-ping::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 1.5px solid currentColor;
+    border-radius: inherit;
+    pointer-events: none;
+    animation: m-ping var(--dur-flow) var(--ease-settle) 1 both;
+  }
+  /* A rolling chart that moved on by one point: `--step` (set inline) is how far the line sat to the right. */
+  .motion-step {
+    animation: m-step var(--dur-enter) var(--ease-settle) backwards;
+  }
+  /* One pass along a line (it needs `position: relative; overflow: hidden`), added only when something really moved. */
+  .motion-comet::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0, transparent 72%, var(--active) 100%);
+    pointer-events: none;
+    animation: m-comet var(--dur-flow) var(--ease-settle) 1 both;
+  }
+  .motion-comet-y::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, transparent 0, transparent 72%, var(--active) 100%);
+    pointer-events: none;
+    animation: m-comet-y var(--dur-flow) var(--ease-settle) 1 both;
+  }
+
+  /* The sidebar's shared highlight (Sidebar.tsx): it slides to the current row, and that row's own wash steps aside.
+     Outside this query the highlight is not drawn and each row washes itself. */
+  .nav-ind {
+    display: block;
+    transition: transform var(--dur-enter) var(--ease-settle);
+  }
+  [data-nav-slide] [aria-current='page'] {
+    background-color: transparent;
+  }
+  /* The tab underline (LinkTabs.tsx) slides the same way; the open tab's own border steps aside. */
+  .tab-ind {
+    display: block;
+    transition: transform var(--dur-enter) var(--ease-settle);
+  }
+  [data-tab-slide] [aria-current='page'] {
+    border-color: transparent;
+  }
+
+  /* A page change (pageTransition.ts names <main> "page" for the length of the change). The old page leaves, the new
+     one arrives, and the shell around them is not redrawn. Clicks pass through to the live page. */
+  ::view-transition {
+    pointer-events: none;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+  }
+  ::view-transition-old(page) {
+    animation: m-leave var(--dur-exit) var(--ease-exit) forwards;
+  }
+  ::view-transition-new(page) {
+    animation: m-arrive var(--dur-enter) var(--ease-settle) backwards;
+  }
+}

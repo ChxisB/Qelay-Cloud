@@ -34,7 +34,7 @@ describe('the Transport page on SQS', () => {
       )
     );
     const headers = [...page.host.querySelectorAll('thead th')].map((th) => th.textContent);
-    expect(headers).toContain('In flight');
+    expect(headers).toContain('Picked up');
     expect(headers).toContain('Delayed');
     const row = rowFor(page.host, 'emails');
     for (const figure of ['≈14', '≈3', '≈6', '≈2']) expect(row).toContain(figure);
@@ -79,7 +79,7 @@ describe('the Transport page on SQS', () => {
   test('a broker that counts exactly has no approximate marks, and no in-flight column when it gives none', async () => {
     const { page } = await show(transport([queue('a', { doorbellDepth: 14 })]));
     const headers = [...page.host.querySelectorAll('thead th')].map((th) => th.textContent);
-    expect(headers).not.toContain('In flight');
+    expect(headers).not.toContain('Picked up');
     expect(headers).not.toContain('Delayed');
     expect(rowFor(page.host, 'a')).not.toContain('≈');
     expect(page.text()).not.toContain('approximate');

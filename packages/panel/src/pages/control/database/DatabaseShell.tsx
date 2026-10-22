@@ -1,3 +1,4 @@
+import { SystemTabs } from '@/components/SystemTabs';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState, ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
@@ -5,6 +6,7 @@ import { SegmentedControl } from '@/components/ui/form';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { StatCard } from '@/components/ui/StatCard';
+import { Tag } from '@/components/ui/Tag';
 import { cn } from '@/lib/cn';
 import { formatBytes, formatNumber } from '@/lib/format';
 import { FilterBar } from './FilterBar';
@@ -65,13 +67,10 @@ export function DatabaseShell({ db }: { db: DatabaseController }) {
     >
       <PageHeader
         title="Database"
-        description="SQLite inspector — schema, data and queries over a read-only connection."
-        actions={
-          <span className="rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success">
-            read-only
-          </span>
-        }
+        description="Look inside the server's database: its tables, the rows in them, and your own queries. You can read here but not change anything."
+        actions={<Tag>read-only</Tag>}
       />
+      <SystemTabs current="/database" />
 
       {tablesError && !dbMissing && (
         <OfflineBanner
@@ -103,32 +102,33 @@ export function DatabaseShell({ db }: { db: DatabaseController }) {
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
           <Card padded={false} className="self-start overflow-hidden">
-            <div className="border-b border-line px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-faint">
+            <h2 className="m-0 border-b border-line px-4 py-4 text-lg font-bold text-fg">
               Tables ({tables.length})
-            </div>
-            <ul className="max-h-[28rem] overflow-y-auto">
+            </h2>
+            <ul className="m-0 max-h-[28rem] list-none overflow-y-auto p-0">
               {tables.map((t) => (
                 <li key={t.name}>
                   <button
                     type="button"
                     onClick={() => selectTable(t.name)}
+                    aria-pressed={selected === t.name}
                     className={cn(
-                      'flex w-full items-center justify-between gap-2 px-4 py-2 text-left text-sm transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      'flex min-h-8 w-full items-center justify-between gap-2 px-4 py-2 text-left transition-colors',
+                      'focus-visible:-outline-offset-3',
                       selected === t.name
-                        ? 'bg-surface-2 text-fg'
-                        : 'text-muted hover:bg-surface-2/60 hover:text-fg'
+                        ? 'bg-slate-tint font-bold text-fg'
+                        : 'text-muted hover:bg-hover hover:text-fg'
                     )}
                   >
-                    <span className="min-w-0 truncate font-mono text-xs">{t.name}</span>
-                    <span className="shrink-0 text-[11px] text-faint tabular-nums">
+                    <span className="min-w-0 truncate font-mono text-[13px]">{t.name}</span>
+                    <span className="shrink-0 text-[13px] text-muted tabular-nums">
                       {formatNumber(t.rows)}
                     </span>
                   </button>
                 </li>
               ))}
               {tables.length === 0 && (
-                <li className="px-4 py-6 text-center text-xs text-faint">No tables.</li>
+                <li className="px-4 py-4 text-center text-[13px] text-muted">No tables.</li>
               )}
             </ul>
           </Card>
@@ -140,13 +140,13 @@ export function DatabaseShell({ db }: { db: DatabaseController }) {
               <>
                 {selected && (
                   <div className="mb-3 flex flex-wrap items-center gap-2">
-                    <span
-                      className="mr-auto min-w-0 truncate font-mono text-sm text-fg"
+                    <h2
+                      className="m-0 mr-auto min-w-0 truncate font-mono text-lg font-bold text-fg"
                       title={selected}
                     >
                       {selected}
-                    </span>
-                    <Button size="sm" variant="ghost" onClick={queryThisTable}>
+                    </h2>
+                    <Button size="sm" onClick={queryThisTable}>
                       Query
                     </Button>
                     <SegmentedControl
@@ -162,12 +162,12 @@ export function DatabaseShell({ db }: { db: DatabaseController }) {
                           disabled={!data || data.rows.length === 0}
                           title={
                             data
-                              ? `Exports the ${data.rows.length} rows on this page only`
+                              ? `Exports only the ${data.rows.length} rows on this page`
                               : undefined
                           }
                           onClick={exportPage}
                         >
-                          Export page{data ? ` (${data.rows.length})` : ''}
+                          Export this page{data ? ` (${data.rows.length})` : ''}
                         </Button>
                         <Button
                           size="sm"
@@ -177,7 +177,7 @@ export function DatabaseShell({ db }: { db: DatabaseController }) {
                         >
                           {exportBusy
                             ? 'Exporting…'
-                            : `Export table${data ? ` (${formatNumber(data.total)})` : ''}`}
+                            : `Export whole table${data ? ` (${formatNumber(data.total)})` : ''}`}
                         </Button>
                       </>
                     )}
@@ -197,7 +197,7 @@ export function DatabaseShell({ db }: { db: DatabaseController }) {
                   />
                 )}
 
-                {msg && <p className="mb-3 text-xs text-muted">{msg}</p>}
+                {msg && <p className="m-0 mb-3 text-[13px] text-muted">{msg}</p>}
 
                 {tab === 'schema' ? (
                   schemaError ? (
@@ -249,7 +249,7 @@ export function DatabaseShell({ db }: { db: DatabaseController }) {
                       dimmed={rowsLoading && !data}
                     />
                     {anyTruncated && (
-                      <p className="mt-2 text-[11px] text-faint">
+                      <p className="m-0 mt-2 text-[13px] text-muted">
                         Cells over 2000 chars and BLOBs are abbreviated in the grid and CSV — use
                         the row's View action to read the full value.
                       </p>

@@ -1,10 +1,12 @@
-import { Button, IconButton } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
+import { IconButton } from '@/components/ui/Button';
+import { Card, CardHeader } from '@/components/ui/Card';
+import { Figure } from '@/components/ui/Figure';
 import { Select } from '@/components/ui/form';
-import { IconDownload, IconRefresh } from '@/components/ui/icons';
-import { useDlqMutations } from '@/lib/capabilities/useCapabilities';
+import { IconDownload } from '@/components/ui/icons';
+import { SearchField } from '@/components/ui/SearchField';
+import { StatCard } from '@/components/ui/StatCard';
+import { StatusPill } from '@/components/ui/StatusBadge';
 import { cn } from '@/lib/cn';
-import { FLOW_BULK_RETRY_UNAVAILABLE, FLOW_DELETION_UNAVAILABLE } from '@/lib/flowMutationSafety';
 import { formatNumber } from '@/lib/format';
 
 export interface DlqQueueOption {
@@ -31,77 +33,51 @@ export function DlqSummary({
   pendingRetry?: number;
   reasonCount?: number;
 }) {
+  const unreadable = discoveryError || total == null;
   return (
     <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-      <Card>
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-faint">
-            Total in DLQ
-          </span>
-          <span
-            className={cn(
-              'rounded-full px-2 py-0.5 text-[11px] font-medium',
-              discoveryError
-                ? 'bg-state-delayed-bg text-state-delayed-fg'
-                : total == null
-                  ? 'bg-surface-2 text-muted'
-                  : healthy
-                    ? 'bg-state-completed-bg text-state-completed-fg'
-                    : 'bg-state-failed-bg text-state-failed-fg'
-            )}
-          >
-            {discoveryError
+      <StatCard
+        label="Total in DLQ"
+        value={total == null ? '—' : formatNumber(total)}
+        tone={unreadable ? 'default' : healthy ? 'green' : 'red'}
+        hint={
+          discoveryError ? (
+            <StatusPill state="delayed">Unavailable</StatusPill>
+          ) : total == null ? (
+            'Loading'
+          ) : healthy ? (
+            <StatusPill state="completed">Healthy</StatusPill>
+          ) : (
+            <StatusPill state="failed">Attention</StatusPill>
+          )
+        }
+        compact
+      />
+      <StatCard
+        label="Top reason"
+        value={
+          <span className="text-lg font-bold">
+            {discoveryError || statsError
               ? 'Unavailable'
-              : total == null
-                ? 'Loading'
-                : healthy
-                  ? 'Healthy'
-                  : 'Attention'}
+              : queue
+                ? (topReason ?? 'No failures')
+                : 'Select a queue'}
           </span>
-        </div>
-        <div
-          className={cn(
-            'mt-2 text-3xl font-bold tnum',
-            total == null || discoveryError
-              ? 'text-muted'
-              : healthy
-                ? 'text-success'
-                : 'text-danger'
-          )}
-        >
-          {total == null ? '—' : formatNumber(total)}
-        </div>
-      </Card>
-      <Card>
-        <div className="text-[11px] font-medium uppercase tracking-wider text-faint">
-          Top Reason
-        </div>
-        <div className="mt-2 text-lg font-semibold text-fg">
-          {discoveryError || statsError
-            ? 'Unavailable'
-            : queue
-              ? (topReason ?? 'No failures')
-              : 'Select a queue'}
-        </div>
-      </Card>
-      <Card>
-        <div className="text-[11px] font-medium uppercase tracking-wider text-faint">
-          Pending Retry
-        </div>
-        <div className="mt-2 text-3xl font-bold tnum text-fg">
-          {pendingRetry == null ? '—' : formatNumber(pendingRetry)}
-        </div>
-        <div className="mt-1 text-xs text-faint">{queue ? 'in this queue' : 'awaiting retry'}</div>
-      </Card>
-      <Card>
-        <div className="text-[11px] font-medium uppercase tracking-wider text-faint">
-          Failure Types
-        </div>
-        <div className="mt-2 text-3xl font-bold tnum text-fg">
-          {reasonCount == null ? '—' : formatNumber(reasonCount)}
-        </div>
-        <div className="mt-1 text-xs text-faint">distinct reasons</div>
-      </Card>
+        }
+        compact
+      />
+      <StatCard
+        label="Pending retry"
+        value={pendingRetry == null ? '—' : formatNumber(pendingRetry)}
+        hint={queue ? 'in this queue' : 'awaiting retry'}
+        compact
+      />
+      <StatCard
+        label="Failure types"
+        value={reasonCount == null ? '—' : formatNumber(reasonCount)}
+        hint="distinct reasons"
+        compact
+      />
     </div>
   );
 }
@@ -115,42 +91,30 @@ export function DlqQueueGrid({
   queue: string;
   onSelect: (name: string) => void;
 }) {
-  const mutations = useDlqMutations();
   if (queues.length === 0) return null;
   return (
     <Card className="mb-6">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-faint">
-          DLQ by queue
-        </span>
-        {mutations.operator && (
-          <div className="flex items-center gap-2">
-            {mutations.retry && (
-              <Button size="sm" disabled title={FLOW_BULK_RETRY_UNAVAILABLE}>
-                <IconRefresh className="size-3.5" /> Retry all ({queues.length} queues)
-              </Button>
-            )}
-            <Button variant="danger" size="sm" disabled title={FLOW_DELETION_UNAVAILABLE}>
-              Purge all ({queues.length} queues)
-            </Button>
-          </div>
-        )}
-      </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
+      <CardHeader title="DLQ by queue" sub="Pick a queue to see only its jobs." />
+      <div
+        role="group"
+        aria-label="DLQ by queue"
+        className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5"
+      >
         {queues.map((item) => (
           <button
             key={item.name}
             type="button"
+            aria-pressed={queue === item.name}
             onClick={() => onSelect(item.name)}
             className={cn(
-              'rounded-lg border p-3 text-left transition-colors',
-              queue === item.name
-                ? 'border-link/50 bg-surface-2'
-                : 'border-line hover:border-line-strong'
+              'rounded-[18px] border p-3 text-left transition-colors',
+              queue === item.name ? 'border-hl bg-selected' : 'border-line hover:bg-hover'
             )}
           >
             <div className="truncate font-mono text-xs text-muted">{item.name}</div>
-            <div className="mt-1 text-xl font-bold tnum text-danger">{item.dlq}</div>
+            <div className="mt-1 text-xl font-bold tnum text-danger">
+              <Figure value={item.dlq} />
+            </div>
           </button>
         ))}
       </div>
@@ -185,7 +149,6 @@ export function DlqFilters({
   onSearch: (value: string) => void;
   onExport: () => void;
 }) {
-  const mutations = useDlqMutations();
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3">
       <div className="w-48">
@@ -213,7 +176,7 @@ export function DlqFilters({
           name="dlq-reason-filter"
           autoComplete="off"
         >
-          <option value="all">All Reasons</option>
+          <option value="all">All reasons</option>
           {reasons.map((item) => (
             <option key={item} value={item}>
               {item}
@@ -221,7 +184,7 @@ export function DlqFilters({
           ))}
         </Select>
       </div>
-      <div className="w-36">
+      <div className="w-44">
         <Select
           value={sort}
           onChange={(event) => onSort(event.target.value as 'newest' | 'oldest')}
@@ -229,30 +192,21 @@ export function DlqFilters({
           name="dlq-sort"
           autoComplete="off"
         >
-          <option value="newest">Newest First{pageScoped ? ' (this page)' : ''}</option>
+          <option value="newest">Newest first{pageScoped ? ' (this page)' : ''}</option>
           <option value="oldest">Oldest First{pageScoped ? ' (this page)' : ''}</option>
         </Select>
       </div>
-      <input
+      <SearchField
+        containerClassName="min-w-40 flex-1"
         value={search}
         onChange={(event) => onSearch(event.target.value)}
         placeholder="Filter this page by job ID…"
         aria-label="Filter this page by job ID"
         name="dlq-job-filter"
         autoComplete="off"
-        className="h-9 min-w-40 flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-fg placeholder:text-faint focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
       />
-      {mutations.operator && mutations.retry && (
-        <Button size="sm" disabled title={FLOW_BULK_RETRY_UNAVAILABLE}>
-          <IconRefresh className="size-3.5" /> Retry All
-        </Button>
-      )}
-      {mutations.operator && (
-        <Button variant="danger" size="sm" disabled title={FLOW_DELETION_UNAVAILABLE}>
-          Purge All
-        </Button>
-      )}
       <IconButton
+        size="sm"
         aria-label="Export this page to CSV"
         title="Export this page to CSV"
         disabled={!queue}

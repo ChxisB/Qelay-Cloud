@@ -21,7 +21,7 @@ export function ConfigLoadError({ title, onRetry }: { title: string; onRetry: ()
   return (
     <Card>
       <CardHeader title={title} />
-      <p className="mb-3 text-sm text-muted">Couldn't load this queue's config.</p>
+      <p className="mb-3 text-[13px] text-muted">Couldn't load this queue's config.</p>
       <Button size="sm" onClick={onRetry}>
         Retry
       </Button>

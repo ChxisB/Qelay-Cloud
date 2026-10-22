@@ -40,9 +40,9 @@ bun run test:e2e && bun run docs:check && bun run security:routes --check && bun
 QCLOUD_REQUIRE_TERRAFORM=1 bun run check:terraform
 ```
 
-The Pub/Sub emulator is started on the host (see [CLAUDE.md](../CLAUDE.md)). The compose file starts PostgreSQL 16, so this is
-the first run of the database suites on 16: if the DDL snapshot or an `EXPLAIN` check differs, regenerate it with
-`QCLOUD_UPDATE_SNAPSHOT=1`, read the diff, and commit it. The Firefox project of `test:e2e` is also run here for the first
+The Pub/Sub emulator is started on the host (see [CLAUDE.md](../CLAUDE.md)). The compose file starts PostgreSQL 18, so this is
+the first run of the database suites on the Docker image: if the DDL snapshot or an `EXPLAIN` check differs, regenerate it
+with `QCLOUD_UPDATE_SNAPSHOT=1`, read the diff, and commit it. The Firefox project of `test:e2e` is also run here for the first
 time. Then, in each of `infra/gcp/example`, `infra/gcp/control-plane`, `infra/aws/example` and `infra/aws/control-plane`:
 
 ```bash

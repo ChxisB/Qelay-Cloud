@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import {
   BulkAddJobs,
@@ -8,12 +9,13 @@ import {
   MAX_BULK_INPUT_BYTES,
   MAX_BULK_INPUT_CHARS,
 } from '../src/pages/control/BulkAddJobs';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 
 ensureDom();
 
+let stopAnswering = () => {};
 const realFetch = globalThis.fetch;
-const realConfirm = window.confirm;
 const realFileReader = globalThis.FileReader;
 const realWindowFileReader = window.FileReader;
 const realJsonParse = JSON.parse;
@@ -157,9 +159,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopAnswering();
+  stopAnswering = () => {};
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
   globalThis.FileReader = realFileReader;
   window.FileReader = realWindowFileReader;
   Object.defineProperty(JSON, 'parse', {
@@ -179,7 +182,8 @@ describe('BulkAddJobs file and payload bounds', () => {
   test('is last-selection-wins, rejects size before read, and aborts on unmount', async () => {
     globalThis.FileReader = ControlledFileReader as unknown as typeof FileReader;
     window.FileReader = ControlledFileReader as unknown as typeof FileReader;
-    globalThis.window.confirm = () => true;
+    const yes = answerConfirms();
+    stopAnswering = yes.stop;
     globalThis.fetch = ((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/dashboard/queues')) {
@@ -188,7 +192,7 @@ describe('BulkAddJobs file and payload bounds', () => {
       return Promise.resolve(json({ ok: false, error: `unexpected ${url}` }, 500));
     }) as typeof fetch;
 
-    const view = render(createElement(BulkAddJobs));
+    const view = render(createElement(MemoryRouter, {}, createElement(BulkAddJobs)));
     await settle(5);
     const input = view.host.querySelector<HTMLInputElement>('[name="jobs-file"]')!;
     const textarea = view.host.querySelector<HTMLTextAreaElement>('[name="jobs-json"]')!;
@@ -209,7 +213,12 @@ describe('BulkAddJobs file and payload bounds', () => {
     expect(ControlledFileReader.instances).toHaveLength(readerCount);
     expect(view.host.textContent).toContain('File is too large');
 
+    // The input holds text now, so the pick asks before it replaces it.
     selectFile(input, { name: 'pending.json', size: 10 });
+    await settle(10);
+    expect(yes.questions).toEqual([
+      { question: 'Replace the current input with "pending.json"?', confirmLabel: 'Replace' },
+    ]);
     const pending = ControlledFileReader.instances.at(-1)!;
     expect(pending.readCount).toBe(1);
     view.unmount();

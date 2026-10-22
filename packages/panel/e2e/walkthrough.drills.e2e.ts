@@ -26,12 +26,12 @@ test('a viewer reads every page and changes nothing: absent in the panel, refuse
     await go(page, route, VIEWER);
     await expect(page.locator('#main h1').first()).toBeVisible();
   }
-  for (const route of ['/add-job', '/queue-control', '/dlq-control']) {
+  for (const route of ['/add-job', '/jobs/bulk-add']) {
     await go(page, route, VIEWER);
     await expect(page.locator('#main').getByText('Operator role needed')).toBeVisible();
   }
   await go(page, '/cron', VIEWER);
-  await expect(page.getByRole('button', { name: 'Submit upsert' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'New schedule' })).toHaveCount(0);
 
   const headers = { Authorization: `Bearer ${E2E_VIEWER_TOKEN}` };
   const attempts: Array<[string, string, unknown]> = [

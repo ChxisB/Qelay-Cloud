@@ -12,7 +12,7 @@ deployment. The next steps are [GCP](quickstart-gcp.md) and [AWS](quickstart-aws
 ## What you need
 
 - [Bun](https://bun.sh) 1.4.2 (the version in `.bun-version`). Qelay-Cloud uses `Bun.SQL`, so it does not run on Node.
-- A Postgres 16 or later you can create a database in. The compose file below starts one on port 55452.
+- A Postgres 18 or later you can create a database in. The compose file below starts one on port 55452.
 
 The repository is the package for now: nothing is published yet, so you work from a checkout.
 

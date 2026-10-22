@@ -12,6 +12,8 @@ export function delivery(overrides: Partial<ClaimedDelivery> = {}): ClaimedDeliv
     deliveryId: '41',
     webhookId: 'wh_1',
     url: 'https://hooks.example.com/in?x=1',
+    destination: 'http',
+    target: null,
     attempt: 1,
     event: 'job.completed',
     queue: 'emails',

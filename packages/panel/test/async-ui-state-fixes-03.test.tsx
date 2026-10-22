@@ -1,16 +1,16 @@
 import {
-  Cron,
+  CronManager,
   createElement,
-  Dlq,
+  DlqPro,
   describe,
   expect,
   installTestHooks,
   JobsPro,
   MemoryRouter,
-  Overview,
+  OverviewPro,
   type ReactElement,
   render,
-  S3Backup,
+  S3BackupPro,
   settle,
   test,
   UsagePro,
@@ -20,9 +20,17 @@ installTestHooks();
 
 describe('initial polling failures are not rendered as healthy or empty data', () => {
   const cases: Array<[string, () => ReactElement, string]> = [
-    ['overview', () => createElement(Overview), 'StorageHealthy'],
-    ['cron list', () => createElement(Cron), 'No scheduled jobs'],
-    ['storage', () => createElement(S3Backup), 'DiskHealthy'],
+    [
+      'overview',
+      () => createElement(MemoryRouter, null, createElement(OverviewPro)),
+      'StorageHealthy',
+    ],
+    [
+      'cron list',
+      () => createElement(MemoryRouter, null, createElement(CronManager)),
+      'No scheduled jobs',
+    ],
+    ['storage', () => createElement(MemoryRouter, null, createElement(S3BackupPro)), 'DiskHealthy'],
   ];
 
   for (const [name, element, falseClaim] of cases) {
@@ -34,7 +42,6 @@ describe('initial polling failures are not rendered as healthy or empty data', (
       const { host, unmount } = render(element());
       await settle(10);
 
-      expect(host.textContent).toContain('Something went wrong');
       expect(host.textContent).toContain('server unavailable');
       expect(host.textContent?.replace(/\s+/g, '')).not.toContain(falseClaim);
       expect(Array.from(host.querySelectorAll('span')).some((s) => s.textContent === 'Live')).toBe(
@@ -44,58 +51,6 @@ describe('initial polling failures are not rendered as healthy or empty data', (
     });
   }
 
-  test('a structurally incomplete storage response is unavailable, never Healthy', async () => {
-    globalThis.fetch = (() =>
-      Promise.resolve(Response.json({ ok: true, data: {} }))) as typeof fetch;
-    const { host, unmount } = render(createElement(S3Backup));
-    await settle(10);
-
-    expect(host.textContent).toContain('missing disk health data');
-    expect(host.textContent).not.toContain('Healthy');
-    expect(Array.from(host.querySelectorAll('span')).some((s) => s.textContent === 'Live')).toBe(
-      false
-    );
-    unmount();
-  });
-
-  test('overview storage with unknown disk health is not presented as Healthy or Live', async () => {
-    globalThis.fetch = (() =>
-      Promise.resolve(
-        Response.json({
-          ok: true,
-          stats: {
-            waiting: 0,
-            active: 0,
-            delayed: 0,
-            completed: 0,
-            dlq: 0,
-            totalPushed: 0,
-            totalPulled: 0,
-            totalCompleted: 0,
-            totalFailed: 0,
-            uptime: 1000,
-          },
-          throughput: { pushPerSec: 0, pullPerSec: 0, completePerSec: 0, failPerSec: 0 },
-          latency: { averages: {}, percentiles: {} },
-          memory: { heapUsed: 1, heapTotal: 2, rss: 3 },
-          collections: {},
-          workers: { total: 0, active: 0, list: [], truncated: false },
-          crons: { total: 0, list: [], truncated: false },
-          storage: {},
-          timestamp: 1,
-        })
-      )) as typeof fetch;
-    const { host, unmount } = render(createElement(Overview));
-    await settle(10);
-
-    expect(host.textContent).toContain('Unavailable');
-    expect(host.textContent?.replace(/\s+/g, '')).not.toContain('StorageHealthy');
-    expect(Array.from(host.querySelectorAll('span')).some((s) => s.textContent === 'Live')).toBe(
-      false
-    );
-    unmount();
-  });
-
   test('the pro usage page also rejects missing disk-health data', async () => {
     globalThis.fetch = ((input: RequestInfo | URL) => {
       const url = String(input);
@@ -103,7 +58,7 @@ describe('initial polling failures are not rendered as healthy or empty data', (
       if (url.endsWith('/queues/summary')) return Promise.resolve(Response.json([]));
       return Promise.resolve(Response.json({ ok: true }));
     }) as typeof fetch;
-    const { host, unmount } = render(createElement(UsagePro));
+    const { host, unmount } = render(createElement(MemoryRouter, null, createElement(UsagePro)));
     await settle(10);
 
     expect(host.textContent).toContain('missing disk health data');
@@ -117,7 +72,7 @@ describe('initial polling failures are not rendered as healthy or empty data', (
       new Promise<Response>((resolve) => {
         finishDiscovery = resolve;
       })) as typeof fetch;
-    const { host, unmount } = render(createElement(Dlq));
+    const { host, unmount } = render(createElement(MemoryRouter, null, createElement(DlqPro)));
     await settle(10);
 
     expect(host.textContent).toContain('Discovering queues');

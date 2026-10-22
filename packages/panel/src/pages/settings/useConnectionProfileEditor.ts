@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import {
   BASE_URL_ERROR,
   normalizeBaseUrl,
@@ -24,6 +25,7 @@ export function useConnectionProfileEditor() {
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const removing = useRef(false);
 
   const clearSaveNotice = useCallback(() => {
     if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
@@ -186,12 +188,23 @@ export function useConnectionProfileEditor() {
     });
   };
 
-  const remove = () => {
+  const remove = async () => {
     const profile = connection.profiles.find(
       (candidate) => candidate.id === connection.activeProfileId
     );
-    if (!profile || !window.confirm(`Remove connection profile "${profile.name}"?`)) return;
-    connection.removeProfile(profile.id);
+    if (!profile || removing.current) return;
+    removing.current = true;
+    try {
+      const yes = await confirmInPage({
+        question: 'Remove this connection?',
+        confirmLabel: 'Remove',
+        danger: true,
+        detail: `Remove connection profile "${profile.name}"?`,
+      });
+      if (yes) connection.removeProfile(profile.id);
+    } finally {
+      removing.current = false;
+    }
   };
 
   return {

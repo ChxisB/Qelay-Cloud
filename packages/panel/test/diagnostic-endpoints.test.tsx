@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { api } from '../src/lib/api';
 import { Diagnostics } from '../src/pages/control/Diagnostics';
@@ -21,7 +22,7 @@ function renderDiagnostics() {
     mounted.delete(unmount);
   };
   mounted.add(unmount);
-  act(() => root.render(createElement(Diagnostics)));
+  act(() => root.render(createElement(MemoryRouter, null, createElement(Diagnostics))));
   return host;
 }
 

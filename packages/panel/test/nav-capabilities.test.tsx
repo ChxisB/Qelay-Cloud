@@ -68,7 +68,7 @@ describe('Sidebar: what the deployment offers, and the header', () => {
       '/fleet',
       '/flows',
       '/workflows',
-      '/webhooks',
+      '/events-gateway',
     ]) {
       expect(hrefs).not.toContain(closed);
     }
@@ -79,18 +79,17 @@ describe('Sidebar: what the deployment offers, and the header', () => {
       '/dlq',
       '/cron',
       '/workers',
-      '/add-job',
-      '/queue-control',
-      '/job',
-      '/diagnostics',
+      '/deployment',
+      // System stays while any of its pages is open, and links to the first one that is.
+      '/mcp',
       '/settings',
     ]) {
       expect(hrefs).toContain(kept);
     }
-    // The whole Workflow group had nothing left.
+    // Automation had Webhooks and Flows, both closed here: the group goes with them.
     expect(
       Array.from(host.querySelectorAll<HTMLButtonElement>('nav button[aria-expanded]')).some((b) =>
-        b.textContent?.startsWith('Workflow')
+        b.textContent?.startsWith('Automation')
       )
     ).toBe(false);
   });
@@ -114,7 +113,7 @@ describe('Sidebar: what the deployment offers, and the header', () => {
     const { host } = sidebarAt('/');
     const text = host.textContent ?? '';
     expect(text).toContain('Qelay');
-    expect(text).toContain('Control panel');
+    expect(text).toContain('Cloud console');
     expect(text).not.toMatch(/bun.?queue/i);
   });
 });

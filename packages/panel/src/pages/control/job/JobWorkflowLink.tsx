@@ -13,13 +13,13 @@ export function JobWorkflowLink({ job }: { job: JobFull }) {
   return (
     <Card>
       <CardHeader title="Workflow" />
-      <dl className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-        <dt className="text-[11px] uppercase tracking-wider text-faint">Runs a step of</dt>
+      <dl className="flex flex-wrap items-baseline justify-between gap-2 text-[13px]">
+        <dt className="text-[13px] font-semibold text-muted">Runs a step of</dt>
         <dd>
           <Link
             to={workflowHref(executionId)}
             translate="no"
-            className="break-all font-mono text-xs text-fg underline decoration-dotted hover:decoration-solid"
+            className="break-all font-mono text-[13px] text-fg underline decoration-dotted hover:decoration-solid"
           >
             {executionId}
           </Link>

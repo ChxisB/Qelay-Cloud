@@ -1,7 +1,6 @@
 import {
-  act,
   createElement,
-  DlqControl,
+  DlqPro,
   dashboardQueue,
   describe,
   expect,
@@ -16,7 +15,7 @@ import {
   useToastStore,
 } from './server-action-pages.helpers';
 
-installTestHooks();
+installTestHooks({ yesToQuestions: true });
 
 describe('guarded job and entity actions', () => {
   test('JobsPro exposes no cancel, DLQ retry, or completed requeue mutation', async () => {
@@ -88,7 +87,7 @@ describe('guarded job and entity actions', () => {
     view.unmount();
   });
 
-  test('DlqControl exposes no row retry and cannot issue its POST', async () => {
+  test('DlqPro draws no row retry and cannot issue its POST', async () => {
     let retryCalls = 0;
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -133,15 +132,15 @@ describe('guarded job and entity actions', () => {
       return Promise.resolve(json({ ok: false, error: `Unexpected ${method} ${url}` }, 500));
     }) as typeof fetch;
 
-    const view = render(createElement(MemoryRouter, {}, createElement(DlqControl)));
+    const view = render(
+      createElement(MemoryRouter, { initialEntries: ['/dlq?queue=orders'] }, createElement(DlqPro))
+    );
     await settle(35);
     const retry = view.host.querySelector<HTMLButtonElement>('button[aria-label="Retry job"]');
     expect(retry).toBeNull();
-    const unavailable = view.host.querySelector<HTMLButtonElement>(
-      'button[aria-label="Retry job unavailable"]'
-    );
-    expect(unavailable?.disabled).toBe(true);
-    act(() => unavailable?.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
+    // A control for an action the transport lacks is not drawn; the note says why.
+    expect(view.host.querySelector('button[aria-label="Retry unavailable"]')).toBeNull();
+    expect(view.host.querySelector('tbody button[aria-label]')).toBeNull();
     expect(retryCalls).toBe(0);
     expect(useToastStore.getState().toasts).toEqual([]);
     view.unmount();

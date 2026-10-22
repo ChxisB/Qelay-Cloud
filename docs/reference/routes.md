@@ -2,7 +2,7 @@
 
 > Generated from [openapi.yaml](../openapi.yaml) by `bun run docs:check --write`. Do not edit it by hand: change the source.
 
-107 operations. The schemas, parameters and every response are in [openapi.yaml](../openapi.yaml); a test
+117 operations. The schemas, parameters and every response are in [openapi.yaml](../openapi.yaml); a test
 fails when a served route is missing from it or the other way round. `GET /health` takes no token; every other route
 takes a bearer token, and a route that changes something needs the `operator` role.
 
@@ -116,12 +116,22 @@ takes a bearer token, and a route that changes something needs the `operator` ro
 | GET | `/webhooks` | The registered webhooks |
 | POST | `/webhooks` | Register a webhook |
 | POST | `/webhooks/preview` | Try a filter and a shape on an event |
+| GET | `/webhooks/deliveries` | The deliveries of every route |
+| GET | `/webhooks/stats` | Delivery counts, failure ratio and latency over a window |
+| GET | `/webhooks/issues` | The issues, one per route whose deliveries are failing |
+| PUT | `/webhooks/issues/{id}` | Acknowledge, ignore, reopen or resolve an issue |
+| GET | `/webhooks/destinations` | The saved destinations |
+| POST | `/webhooks/destinations` | Save a destination |
+| PATCH | `/webhooks/destinations/{id}` | Rename a destination or move its address |
+| DELETE | `/webhooks/destinations/{id}` | Delete a destination |
 | GET | `/webhooks/{id}` | One webhook |
+| PATCH | `/webhooks/{id}` | Edit a webhook |
 | DELETE | `/webhooks/{id}` | Delete a webhook |
 | PUT | `/webhooks/{id}/enabled` | Enable or disable a webhook |
 | POST | `/webhooks/{id}/rotate-secret` | Rotate a webhook's signing secret |
 | POST | `/webhooks/{id}/test` | Queue a test event |
 | GET | `/webhooks/{id}/deliveries` | The delivery history of a webhook |
+| POST | `/webhooks/{id}/deliveries/retry` | Retry a route's failed deliveries |
 | POST | `/webhooks/{id}/deliveries/{deliveryId}/retry` | Retry a failed delivery |
 
 ## workers

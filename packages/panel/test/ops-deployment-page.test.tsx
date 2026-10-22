@@ -80,7 +80,7 @@ describe('the Deployment page', () => {
     ['late', 'Late'],
     ['stale', 'Stalled'],
     ['never', 'Has not run since this server started'],
-    ['unknown', 'no tick is reporting'],
+    ['unknown', 'no maintenance run is reporting'],
   ] as const)('a tick that is %s says so in the Tick card', async (state, words) => {
     const page = await show(
       deployment({ tick: { ...deployment().tick, state, lastSuccessAt: null, ageMs: null } })
@@ -108,8 +108,8 @@ describe('the Deployment page', () => {
     const text = page.text();
     expect(text).toContain('unknown of unknown');
     expect(text).toMatch(/Registered\s*unknown/);
-    expect(text).toMatch(/Round trip\s*unknown/);
-    expect(text).toMatch(/Claimable without a bell\s*unknown/);
+    expect(text).toMatch(/Response time\s*unknown/);
+    expect(text).toMatch(/Ready but not notified\s*unknown/);
     expect(text).not.toMatch(/Registered\s*0/);
     page.unmount();
   });

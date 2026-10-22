@@ -1,4 +1,5 @@
-import { useId } from 'react';
+import { type CSSProperties, useId, useState } from 'react';
+import { stagger } from '@/lib/stagger';
 
 export interface ChartSeries {
   label: string;
@@ -15,9 +16,28 @@ export interface ChartSeries {
    * The design allows one gradient per screen: set this on a single series, or on none.
    */
   gradient?: boolean;
+  /** Dash the stroke, so a second series differs by more than its colour. */
+  dashed?: boolean;
 }
 
 const AREA_OPACITY = 0.22;
+
+const sameValues = (a: readonly number[], b: readonly number[]) =>
+  a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+
+/**
+ * How many times the window moved on by exactly one point ([a,b,c] then [b,c,d]). A poll that returns the
+ * same values, or any other change (a longer window, a corrected value), adds none, so nothing restarts.
+ */
+function useRolls(points: readonly number[] | undefined): number {
+  const now = points ?? [];
+  const [seen, setSeen] = useState({ points: now, rolls: 0 });
+  if (!sameValues(seen.points, now)) {
+    const rolled = seen.points.length > 1 && sameValues(seen.points.slice(1), now.slice(0, -1));
+    setSeen({ points: now, rolls: seen.rolls + (rolled ? 1 : 0) });
+  }
+  return seen.rolls;
+}
 
 /**
  * Lightweight multi-series line/area chart (pure SVG, no dependency).
@@ -59,6 +79,8 @@ export function AreaChart({
   // Latest value of the first (primary) series, for the accessible summary.
   const first = series.find((s) => s.points.length > 0);
   const latest = first ? finite(first.points[first.points.length - 1]) : 0;
+  const rolls = useRolls(first?.points);
+  const stepWidth = maxLen <= 1 ? 0 : W / (maxLen - 1);
 
   return (
     <div className="w-full">
@@ -126,16 +148,25 @@ export function AreaChart({
                 ? `${line} L${W},${H} L0,${H} Z`
                 : `${line} L${x(s.points.length - 1)},${H} L${x(0)},${H} Z`;
             return (
-              <g key={s.label}>
-                {s.area && <path d={area} fill={`url(#${gid}-g${si})`} />}
-                <path
-                  d={line}
-                  fill="none"
-                  stroke={s.gradient ? `url(#${gid}-s${si})` : s.color}
-                  strokeWidth={s.gradient ? '2.5' : '2'}
-                  strokeLinejoin="round"
-                  vectorEffect="non-scaling-stroke"
-                />
+              // The outer group draws in once, when the series first has points. The inner one is new on each
+              // roll, so its slide restarts and the draw does not.
+              <g key={s.label} className="motion-draw" style={stagger(si)}>
+                <g
+                  key={rolls}
+                  className={rolls > 0 ? 'motion-step' : undefined}
+                  style={{ '--step': `${stepWidth}px` } as CSSProperties}
+                >
+                  {s.area && <path d={area} fill={`url(#${gid}-g${si})`} />}
+                  <path
+                    d={line}
+                    fill="none"
+                    stroke={s.gradient ? `url(#${gid}-s${si})` : s.color}
+                    strokeWidth={s.gradient ? '2.5' : '2'}
+                    strokeLinejoin="round"
+                    strokeDasharray={s.dashed ? '7 5' : undefined}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </g>
               </g>
             );
           })}
@@ -145,19 +176,19 @@ export function AreaChart({
         {hasData && (
           <>
             <span
-              className="pointer-events-none absolute left-1 -translate-y-full font-mono text-[10px] leading-none text-faint"
+              className="pointer-events-none absolute left-1 -translate-y-full font-mono text-[11px] leading-none text-faint"
               style={{ top: padY }}
             >
               {fmt(max)}
             </span>
-            <span className="pointer-events-none absolute left-1 top-1/2 -translate-y-1/2 font-mono text-[10px] leading-none text-faint">
+            <span className="pointer-events-none absolute left-1 top-1/2 -translate-y-1/2 font-mono text-[11px] leading-none text-faint">
               {fmt(max / 2)}
             </span>
           </>
         )}
       </div>
       {xLabels && (
-        <div className="mt-1 flex justify-between px-1 font-mono text-[10px] text-faint">
+        <div className="mt-1 flex justify-between px-1 font-mono text-[11px] text-faint">
           {xLabels.map((l) => (
             <span key={l}>{l}</span>
           ))}

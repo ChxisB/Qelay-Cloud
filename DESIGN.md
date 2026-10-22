@@ -36,6 +36,9 @@ Sources studied: `qelay` (`../qelay`, about 97k lines of TypeScript, MIT) and
 | D6 | Flows run on Postgres dependency tables, not Step Functions or Cloud Workflows. | Proposed |
 | D7 | Panel is copied and diverges (it is pinned to Qelay 2.9.11 contracts), not consumed as a dependency. | Proposed |
 | D10 | **Scale out by namespace, with an explicit map** (`QCLOUD_SHARDS`), one Postgres per shard. A namespace never spans databases. No hashing, no cross-shard queries. | Decided (review R21) |
+| D11 | **A webhook is an event-gateway route** (section 6): a source (one queue's job events), rules and a destination, an HTTPS URL or a queue. No route, no effect. No inbound sources, no user code. | **Decided** (owner, 2026-10-21) |
+| D12 | **Inbound HTTP sources** for the event gateway: a public ingest URL per source that stores the request, then fans it out as events to routes (section 6). A separate ingest service, never the Control API or the tick. Needs its own security review, rate limits and `infra/`. | **Proposed** (owner direction 2026-10-21; design not signed off) |
+| D13 | **The gateway console gets a name, rules you can edit, delay and dedupe, issue state, reusable destinations and grouped counts** (section 6). All declarative, no user code, no new source. | **Decided** (owner, 2026-10-21: "implement the new features and ui changes, no need to ask") |
 
 The numbering above is this document's. The build plan's `CURRENT.md` has its own list (D1-D12) of decisions
 that are the user's call, and its D1 (worker hosting) and D2 (doorbell granularity) are section 10's open
@@ -481,7 +484,107 @@ the store's own work and the ringing. What was decided where the design left roo
   `webhook=<id>` only. A viewer reads a webhook's address cut to its origin (`urlRedacted`). `features.webhooks` follows the
   jobs routes being served.
 - **One queue per webhook, not a list** (the task asked for a queue filter; the upstream panel had one queue field).
-- **Volume:** the sender is operator-scale. Fan-out belongs in a separate SDK-run delivery queue, not the tick.
+- **Volume:** the sender is operator-scale. Fan-out to third parties belongs in a separate SDK-run delivery queue, not the
+  tick. A `queue` destination (D11 below) writes a job row in the same database, so it is operator-scale too.
+
+**Event gateway (D11, decided 2026-10-21; built in the event-gateway plan, tasks 08 to 12).** Asked for on 2026-10-21 with Hookdeck as the reference. A webhook
+is already a Hookdeck connection with one fixed source, so this changes the words and adds a destination kind; it renames
+no table and no route.
+
+- **Words.** A webhook is a **route**: a source (the events of one queue, from the journal), rules (`filter`, `shape`, rate,
+  retry schedule, auto-pause) and a destination of a **kind**. A delivery is an **event** with **attempts**.
+  `qcloud_webhooks`, `qcloud_deliveries` and `/webhooks` keep their names: the previous release reads and writes them.
+- **Kinds.** `http` is today's URL and the default for every existing row. `queue` adds a job to a queue of the same
+  namespace through the store's own enqueue, so pause, rate limit, queue limits and dedupe apply. The job's `data` is the
+  body the route's `shape` renders and its `name` is the event's name. If the store refuses, that is a failed attempt and
+  follows the route's retry schedule like a 5xx. Filters and shapes still see the seven fields of the event, not the
+  job's `data`.
+- **"Start a workflow" is a queue route.** The Control API and the tick hold no workflow definitions and run no engine
+  (section 8): a run starts in a process that registered the workflow, by `start()`. So a route to a workflow is a `queue`
+  route whose worker calls `startWorkflow(name, data)`. A built-in `wf:start` job that every engine understands would
+  change the engine all workers run, and a worker that predates it would fail the job. Not decided here; say so if you want it.
+- **No route, no effect.** An event with no enabled matching route does nothing, as now. "When A happens, do B" is a route
+  from A's queue to B's queue, opted into per route. A chain is routes feeding routes: the job a route adds is a job like
+  any other, and its events can match the next route.
+- **Loops are refused when a route is saved, not found at run time.** The check reads the namespace's routes as edges from
+  a source queue to a destination queue. It answers `409 route_cycle` when the new edge closes a cycle and
+  `409 route_chain_too_long` when the longest chain would pass 5. A `queue` route needs a source queue (an all-queues
+  source would match the events of its own destination's jobs). It runs on create, on a change of queue or destination and on
+  enable, over every route whether enabled or not, under `pg_advisory_xact_lock` on the namespace (transaction-level only,
+  pooler-safe), so two saves cannot make a cycle between them. There is no run-time depth counter: it would put a column on
+  the job and the event, on the claim and complete paths, for a loop the save check already refuses. A job a worker's own
+  code adds is not a hop.
+- **Migration 16 is additive (task 08).** `destination text NOT NULL DEFAULT 'http'` checked against `http` and `queue`, and
+  a nullable `target` (the queue). `url` stays `NOT NULL` and holds the empty string for a queue route. A sender that
+  predates the migration cannot send to it and fails the delivery without a request; so the runbook says to add the first
+  queue route after every tick runs the new release.
+- **No user code and no new source in D11.** `filter` and `shape` stay declarative. Inbound HTTP sources are D12 below.
+  Still out, and each its own decision: JavaScript transforms, delay, dedupe, replay of a request, Hookdeck's Issues as
+  stored state (the panel shows a read-only view derived from paused and failing routes; Alerts and auto-pause stay).
+- **What is added beside it:** bulk retry of failed events (one operator action over a status filter, bounded by the store's delivery page limit), and the panel's Event gateway
+  page takes the place of the Webhooks page, with the same routes under it.
+
+**Gateway features (D13, decided 2026-10-21; plan `.claude/.planning/gateway-features/`).** The console Hookdeck-style work
+(plan gateway-ui) stopped at five proposals, G1 to G5; the owner approved all of them. Each keeps D11's rule: declarative
+data only, no code runs, and no route means no effect. Migrations 17 to 19 are all forward-only and safe with old workers:
+nullable or defaulted columns and new tables.
+
+- **A name and a description** for a route (`name`, `description`, both nullable), and **`PATCH /webhooks/{id}`** to change
+  them and a route's **rules**: `events`, `filter`, `shape`, `delay`, `dedupe`. The source queue and the destination are not
+  editable: a different one is a different route (remove and add), so the loop check stays where it is (create, enable).
+  A change applies to events from then on; deliveries already made keep the body they were made with.
+- **Delay and dedupe are rules of the writer**, like `filter` and `shape`: they need the delivery writer on, and a route with
+  one blocks switching it off. The order an event goes through is filter, dedupe, shape, delay, then the sender's rate limit
+  and retries. `delay` is `delayMs` (1 s to 1 h): the delivery is made as now and is not due until `delayMs` after the event.
+  `dedupe` is `{ windowMs, fields }`: of the events a route accepts, the first with a given value of those `fields` (any of
+  `event`, `queue`, `jobId`, `state`, `error`) goes, and later ones with the same values inside the window are dropped, not
+  recorded. The window starts at the first event and a repeat does not extend it. Keys are kept as a hash in
+  `qcloud_webhook_dedupe`, written in the writer's transaction (so a crashed pass repeats cleanly) and pruned by the tick.
+- **The shape is the transform.** Hookdeck's JavaScript transform stays out: `shape` already rewrites the body
+  declaratively, and now it can be edited. A user-code transform would be a new trust boundary and is a separate decision.
+- **Pause holds, disable ignores.** `PUT /webhooks/{id}/enabled` takes an optional `mode`. `hold` (the panel's Pause) turns the
+  route off but keeps making its deliveries, so Resume sends what was held; it is the pause an auto-pause makes, marked with
+  the reason `paused by an operator`, which is not an issue. `ignore` (the panel's Disable, and the default, as before) turns it
+  off and makes none. Resume from either needs no new column: the existing `disabled_reason` carries it.
+- **Issues are stored state** (`qcloud_webhook_issues`): one live issue for each route that is failing or was paused for failing,
+  opened by the sender's recording path and resolved by it when a delivery succeeds. An operator can acknowledge, ignore,
+  resolve or reopen one (an audit row each). A resolved issue that fails again is a new issue. Ignoring only hides it from
+  the open list and from Home: the route's state, alerts and auto-pause are unchanged.
+- **Reusable destinations** (`qcloud_webhook_destinations`): a named `http` URL or `queue` target that connections choose.
+  A connection keeps its own copy of the address (the sender and writer read only `qcloud_webhooks`), plus the id of the
+  destination it came from; changing a destination rewrites the copy of every connection that uses it, in one transaction,
+  re-running the loop check. A destination in use cannot be removed. A secret is never part of a destination: each connection
+  has its own, as before. **A source stays a queue** (reusable sources arrive with D12's inbound sources, which are the
+  only source with state of its own).
+- **Grouped counts**: `GET /webhooks/stats?groupBy=webhook` answers the same window with one entry per route (outcome counts and
+  a trend, no latency) in one read, for the list.
+
+**Inbound sources (D12, Proposed; plan `.claude/.planning/inbound-sources/`).** Asked for on 2026-10-21 so the console can
+match Hookdeck: a third party (Stripe, Shopify, an internal service) posts to a Qelay URL and the request becomes events.
+The owner's direction is decided; the design below is not, and nothing is built before it is signed off.
+
+- **Words.** A **source** has a public URL and a verification rule. A **request** is one stored inbound HTTP call. A route's
+  source is either one queue's job events (D11) or one inbound source. An event is a delivery of a request or of a job
+  event to a route, with attempts, as today.
+- **A separate ingest service.** The Control API is operator-scale and authenticated; the tick is a scheduled job. A public
+  endpoint at third-party volume is neither. The ingest is its own process (Cloud Run service on GCP, a container on AWS)
+  that only validates, stores and answers. It never runs a route, never calls the destination and never reads job state.
+  A request is stored in the same database (`qcloud_requests`) and the existing tick sender delivers the events, so the
+  ingest holds no outbound network access.
+- **Request path.** Method allow-list, size cap, content-type cap, per-source and global rate limit (a 429 before any
+  write), verification (HMAC with a stored secret, basic auth, API key, or none, chosen per source, constant-time compare),
+  store, then one event row per enabled route of the source, in one transaction, then the configured synchronous answer.
+  A request that fails a check is stored as `rejected` with a cause (so it is visible), up to a cap per source per minute so
+  an attacker cannot fill the table.
+- **Event body.** The request's body, headers and query are what a route's `filter` and `shape` see, in place of the seven
+  fields of a job event. The shape renderer already works on a JSON object; a non-JSON body is passed as text.
+- **Storage and retention.** Bodies are capped (256 KB default) and pruned by the same maintenance retention as deliveries.
+  Secrets are not stored in clear text and are never returned by the API (shown once, as the webhook secret is now).
+- **Not in D12.** JavaScript transforms, delay, dedupe, delivery groups, a CLI destination, replay of an arbitrary request to
+  another source (replay to the same routes is in). Each is its own decision.
+- **Gates it passes through:** a migration (20 or later; 17 to 19 are D13's), new Control API routes and openapi, a new service under `packages/` and
+  `infra/` (plan only; `terraform apply` needs the owner), a security review of the ingest path, a load check against
+  the connection budget, and a real-cloud run that only the owner can authorise (D9).
 
 ## 7. Cloud specifics
 
@@ -591,7 +694,7 @@ is a compare-and-set for `cancel` and `recover` only.
   Unported modules (`runtime`, `workers`, `crons`) still carry broker code and are the remaining
   schedule risk.
 - **The model harness on the real store.** *Closed on PostgreSQL 18.* 500 runs of 150 commands were green on the
-  in-memory fake, on Postgres and on Postgres with workers. PostgreSQL 16 is owed with the Docker profiles.
+  in-memory fake, on Postgres and on Postgres with workers.
 - **Connection pressure.** *Reduced and bounded.* A formula, a default pool of 2 and a pooler recipe. The
   smallest Cloud SQL tiers fit only a handful of worker processes. Not measured on a real instance.
 - **Driver behaviour.** `Bun.SQL` has no bound on a silent connection, and `LISTEN` fails silently through a

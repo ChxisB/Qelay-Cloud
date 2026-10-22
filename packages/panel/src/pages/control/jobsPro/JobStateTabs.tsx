@@ -1,11 +1,23 @@
+import { Figure } from '@/components/ui/Figure';
+import { STATE_SOLID, type StateRole } from '@/components/ui/StatusBadge';
 import type { QueueSummaryFull } from '@/lib/bqTypes';
 import { cn } from '@/lib/cn';
-import { formatNumber } from '@/lib/format';
 import { JOB_STATUSES, type JobStatusFilter, STATE_LABEL, stateCount } from './model';
 
+// The tile's swatch. The words and the number carry the meaning, so the swatch is only a cue.
+const SWATCH: Partial<Record<JobStatusFilter, StateRole>> = {
+  waiting: 'waiting',
+  prioritized: 'prioritized',
+  active: 'active',
+  delayed: 'delayed',
+  completed: 'completed',
+  failed: 'failed',
+};
+
 /**
- * The state filter. These are toggle buttons in a labelled group (the same pattern as
- * `SegmentedControl`), not ARIA tabs: there is one table, and no tab panel to switch.
+ * The state filter, as the design's row of counted tiles. These are toggle buttons in a labelled
+ * group (the same pattern as `SegmentedControl`), not ARIA tabs: there is one table, and no tab
+ * panel to switch.
  */
 export function JobStateTabs({
   status,
@@ -20,11 +32,12 @@ export function JobStateTabs({
     <div
       role="group"
       aria-label="Job state"
-      className="flex gap-1 overflow-x-auto border-b border-line"
+      className="grid grid-cols-[repeat(auto-fit,minmax(min(132px,100%),1fr))] gap-3"
     >
       {JOB_STATUSES.map((item) => {
         const active = item === status;
         const count = stateCount(counts, item);
+        const role = SWATCH[item];
         return (
           <button
             key={item}
@@ -32,23 +45,19 @@ export function JobStateTabs({
             aria-pressed={active}
             onClick={() => onStatus(item)}
             className={cn(
-              '-mb-px flex h-10 shrink-0 items-center gap-2 border-b-2 px-3.5 text-[13px] transition-colors',
-              'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
-              active
-                ? 'border-ring font-semibold text-fg'
-                : 'border-transparent font-medium text-muted hover:text-fg'
+              'flex min-h-[72px] flex-col items-start gap-0.5 rounded-[18px] border px-4 py-3.5 text-left transition-colors',
+              active ? 'border-hl bg-selected' : 'border-line bg-surface hover:bg-hover'
             )}
           >
-            {STATE_LABEL[item]}
+            <i
+              aria-hidden="true"
+              className={cn('mb-1.5 size-2.5 rounded-[3px]', role ? STATE_SOLID[role] : 'bg-idle')}
+            />
+            <span className="text-[12px] font-semibold text-muted">{STATE_LABEL[item]}</span>
             {count != null && (
-              <span
-                className={cn(
-                  'rounded-full px-[7px] py-px text-[11px] font-semibold tnum',
-                  active ? 'bg-selected text-link' : 'bg-surface-2 text-muted'
-                )}
-              >
-                {formatNumber(count)}
-              </span>
+              <b className="text-2xl leading-[1.1] font-bold tracking-[-0.02em] text-fg tnum">
+                <Figure value={count} />
+              </b>
             )}
           </button>
         );

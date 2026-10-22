@@ -28,12 +28,12 @@ export function StoragePanel({ db, disk = null }: { db: DbStats; disk?: DiskHeal
   const { value, unit } = splitBytes(total);
 
   return (
-    <Card className="flex flex-col gap-5 p-6">
+    <Card className="flex flex-col gap-5 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <h2 className="text-[15px] font-semibold tracking-tight text-fg">Storage</h2>
+          <h2 className="m-0 text-lg font-bold text-fg">Storage</h2>
           <p
-            className="flex min-w-0 items-center gap-1.5 font-mono text-xs text-muted"
+            className="m-0 flex min-w-0 items-center gap-1.5 font-mono text-[13px] text-muted"
             title={db.path}
           >
             <span className="truncate">{db.path}</span>
@@ -41,11 +41,11 @@ export function StoragePanel({ db, disk = null }: { db: DbStats; disk?: DiskHeal
           </p>
         </div>
         {db.exists ? (
-          <div className="shrink-0 text-[28px] font-bold leading-[1.1] tracking-tight tnum text-fg">
-            {value} <span className="text-sm font-medium tracking-normal text-muted">{unit}</span>
+          <div className="shrink-0 text-[20px] leading-[1.1] font-bold tracking-tight tnum text-fg">
+            {value} <span className="text-sm font-bold tracking-normal text-muted">{unit}</span>
           </div>
         ) : (
-          <span className="shrink-0 font-mono text-xs text-muted">not created yet</span>
+          <span className="shrink-0 font-mono text-[13px] text-muted">not created yet</span>
         )}
       </div>
 
@@ -83,7 +83,7 @@ export function StoragePanel({ db, disk = null }: { db: DbStats; disk?: DiskHeal
           </ul>
           <div
             role={disk && !disk.ok ? 'alert' : undefined}
-            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control border border-line bg-bg px-3.5 py-3 text-[13px] light:bg-surface-2"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control border border-line-strong bg-surface px-4 py-3 text-[13px]"
           >
             {disk && (
               <span className={cn('inline-flex items-center gap-2.5', !disk.ok && 'text-danger')}>
@@ -94,14 +94,14 @@ export function StoragePanel({ db, disk = null }: { db: DbStats; disk?: DiskHeal
               </span>
             )}
             {db.mtimeMs ? (
-              <span className={cn('text-xs text-muted', disk && 'ml-auto')}>
+              <span className={cn('text-[13px] text-muted', disk && 'ml-auto')}>
                 Written {formatRelativeTime(db.mtimeMs)}
               </span>
             ) : null}
           </div>
         </>
       ) : (
-        <p className="rounded-control border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
+        <p className="rounded-control border border-dashed border-line-strong px-4 py-4 text-center text-sm text-muted">
           The database appears here after the first start — SQLite creates the file at the
           configured data path.
         </p>

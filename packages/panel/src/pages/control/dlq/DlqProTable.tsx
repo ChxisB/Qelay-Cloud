@@ -1,11 +1,10 @@
 import { Link } from 'react-router-dom';
-import { IconButton } from '@/components/ui/Button';
-import { IconRefresh } from '@/components/ui/icons';
+import { StatusPill } from '@/components/ui/StatusBadge';
+import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
 import type { DlqEntryFull } from '@/lib/bqTypes';
-import { useDlqMutations } from '@/lib/capabilities/useCapabilities';
 import { cn } from '@/lib/cn';
-import { FLOW_BULK_RETRY_UNAVAILABLE } from '@/lib/flowMutationSafety';
 import { formatRelativeTime } from '@/lib/format';
+import { useFirstLoad } from '@/lib/useFirstLoad';
 
 export function DlqProTable({
   entries,
@@ -16,45 +15,38 @@ export function DlqProTable({
   expanded: Set<string>;
   onToggle: (key: string) => void;
 }) {
-  const mutations = useDlqMutations();
+  // The rows of the first load rise in a stagger; a row a poll adds later does not.
+  const first = useFirstLoad(entries.length > 0);
   return (
-    <div className="overflow-x-auto rounded-card border border-line bg-surface">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-line text-left eyebrow text-muted light:bg-surface-2">
-            <th className="px-4 py-2.5 font-semibold">Job ID</th>
-            <th className="px-4 py-2.5 font-semibold">Name</th>
-            <th className="px-4 py-2.5 font-semibold">Reason</th>
-            <th className="px-4 py-2.5 font-semibold">Error</th>
-            <th className="px-4 py-2.5 text-right font-semibold">Entered</th>
-            <th className="w-16 px-4 py-2.5" />
+    <TableScroll className="rounded-card border border-line bg-surface">
+      <Table>
+        <THead>
+          <tr>
+            <Th>Job ID</Th>
+            <Th>Name</Th>
+            <Th>Reason</Th>
+            <Th>Error</Th>
+            <Th right>Entered</Th>
           </tr>
-        </thead>
+        </THead>
         <tbody>
-          {entries.map((entry) => {
+          {entries.map((entry, index) => {
             const key = `${entry.job.id}-${entry.enteredAt}`;
             return (
-              <tr
-                key={key}
-                className="border-b border-line last:border-0 align-top hover:bg-surface-2/40"
-              >
-                <td className="px-4 py-2.5">
+              <Tr key={key} arrive={first ? index : undefined}>
+                <Td>
                   <Link
                     to={`/job?id=${encodeURIComponent(entry.job.id)}`}
-                    className="font-mono text-xs text-link hover:underline"
+                    className="font-mono text-xs font-semibold text-link hover:underline"
                   >
                     {entry.job.id}
                   </Link>
-                </td>
-                <td className="px-4 py-2.5 font-mono text-xs text-muted">
-                  {entry.job.name ?? 'default'}
-                </td>
-                <td className="px-4 py-2.5">
-                  <span className="rounded-md bg-danger/10 px-2 py-0.5 text-xs text-danger">
-                    {entry.reason}
-                  </span>
-                </td>
-                <td className="max-w-md px-4 py-2.5 text-xs text-danger">
+                </Td>
+                <Td className="font-mono text-xs text-muted">{entry.job.name ?? 'default'}</Td>
+                <Td>
+                  <StatusPill state="failed">{entry.reason}</StatusPill>
+                </Td>
+                <Td className="max-w-md text-xs text-danger">
                   {entry.error ? (
                     <button
                       type="button"
@@ -71,26 +63,13 @@ export function DlqProTable({
                   ) : (
                     '—'
                   )}
-                </td>
-                <td className="px-4 py-2.5 text-right text-faint">
-                  {formatRelativeTime(entry.enteredAt)}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  {mutations.operator && mutations.retry && (
-                    <IconButton
-                      aria-label="Retry unavailable"
-                      disabled
-                      title={FLOW_BULK_RETRY_UNAVAILABLE}
-                    >
-                      <IconRefresh className="size-3.5" />
-                    </IconButton>
-                  )}
-                </td>
-              </tr>
+                </Td>
+                <Td className="text-right text-muted">{formatRelativeTime(entry.enteredAt)}</Td>
+              </Tr>
             );
           })}
         </tbody>
-      </table>
-    </div>
+      </Table>
+    </TableScroll>
   );
 }

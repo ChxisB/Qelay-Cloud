@@ -44,6 +44,10 @@ export function AppearanceCard() {
           </Select>
         </Field>
       </div>
+      <p className="mt-3 text-[13px] text-muted">
+        Live pages poll every {refreshMs / 1000} {refreshMs === 1000 ? 'second' : 'seconds'}. A
+        shorter interval puts more load on the control API.
+      </p>
     </Card>
   );
 }

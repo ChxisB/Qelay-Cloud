@@ -194,7 +194,7 @@ describe('AuthGate credential correlation', () => {
     unmountGate(gate);
   });
 
-  test('Settings dismissal erases the draft before a later prompt opens', () => {
+  test('Settings dismissal erases the draft before a later prompt opens', async () => {
     useConnectionStore.setState({ baseUrl: 'https://server.test/api', token: '', agentToken: '' });
     const gate = mountGate();
     dispatchAuth({ scope: 'server', target: 'https://server.test/api' });
@@ -209,6 +209,7 @@ describe('AuthGate credential correlation', () => {
     );
     if (!settings) throw new Error('Settings link not found');
     act(() => settings.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
+    await settle(260); // the lock leaves over 180 ms
     expect(gate.container.querySelector('[role="dialog"]')).toBeNull();
 
     dispatchAuth({ scope: 'agent', target: bq.agentBase });
@@ -220,7 +221,7 @@ describe('AuthGate credential correlation', () => {
     unmountGate(gate);
   });
 
-  test('submit revalidates the backend identity after a connection change', () => {
+  test('submit revalidates the backend identity after a connection change', async () => {
     useConnectionStore.setState({ baseUrl: 'https://server-a.test/api', token: '' });
     const gate = mountGate();
     dispatchAuth({ scope: 'server', target: 'https://server-a.test/api' });
@@ -235,6 +236,7 @@ describe('AuthGate credential correlation', () => {
     if (!unlock) throw new Error('Unlock button not found');
     act(() => unlock.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
     expect(useConnectionStore.getState().token).toBe('');
+    await settle(260);
     expect(gate.container.querySelector('[role="dialog"]')).toBeNull();
     unmountGate(gate);
   });

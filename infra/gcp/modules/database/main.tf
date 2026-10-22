@@ -1,4 +1,4 @@
-# Cloud SQL for PostgreSQL 16, private IP only, encrypted connections only, with backups and
+# Cloud SQL for PostgreSQL 18, private IP only, encrypted connections only, with backups and
 # point-in-time recovery and two layers of deletion protection.
 #
 # A direct private-IP connection with a password needs no Cloud SQL IAM role: the Auth Proxy and the
@@ -12,7 +12,7 @@ resource "random_password" "database" {
 resource "google_sql_database_instance" "main" {
   name                = "${var.name}-pg"
   region              = var.region
-  database_version    = "POSTGRES_16"
+  database_version    = "POSTGRES_18"
   deletion_protection = var.deletion_protection
 
   settings {

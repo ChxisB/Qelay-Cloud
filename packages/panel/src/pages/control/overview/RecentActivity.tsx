@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { STATE_SOLID, stateRole } from '@/components/ui/StatusBadge';
 import { cn } from '@/lib/cn';
 import { useActivityStream } from '@/lib/useActivityStream';
@@ -16,20 +17,23 @@ function clock(ts: number): string {
 /** Own SSE-subscribing leaf: live events re-render this list, not the tiles or the table. */
 export function RecentActivity() {
   const { events, connected, error } = useActivityStream();
+  // Events up to the first read are the list; only a later one rises in.
+  const [base, setBase] = useState<number | null>(null);
+  if (base === null && events.length > 0) setBase(events[0].seq);
   const streamState = error ? 'Reconnecting…' : connected ? 'Live' : 'Connecting…';
   return (
     <section
       aria-label="Recent activity"
-      className="flex min-w-0 flex-[1_1_280px] flex-col gap-3.5 rounded-card border border-line bg-surface p-5"
+      className="flex min-w-0 flex-[1_1_280px] flex-col gap-3.5 rounded-card border border-line bg-surface p-4"
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Recent activity</h2>
+        <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Recent activity</h2>
         <span className={cn('text-xs', error ? 'text-warning' : 'text-muted')}>{streamState}</span>
       </div>
       {events.length === 0 ? (
         <p
           role={error ? 'alert' : undefined}
-          className={cn('py-6 text-center text-sm', error ? 'text-warning' : 'text-faint')}
+          className={cn('py-4 text-center text-sm', error ? 'text-warning' : 'text-faint')}
         >
           {error
             ? `Event stream unavailable — ${error.message}. Reconnecting…`
@@ -47,7 +51,10 @@ export function RecentActivity() {
           {events.slice(0, ROWS).map((event) => (
             <li
               key={event.seq}
-              className="grid grid-cols-[8px_minmax(0,1fr)_auto] items-center gap-3 border-b border-line py-2.5 last:border-b-0 last:pb-0"
+              className={cn(
+                'grid grid-cols-[8px_minmax(0,1fr)_auto] items-center gap-3 border-b border-line py-2.5 last:border-b-0 last:pb-0',
+                base !== null && event.seq > base && 'motion-arrive'
+              )}
             >
               <span
                 className={cn('size-2 rounded-full', STATE_SOLID[stateRole(event.status)])}
@@ -62,7 +69,7 @@ export function RecentActivity() {
                   </>
                 )}
               </span>
-              <span className="font-mono text-[11px] text-muted">{clock(event.timestamp)}</span>
+              <span className="font-mono text-[12px] text-muted">{clock(event.timestamp)}</span>
             </li>
           ))}
         </ul>

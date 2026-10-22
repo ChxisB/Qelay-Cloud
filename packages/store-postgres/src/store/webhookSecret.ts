@@ -1,4 +1,9 @@
-import { generateWebhookSecret, sealSecret, WEBHOOK_SECRET_GRACE_MS } from '@qelay-cloud/core';
+import {
+  generateWebhookSecret,
+  sealSecret,
+  UnsupportedOptionError,
+  WEBHOOK_SECRET_GRACE_MS,
+} from '@qelay-cloud/core';
 import { WebhookKeyError } from '../errors';
 import type { StoreContext } from './context';
 import { identifier } from './prepare';
@@ -39,11 +44,17 @@ export async function rotateWebhookSecret(
          SET secret_previous_sealed = secret_sealed,
              secret_previous_until = CASE WHEN secret_sealed IS NULL THEN NULL ELSE $4::bigint END,
              secret_sealed = $3
-         WHERE namespace = $1 AND id = $2
+         WHERE namespace = $1 AND id = $2 AND destination = 'http'
          RETURNING ${WEBHOOK_COLUMNS}`,
         [ctx.namespace, key, sealed, now + WEBHOOK_SECRET_GRACE_MS]
       );
-      return row ? { ...webhookOf(row), secret: made } : null;
+      if (row) return { ...webhookOf(row), secret: made };
+      const [queue] = await tx.unsafe<{ id: string }[]>(
+        `SELECT id FROM qcloud_webhooks WHERE namespace = $1 AND id = $2`,
+        [ctx.namespace, key]
+      );
+      if (queue) throw new UnsupportedOptionError('secret', 'a queue route is not signed');
+      return null;
     })
   );
 }

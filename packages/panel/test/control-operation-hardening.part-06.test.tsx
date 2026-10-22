@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import {
   createDbDetailSelection,
@@ -12,7 +13,6 @@ import { ensureDom, settle } from './domSetup';
 ensureDom();
 
 const realFetch = globalThis.fetch;
-const realConfirm = globalThis.window.confirm;
 const mounted = new Set<() => void>();
 
 const json = (value: unknown, status = 200) =>
@@ -120,7 +120,6 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of [...mounted]) unmount();
   globalThis.fetch = realFetch;
-  globalThis.window.confirm = realConfirm;
   localStorage.removeItem('qelay-db-history');
   useConnectionStore.setState({
     baseUrl: '/api',
@@ -179,7 +178,7 @@ describe('Database export, query, history, and drawer isolation', () => {
       return Promise.resolve(json({ ok: false, error: `unexpected ${url.pathname}` }, 500));
     }) as typeof fetch;
 
-    const view = render(createElement(Database));
+    const view = render(createElement(MemoryRouter, null, createElement(Database)));
     await settle(30);
     click(view.host.querySelector('[aria-label="View row 1 details"]') as Element);
     await settle(5);
@@ -189,7 +188,9 @@ describe('Database export, query, history, and drawer isolation', () => {
     // Visibility restoration drives the same scheduler as the 6s poll, without
     // making this regression sleep for a full interval.
     act(() => document.dispatchEvent(new window.Event('visibilitychange')));
-    await settle(30);
+    // The poll answers first (one settle), then the drawer stays mounted for its 180 ms exit (the next).
+    await settle(60);
+    await settle(260);
 
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(view.host.textContent).toContain('replacement');

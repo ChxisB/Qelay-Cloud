@@ -49,8 +49,8 @@ This is release **1.0.0, not yet published** (the package is `0.0.0` until the o
   ([how late, per hosting mode](docs/limits.md#1-delay-precision-by-hosting-mode)).
 - **A bounded cost.** The connection budget is a formula, and Terraform refuses a plan that breaks it
   ([operations](docs/operations.md#connection-budget)).
-- **A control panel and API** for queues, jobs, flows, workflows, workers, the dead-letter queue, cron and webhooks, signed in
-  with your OpenID Connect provider ([routes](docs/reference/routes.md)).
+- **A control panel and API** for queues, jobs, flows, workflows, workers, the dead-letter queue, cron and an event gateway (webhooks, and "when this happens, add a job"
+  routes), signed in with your OpenID Connect provider ([routes](docs/reference/routes.md), [event gateway](docs/event-gateway.md)).
 
 ## Licence
 

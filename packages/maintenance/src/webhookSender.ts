@@ -2,6 +2,7 @@ import type { PostgresStore } from '@qelay-cloud/store-postgres';
 import type { Telemetry } from './telemetry';
 import type { WebhookSenderConfig } from './webhookConfig';
 import type { Destinations } from './webhookDestinations';
+import type { Enqueue } from './webhookEnqueue';
 import type { PostFunction } from './webhookHttp';
 import { postOverSocket } from './webhookPool';
 import type { Resolver, SendDeps } from './webhookSend';
@@ -76,8 +77,8 @@ export interface WebhookStepResult extends WebhookStepReport {
   readonly moreWork: boolean;
 }
 
-/** What `sendDelivery` is given: the settings, with the seams filled in. */
-export function sendDepsOf(sending: WebhookSending): SendDeps {
+/** What `sendDelivery` is given: the settings, with the seams filled in, and the store's `enqueue` for queue routes. */
+export function sendDepsOf(sending: WebhookSending, enqueue?: Enqueue): SendDeps {
   const { config } = sending;
   return {
     urlPolicy: config.urlPolicy,
@@ -89,17 +90,18 @@ export function sendDepsOf(sending: WebhookSending): SendDeps {
     now: sending.now ?? Date.now,
     ...(sending.destinations === undefined ? {} : { destinations: sending.destinations }),
     ...(sending.ca === undefined ? {} : { ca: sending.ca }),
+    ...(enqueue === undefined ? {} : { enqueue }),
   };
 }
 
 /** Never throws: a store error is counted in `errors` and reported to telemetry. */
 export async function sendDueWebhooks(
-  store: Pick<PostgresStore, 'webhooks'>,
+  store: Pick<PostgresStore, 'webhooks' | 'enqueue'>,
   sending: WebhookSending,
   telemetry: Telemetry
 ): Promise<WebhookStepResult> {
   const { config } = sending;
-  const deps = sendDepsOf(sending);
+  const deps = sendDepsOf(sending, (jobs) => store.enqueue(jobs));
   const started = performance.now();
   let total = NO_WEBHOOKS;
   let remaining = config.batch;

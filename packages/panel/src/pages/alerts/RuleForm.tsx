@@ -55,7 +55,7 @@ export function RuleForm({
     }
   };
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
       <Field label="Name">
         <Input
           name="alert-rule-name"
@@ -151,7 +151,7 @@ export function RuleForm({
           Save rule
         </Button>
         {error && (
-          <span id={errorId} role="alert" className="ml-3 text-xs text-danger">
+          <span id={errorId} role="alert" className="ml-3 text-[13px] font-semibold text-danger">
             {error.message}
           </span>
         )}

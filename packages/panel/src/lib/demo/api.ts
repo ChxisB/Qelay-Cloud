@@ -6,7 +6,7 @@ import { demoFlowReply } from './flows';
 import { DEMO_JOB_POOL, demoJobForId, retagDemoJob } from './jobs';
 import { demoOpsResponse } from './ops';
 import { F, type Json } from './shared';
-import { demoWebhookDeliveries } from './webhooks';
+import { demoAllWebhookDeliveries, demoWebhookDeliveries, demoWebhookStats } from './webhooks';
 import { demoWorkflowReply } from './workflows';
 
 export const API_ROOTS = new Set([
@@ -165,6 +165,9 @@ function mutationResponse(clean: string, segments: string[]): Json {
       ms: 0.4,
     };
   }
+  if (clean.endsWith('/rotate-secret')) {
+    return { ok: true, data: { secret: 'demo-secret-not-for-real-use' } };
+  }
   if (clean.endsWith('/jobs') || clean.endsWith('/jobs/bulk')) {
     return { ok: true, id: `demo-${segments.join('-')}`, ids: ['demo-1'] };
   }
@@ -184,6 +187,8 @@ export function demoApiResponse(path: string, method: string, search: string): J
   if (segments[0] === 'backup') return demoBackupResponse(segments, method);
   if (segments[0] === 'flows') return demoFlowReply(segments, method).body;
   if (method !== 'GET') return mutationResponse(clean, segments);
+  if (clean === '/webhooks/deliveries') return demoAllWebhookDeliveries(search);
+  if (clean === '/webhooks/stats') return demoWebhookStats(search);
   if (segments[0] === 'webhooks' && segments[1] && segments[2] === 'deliveries') {
     return demoWebhookDeliveries(decodeURIComponent(segments[1]), search);
   }

@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { type ConfirmOptions, confirmInPage } from '@/components/dashboard/stores/confirmStore';
+import { SystemTabs } from '@/components/SystemTabs';
+import { Banner } from '@/components/ui/Banner';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { CodeBlock } from '@/components/ui/CodeBlock';
 import { LoadingState, OfflineBanner } from '@/components/ui/feedback';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { bq } from '@/lib/bq';
@@ -51,13 +55,14 @@ export function ServerControl() {
   // Spell out the blast radius in stop/restart confirms: live connection counts
   // when /health has them, so the operator knows what a kill actually severs.
   const blastRadius = vitals?.connections
-    ? ` This drops ${vitals.connections.tcp ?? 0} TCP / ${vitals.connections.ws ?? 0} WS connections; in-flight jobs are interrupted.`
-    : ' In-flight jobs are interrupted.';
+    ? `This drops ${vitals.connections.tcp ?? 0} TCP / ${vitals.connections.ws ?? 0} WS connections; in-flight jobs are interrupted.`
+    : 'In-flight jobs are interrupted.';
 
-  const run = async (label: string, fn: () => Promise<unknown>, confirmMsg?: string) => {
+  // The lease is held while the question is open, so a second click cannot send the action twice.
+  const run = async (label: string, fn: () => Promise<unknown>, confirm?: ConfirmOptions) => {
     const lease = actionGuard.begin('lifecycle');
     if (!lease) return;
-    if (confirmMsg && !window.confirm(confirmMsg)) {
+    if (confirm && !(await confirmInPage(confirm))) {
       lease.finish();
       return;
     }
@@ -83,6 +88,7 @@ export function ServerControl() {
     return (
       <div>
         <PageHeader title="Server" description="Start, stop and restart the server." />
+        <SystemTabs current="/server" />
         <OfflineBanner
           message="Control agent unreachable — server lifecycle controls are unavailable."
           onRetry={refetch}
@@ -91,14 +97,18 @@ export function ServerControl() {
           <CardHeader title="Control agent not running" />
           <p className="text-sm text-muted">
             The local control agent is unreachable at{' '}
-            <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs">{bq.agentBase}</code>. It
-            manages the server process (start / stop / restart). Start it with:
+            <code className="rounded-control bg-slate-tint px-1.5 py-0.5 font-mono text-[13px]">
+              {bq.agentBase}
+            </code>
+            . It manages the server process (start / stop / restart). Start it with:
           </p>
-          <pre className="mt-3 overflow-x-auto rounded-control border border-line bg-surface-2 px-3 py-2 text-xs">
-            bun start{'      '}# agent + dashboard together (recommended){'\n'}bun run agent
-            {'   '}# agent only, if the dashboard is already running
-          </pre>
-          <p className="mt-3 text-xs text-faint">
+          <div className="mt-3">
+            <CodeBlock label="Start the control agent">
+              {'bun start      # agent + dashboard together (recommended)\n'}
+              {'bun run agent   # agent only, if the dashboard is already running'}
+            </CodeBlock>
+          </div>
+          <p className="mt-3 text-[13px] text-muted">
             This page reconnects automatically once the agent is up — no reload needed.
           </p>
         </Card>
@@ -110,6 +120,7 @@ export function ServerControl() {
     return (
       <div>
         <PageHeader title="Server" description="Supervise the server process." />
+        <SystemTabs current="/server" />
         <LoadingState label="Reaching the control agent…" />
       </div>
     );
@@ -133,22 +144,19 @@ export function ServerControl() {
             : 'Supervise the server process — lifecycle, configuration, storage and logs.'
         }
       />
+      <SystemTabs current="/server" />
 
       <div className="flex flex-col gap-6">
         {actionError && (
-          <div
-            role="status"
-            className="rounded-control border border-danger/25 bg-danger/5 px-4 py-2.5 text-sm text-danger"
-          >
+          <Banner tone="problem" title="The server action did not go through">
             {actionError}
-          </div>
+          </Banner>
         )}
 
         {stale && (
-          <div className="rounded-control border border-warning/25 bg-warning/5 px-4 py-2.5 text-sm text-warning">
-            Control agent unreachable — showing last known state. Lifecycle actions are disabled
-            until it responds again.
-          </div>
+          <Banner tone="warn" title="Control agent unreachable">
+            Showing the last known state. Lifecycle actions are disabled until it responds again.
+          </Banner>
         )}
 
         <StatusConsole
@@ -159,23 +167,35 @@ export function ServerControl() {
           transitioning={transitioning}
           busy={busy}
           onStart={() => run('starting', () => bq.control.start())}
-          onStop={() => run('stopping', () => bq.control.stop(), `Stop the server?${blastRadius}`)}
+          onStop={() =>
+            run('stopping', () => bq.control.stop(), {
+              question: 'Stop the server?',
+              detail: blastRadius,
+              confirmLabel: 'Stop server',
+            })
+          }
           onRestart={() =>
-            run('restarting', () => bq.control.restart(), `Restart the server?${blastRadius}`)
+            run('restarting', () => bq.control.restart(), {
+              question: 'Restart the server?',
+              detail: blastRadius,
+              confirmLabel: 'Restart server',
+            })
           }
         />
 
         {external ? (
-          <Card className="p-6">
+          <Card className="p-4">
             <CardHeader title="Managed externally" />
             <p className="text-sm text-muted">
               This control panel is attached to{' '}
-              <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs">
+              <code className="rounded-control bg-slate-tint px-1.5 py-0.5 font-mono text-[13px]">
                 {data.externalUrl ?? 'QELAY_URL'}
               </code>
               . Start, stop, restart and launch configuration are intentionally unavailable while{' '}
-              <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs">QELAY_MANAGED=0</code>.
-              Use systemd, Docker, Kubernetes or the broker's external supervisor instead.
+              <code className="rounded-control bg-slate-tint px-1.5 py-0.5 font-mono text-[13px]">
+                QELAY_MANAGED=0
+              </code>
+              . Use systemd, Docker, Kubernetes or the broker's external supervisor instead.
             </p>
           </Card>
         ) : (

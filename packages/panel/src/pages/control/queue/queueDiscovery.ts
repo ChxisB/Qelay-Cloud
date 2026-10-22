@@ -138,15 +138,6 @@ export function readDlqConfig(value: unknown) {
   return value.config;
 }
 
-export function actionResultCount(value: unknown): number | undefined {
-  if (!isRecord(value) || value.ok !== true)
-    throw new Error('Malformed queue action response: expected { ok: true }.');
-  if (value.count === undefined) return undefined;
-  if (!isCount(value.count))
-    throw new Error('Malformed queue action response: count must be a non-negative integer.');
-  return value.count;
-}
-
 export function resolveQueueSelection(
   selected: string,
   queues: ReadonlyArray<{ name: string }>

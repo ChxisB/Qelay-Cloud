@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
 import { JobInspector } from '../src/pages/control/JobInspector';
+import { answerConfirms } from './confirmSupport';
 import { ensureDom, settle } from './domSetup';
 
 const originalFetch = globalThis.fetch;
@@ -184,6 +185,7 @@ describe('Job Inspector custom-id lookup', () => {
   test('an old mutation settling after failed navigation cannot reactivate the old job', async () => {
     ensureDom();
     const slowPromote = deferred<Response>();
+    const yes = answerConfirms();
     let navigate!: ReturnType<typeof useNavigate>;
     let currentSearch = '';
     let postCalls = 0;
@@ -230,7 +232,7 @@ describe('Job Inspector custom-id lookup', () => {
       if (!promote) throw new Error('Promote button not found');
 
       act(() => promote.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
-      await settle(0);
+      await settle(10);
       expect(postCalls).toBe(1);
 
       act(() => navigate('/job?id=job-b'));
@@ -249,6 +251,7 @@ describe('Job Inspector custom-id lookup', () => {
       expect(host.textContent).not.toContain('Promote (run now)');
       expect(postCalls).toBe(1);
     } finally {
+      yes.stop();
       act(() => root.unmount());
       host.remove();
     }

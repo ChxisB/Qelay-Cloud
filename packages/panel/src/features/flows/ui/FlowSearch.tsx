@@ -1,4 +1,6 @@
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Input } from '@/components/ui/form';
 
 export function FlowSearch({
   input,
@@ -14,7 +16,7 @@ export function FlowSearch({
   return (
     <Card className="mb-6">
       <form onSubmit={onSubmit} className="flex flex-wrap items-center gap-3">
-        <input
+        <Input
           name="flow-job-id"
           autoComplete="off"
           spellCheck={false}
@@ -25,17 +27,16 @@ export function FlowSearch({
           aria-label="Job ID"
           aria-describedby="flow-input-help"
           aria-invalid={error !== null}
-          className="min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-sm text-fg outline-none placeholder:text-faint focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-0 flex-1 font-mono text-sm"
         />
-        <button
-          type="submit"
-          disabled={!input.trim()}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg disabled:opacity-50"
-        >
+        <Button type="submit" variant="primary" disabled={!input.trim()}>
           Open flow
-        </button>
+        </Button>
       </form>
-      <p id="flow-input-help" className={`mt-2 text-xs ${error ? 'text-danger' : 'text-faint'}`}>
+      <p
+        id="flow-input-help"
+        className={`mt-2 text-[13px] ${error ? 'font-semibold text-danger' : 'text-muted'}`}
+      >
         {error ?? 'A job of a flow opens the flow it belongs to, with that job selected.'}
       </p>
     </Card>

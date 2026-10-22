@@ -1,4 +1,4 @@
-import type { AddWebhookBody } from '@/lib/bq';
+import type { AddWebhookBody, WebhookDestination } from '@/lib/bq';
 
 /** The signing secret's bounds, as the Control API enforces them. */
 export const SECRET_MIN_CHARS = 16;
@@ -36,12 +36,35 @@ export function displayWebhookUrl(value: string): string {
   }
 }
 
+const QUEUE_NAME = /^[a-zA-Z0-9_\-.:]+$/;
+export const QUEUE_NAME_MSG = 'must be at most 256 characters using letters, numbers, _, -, . or :';
+export const validQueue = (name: string): boolean => name.length <= 256 && QUEUE_NAME.test(name);
+
+/**
+ * What the Add connection form sends. An `http` route needs a deliverable address; a `queue` route
+ * needs the queue whose events it hears and the queue it adds jobs to, and has no address or secret.
+ */
 export function buildWebhookBody(
   url: string,
   events: string[],
   queue: string,
-  secret: string
+  secret: string,
+  route: { destination: WebhookDestination; target: string } = { destination: 'http', target: '' }
 ): { ok: true; body: AddWebhookBody } | { ok: false; msg: string } {
+  const normalizedQueue = queue.trim();
+  if (route.destination === 'queue') {
+    const target = route.target.trim();
+    if (!normalizedQueue || !target || events.length === 0) {
+      return {
+        ok: false,
+        msg: 'A source queue, a target queue and at least one event are required',
+      };
+    }
+    if (!validQueue(normalizedQueue) || !validQueue(target)) {
+      return { ok: false, msg: `Queue names ${QUEUE_NAME_MSG}` };
+    }
+    return { ok: true, body: { destination: 'queue', queue: normalizedQueue, target, events } };
+  }
   const normalizedUrl = url.trim();
   if (!normalizedUrl || events.length === 0) {
     return { ok: false, msg: 'URL and at least one event are required' };
@@ -52,15 +75,8 @@ export function buildWebhookBody(
       msg: 'URL must be a valid http:// or https:// address without embedded credentials',
     };
   }
-  const normalizedQueue = queue.trim();
-  if (
-    normalizedQueue &&
-    (normalizedQueue.length > 256 || !/^[a-zA-Z0-9_\-.:]+$/.test(normalizedQueue))
-  ) {
-    return {
-      ok: false,
-      msg: 'Queue must be at most 256 characters using letters, numbers, _, -, . or :',
-    };
+  if (normalizedQueue && !validQueue(normalizedQueue)) {
+    return { ok: false, msg: `Queue ${QUEUE_NAME_MSG}` };
   }
   const normalizedSecret = secret.trim();
   if (

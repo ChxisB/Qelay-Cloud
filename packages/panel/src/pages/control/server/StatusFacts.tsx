@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { Wash } from '@/components/ui/Wash';
 import type { ServerConfig, ServerStatus } from '@/lib/bqTypes';
 import { cn } from '@/lib/cn';
 import { formatDateTime } from '@/lib/format';
@@ -24,14 +25,14 @@ function Fact({
   return (
     <div className="flex min-w-0 flex-col gap-1" title={title}>
       <div className="eyebrow text-muted">{label}</div>
-      <div className={cn('truncate text-sm font-medium tnum', mono && 'font-mono text-[13px]')}>
+      <div className={cn('truncate text-sm font-bold tnum', mono && 'font-mono text-[13px]')}>
         {children}
       </div>
     </div>
   );
 }
 
-const dash = <span className="text-faint">—</span>;
+const dash = <span className="text-muted">—</span>;
 
 function storageFact(status: ServerStatus | null, external: boolean) {
   if (external) return 'managed elsewhere';
@@ -69,13 +70,13 @@ export function StatusFacts({
   const command = external ? null : (cfg?.command ?? null);
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-x-6 gap-y-5 border-t border-line px-6 py-5">
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-x-6 gap-y-5 border-t border-line px-4 py-3">
       <Fact label="Memory">
         {vitals?.memory?.rss != null ? (
           <span
             title={`heap ${vitals.memory.heapUsed ?? '?'} / ${vitals.memory.heapTotal ?? '?'} MB`}
           >
-            {vitals.memory.rss} MB
+            <Wash value={`${vitals.memory.rss} MB`} />
           </span>
         ) : (
           dash
@@ -86,7 +87,7 @@ export function StatusFacts({
           <span
             title={`${connections.tcp ?? 0} tcp · ${connections.ws ?? 0} ws · ${connections.sse ?? 0} sse`}
           >
-            {totalConnections}
+            <Wash value={String(totalConnections)} />
           </span>
         ) : (
           dash
@@ -106,7 +107,7 @@ export function StatusFacts({
             <CopyButton value={serverBase} />
           </span>
         ) : (
-          <span className="text-faint">{serverBase}</span>
+          <span className="text-muted">{serverBase}</span>
         )}
       </Fact>
       <Fact label={external ? 'Lifecycle' : 'Ports'}>
@@ -135,8 +136,8 @@ export function StatusFacts({
       {command && (
         <div className="col-span-full flex min-w-0 flex-col gap-1.5">
           <div className="eyebrow text-muted">Launch command</div>
-          <div className="flex items-center gap-2 rounded-control border border-line bg-bg px-3 py-2.5 light:bg-surface-2">
-            <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-fg">
+          <div className="flex items-center gap-2 rounded-control border border-line-strong bg-surface px-4 py-2">
+            <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[13px] text-fg">
               {command}
             </code>
             <CopyButton value={command} />

@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { Banner } from '@/components/ui/Banner';
 import { Button, IconButton } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
-import { Field, Input, Select } from '@/components/ui/form';
+import { Field, FieldAction, FormRow, Input, Select } from '@/components/ui/form';
 import { IconEye } from '@/components/ui/icons';
 import { useConnectionProfileEditor } from './useConnectionProfileEditor';
 
@@ -58,32 +59,35 @@ export function ConnectionProfilesCard() {
     <Card>
       <CardHeader title="Fleet connections" />
       <div className="flex flex-col gap-4">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto]">
-          <Field label="Active node">
-            <Select
-              aria-label="Active node"
-              value={editor.activeProfileId}
-              onChange={(event) => editor.activateProfile(event.target.value)}
+        <FormRow>
+          <div className="min-w-56 flex-1">
+            <Field label="Active node">
+              <Select
+                aria-label="Active node"
+                value={editor.activeProfileId}
+                onChange={(event) => editor.activateProfile(event.target.value)}
+              >
+                {editor.profiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+          <FieldAction>
+            <Button onClick={editor.add}>Add node</Button>
+          </FieldAction>
+          <FieldAction>
+            <Button
+              variant="danger"
+              disabled={editor.profiles.length === 1}
+              onClick={() => void editor.remove()}
             >
-              {editor.profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Button className="self-end" onClick={editor.add}>
-            Add node
-          </Button>
-          <Button
-            className="self-end"
-            variant="danger"
-            disabled={editor.profiles.length === 1}
-            onClick={editor.remove}
-          >
-            Remove
-          </Button>
-        </div>
+              Remove
+            </Button>
+          </FieldAction>
+        </FormRow>
 
         <Field label="Node name">
           <Input
@@ -95,7 +99,15 @@ export function ConnectionProfilesCard() {
             placeholder="broker-eu-1"
           />
         </Field>
-        <Field label="Server URL">
+        <Field
+          label="Server URL"
+          hint={
+            editor.urlError
+              ? undefined
+              : "The address of this node's server. Every queue page talks to the active node."
+          }
+          error={editor.urlError}
+        >
           <Input
             name="server-url"
             value={editor.url}
@@ -105,20 +117,17 @@ export function ConnectionProfilesCard() {
             placeholder="/api or https://queue.example.com"
             autoComplete="off"
             inputMode="url"
-            aria-invalid={editor.urlError ? true : undefined}
-            aria-describedby={editor.urlError ? 'server-url-error' : 'server-url-help'}
           />
         </Field>
-        {editor.urlError ? (
-          <p id="server-url-error" className="-mt-2 text-xs text-danger">
-            {editor.urlError}
-          </p>
-        ) : (
-          <p id="server-url-help" className="-mt-2 text-xs text-faint">
-            The qelay server's HTTP API for this node. All queue pages use the selected node.
-          </p>
-        )}
-        <Field label="Control agent URL">
+        <Field
+          label="Control agent URL"
+          hint={
+            editor.agentUrlError
+              ? undefined
+              : 'Optional. Turns on the controls that change things: server start and stop, settings, flows and workflows.'
+          }
+          error={editor.agentUrlError}
+        >
           <Input
             name="agent-url"
             value={editor.agentUrl}
@@ -126,24 +135,12 @@ export function ConnectionProfilesCard() {
             placeholder="/agent or https://broker.example.com/agent"
             autoComplete="off"
             inputMode="url"
-            aria-invalid={editor.agentUrlError ? true : undefined}
-            aria-describedby={editor.agentUrlError ? 'agent-url-error' : 'agent-url-help'}
           />
         </Field>
-        {editor.agentUrlError ? (
-          <p id="agent-url-error" className="-mt-2 text-xs text-danger">
-            {editor.agentUrlError}
-          </p>
-        ) : (
-          <p id="agent-url-help" className="-mt-2 text-xs text-faint">
-            One paired agent per broker enables lifecycle, configuration, Flow, Workflow and
-            advanced queue controls.
-          </p>
-        )}
         <SecretField
           id="bearer-token"
           label="Bearer token (optional)"
-          hint="Server credential, kept in memory only and isolated to this node."
+          hint="The password for this server, if it has one. Kept in memory only."
           value={editor.tok}
           onChange={change(editor.setTok)}
           placeholder="only if AUTH_TOKENS is set"
@@ -151,11 +148,22 @@ export function ConnectionProfilesCard() {
         <SecretField
           id="agent-token"
           label="Agent token (optional)"
-          hint="AGENT_TOKEN for this node, kept in memory only."
+          hint="The password for the control agent, if it has one. Kept in memory only."
           value={editor.agentTok}
           onChange={change(editor.setAgentTok)}
           placeholder="only if AGENT_TOKEN is set"
         />
+        {editor.saveNotice && (
+          <Banner tone={editor.saveNotice.ok ? 'ok' : 'warn'} title={editor.saveNotice.msg} />
+        )}
+        {editor.result &&
+          (editor.result.ok ? (
+            <Banner tone="ok" title={editor.result.msg} />
+          ) : (
+            <Banner tone="problem" title="The test did not pass">
+              {editor.result.msg}
+            </Banner>
+          ))}
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="primary" onClick={editor.save}>
             Save
@@ -166,26 +174,10 @@ export function ConnectionProfilesCard() {
           <Button onClick={editor.testAgent}>
             {editor.testing === 'agent' ? 'Restart agent test' : 'Test agent'}
           </Button>
-          {editor.saveNotice && (
-            <span
-              role="status"
-              className={editor.saveNotice.ok ? 'text-sm text-success' : 'text-sm text-warning'}
-            >
-              {editor.saveNotice.msg}
-            </span>
-          )}
-          {editor.result && (
-            <span
-              role="status"
-              className={editor.result.ok ? 'text-sm text-success' : 'text-sm text-danger'}
-            >
-              {editor.result.msg}
-            </span>
-          )}
         </div>
-        <p className="-mt-1 text-xs text-faint">
-          Switching the active node retargets every control panel feature atomically. Profile
-          metadata persists; both credentials are erased on reload.
+        <p className="m-0 text-[13px] text-muted">
+          Changing the active node points every page at that node. Node names and addresses are
+          remembered; tokens are forgotten when you reload.
         </p>
       </div>
     </Card>

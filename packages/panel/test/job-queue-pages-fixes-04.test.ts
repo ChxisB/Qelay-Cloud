@@ -1,3 +1,4 @@
+import { answerConfirms } from './confirmSupport';
 import {
   act,
   clickText,
@@ -78,8 +79,7 @@ describe('JobLogs — a stale read must not undo a just-run mutation', () => {
       return Promise.resolve(json({ ok: true, data: { logs: [], count: 0 } })); // post-clear
     }) as typeof fetch;
 
-    const originalConfirm = window.confirm;
-    window.confirm = (() => true) as typeof window.confirm;
+    const yes = answerConfirms();
     const { container, unmount } = render(createElement(JobLogs, { jobId: 'j1' }));
     try {
       await settle(5);
@@ -107,7 +107,7 @@ describe('JobLogs — a stale read must not undo a just-run mutation', () => {
       });
       expect(container.textContent).not.toContain('old line');
     } finally {
-      window.confirm = originalConfirm;
+      yes.stop();
       unmount();
     }
   });

@@ -11,6 +11,8 @@ import {
 import type { WebhookUrlPolicy } from '@qelay-cloud/core';
 import type { AttemptOutcome, ClaimedDelivery } from '@qelay-cloud/store-postgres';
 import type { Destinations } from './webhookDestinations';
+import type { Enqueue } from './webhookEnqueue';
+import { enqueueDelivery } from './webhookEnqueue';
 import type { PostFailure, PostFunction, PostResult } from './webhookHttp';
 import { postOverSocket } from './webhookPool';
 
@@ -94,6 +96,8 @@ export interface SendDeps {
   readonly captureBytes?: number;
   /** The `User-Agent` header. Absent: `DEFAULT_USER_AGENT`. */
   readonly userAgent?: string;
+  /** The store's `enqueue`, for `queue` routes. Absent: such a delivery fails and is retried. */
+  readonly enqueue?: Enqueue;
 }
 
 export const defaultSendDeps = (
@@ -142,6 +146,9 @@ export async function sendDelivery(
   });
   const refuse = (reason: string) => outcome(false, null, reason);
   try {
+    if (delivery.destination === 'queue') {
+      return await enqueueDelivery(delivery, deps.enqueue, (ok, error) => outcome(ok, null, error));
+    }
     // A signed webhook whose secret cannot be opened is not sent unsigned: that would hand the
     // receiver an unauthenticated request it was set up to reject, or worse, to accept.
     if (delivery.secretUnreadable) return refuse('signing secret could not be opened');

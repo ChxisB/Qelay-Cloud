@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { confirmInPage } from '@/components/dashboard/stores/confirmStore';
 import { getBaseUrl, useConnectionStore } from '@/components/dashboard/stores/connectionStore';
 import { BqError } from '@/lib/bq';
 import { opaqueHttpPathSegment } from '@/lib/upstreamPaths';
@@ -40,6 +41,7 @@ export function JobLogs({ jobId }: { jobId: string }) {
   const mutationGen = useRef(0);
   const mutationAbort = useRef<AbortController | null>(null);
   const mutationBusy = useRef(false);
+  const asking = useRef(false);
   // Track edits to the whole add-form draft independently of its values.
   // Equality is not enough: editing and restoring the submitted text/level is
   // still a newer draft and must not be erased by an older POST completing.
@@ -238,8 +240,17 @@ export function JobLogs({ jobId }: { jobId: string }) {
   };
 
   const clear = async () => {
-    if (mutationBusy.current) return;
-    if (!window.confirm('Clear all logs for this job?')) return;
+    // A second click while the question is open would queue the same question again.
+    if (mutationBusy.current || asking.current) return;
+    asking.current = true;
+    const yes = await confirmInPage({
+      question: 'Clear all logs for this job?',
+      confirmLabel: 'Clear logs',
+      danger: true,
+    }).finally(() => {
+      asking.current = false;
+    });
+    if (!yes) return;
     await mutate({ method: 'DELETE' }, 'Log clearing', () => {
       setLogs([]);
       setCount(0);

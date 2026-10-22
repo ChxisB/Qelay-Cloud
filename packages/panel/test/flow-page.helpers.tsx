@@ -6,18 +6,26 @@ import {
   disconnect,
   fakeRepository,
   mountFlows,
+  setScreenWidth,
   stuckFlow,
   unmountAll,
 } from './flow.helpers';
 
 export const flush = () => settle(20);
 
-/** Connects before each test and unmounts and disconnects after it; call it once at the top of a test file. */
+/**
+ * Connects before each test, on a narrow screen so the jobs show as the list, and unmounts and disconnects
+ * after it; call it once at the top of a test file.
+ */
 export function installPageHooks(): void {
-  beforeEach(() => connectTo());
+  beforeEach(() => {
+    connectTo();
+    setScreenWidth(500);
+  });
   afterEach(() => {
     unmountAll();
     disconnect();
+    setScreenWidth(1024);
   });
 }
 

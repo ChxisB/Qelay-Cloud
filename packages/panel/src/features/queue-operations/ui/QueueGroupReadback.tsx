@@ -4,7 +4,7 @@ import type { QueueGroupSnapshot } from '../application/QueueOperationsRepositor
 export function QueueGroupReadback({ snapshot }: { snapshot: QueueGroupSnapshot }) {
   return (
     <>
-      <dl className="mt-4 grid grid-cols-2 gap-3 rounded-lg border border-line p-3 text-xs sm:grid-cols-4 xl:grid-cols-7">
+      <dl className="mt-4 grid grid-cols-2 gap-3 rounded-control border border-line p-3 text-[13px] sm:grid-cols-4 xl:grid-cols-7">
         <Readback label="Jobs" value={snapshot.jobs} />
         <Readback label="Active" value={snapshot.active} />
         <Readback label="All grouped" value={snapshot.totalGrouped} />
@@ -22,7 +22,7 @@ export function QueueGroupReadback({ snapshot }: { snapshot: QueueGroupSnapshot 
         <Readback label="Priority counts" value={prioritySummary(snapshot.priorityCounts)} />
       </dl>
       <div className="mt-3 overflow-x-auto rounded-control border border-line">
-        <table className="w-full text-left text-xs">
+        <table className="w-full text-left text-[13px]">
           <thead className="border-b border-line eyebrow text-muted">
             <tr>
               <th className="px-3 py-2 font-semibold">Pending group job</th>
@@ -34,7 +34,7 @@ export function QueueGroupReadback({ snapshot }: { snapshot: QueueGroupSnapshot 
           <tbody>
             {snapshot.entries.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-3 py-4 text-center text-faint">
+                <td colSpan={4} className="px-3 py-4 text-center text-muted">
                   No pending jobs in this page.
                 </td>
               </tr>
@@ -66,7 +66,7 @@ export function QueueGroupReadback({ snapshot }: { snapshot: QueueGroupSnapshot 
 function Readback({ label, value }: { label: string; value: string | number }) {
   return (
     <div>
-      <dt className="text-faint">{label}</dt>
+      <dt className="text-muted">{label}</dt>
       <dd className="mt-1 font-mono text-fg">{value}</dd>
     </div>
   );

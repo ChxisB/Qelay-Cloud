@@ -1,5 +1,6 @@
 import { AreaChart } from '@/components/ui/AreaChart';
-import { Card } from '@/components/ui/Card';
+import { Card, CardHeader } from '@/components/ui/Card';
+import { Legend } from '@/components/ui/charts/Legend';
 import { EmptyState, LoadingState } from '@/components/ui/feedback';
 import { cn } from '@/lib/cn';
 import { formatNumber } from '@/lib/format';
@@ -20,23 +21,29 @@ export function ThroughputCharts({ series }: { series: ReturnType<typeof useThro
   return (
     <>
       <Card className="mb-6">
-        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-fg">Live Throughput</h2>
-            <p className="text-xs text-faint">Real-time jobs per second (rolling 60s window)</p>
-          </div>
-          {throughput && (
-            <div className="flex flex-wrap items-center gap-4 font-mono text-[11px] text-faint">
-              <Legend color="var(--state-active-fg)" label="Pushed" value={throughput.pushPerSec} />
+        <CardHeader
+          title="Live throughput"
+          sub="Jobs a second, rolling 60 second window"
+          action={
+            throughput && (
               <Legend
-                color="var(--state-completed-fg)"
-                label="Completed"
-                value={throughput.completePerSec}
+                items={[
+                  {
+                    tone: 'active',
+                    label: 'Pushed',
+                    value: `${throughput.pushPerSec.toFixed(1)}/s`,
+                  },
+                  {
+                    tone: 'ok',
+                    label: 'Completed',
+                    value: `${throughput.completePerSec.toFixed(1)}/s`,
+                  },
+                  { tone: 'bad', label: 'Failed', value: `${throughput.failPerSec.toFixed(1)}/s` },
+                ]}
               />
-              <Legend color="var(--state-failed-fg)" label="Failed" value={throughput.failPerSec} />
-            </div>
-          )}
-        </div>
+            )
+          }
+        />
         {!series.latest ? (
           fallback('Live throughput')
         ) : (
@@ -51,36 +58,33 @@ export function ThroughputCharts({ series }: { series: ReturnType<typeof useThro
         )}
       </Card>
       <Card className="mb-6">
-        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-fg">Queue Depth</h2>
-            <p className="text-xs text-faint">
-              All non-terminal jobs over time (waiting + prioritized + active + delayed +
-              waiting-children). The trend says whether you're draining or falling behind.
-            </p>
-          </div>
-          <div className="text-right">
-            <div className="tnum text-2xl font-bold text-fg">
-              {depthNow == null ? '—' : formatNumber(depthNow)}
+        <CardHeader
+          title="Queue depth"
+          sub="Every job not yet finished: waiting, prioritized, active, delayed and waiting-children. The trend says whether you are draining or falling behind."
+          action={
+            <div className="text-right">
+              <div className="tnum text-[20px] leading-none font-bold text-fg">
+                {depthNow == null ? '—' : formatNumber(depthNow)}
+              </div>
+              <div
+                className={cn(
+                  'mt-1 text-[13px] font-bold',
+                  trend.label === 'draining'
+                    ? 'text-success'
+                    : trend.label === 'accumulating'
+                      ? 'text-danger'
+                      : 'text-muted'
+                )}
+              >
+                {depthNow == null
+                  ? 'unavailable'
+                  : trend.label === 'steady'
+                    ? 'steady'
+                    : `${trend.slope > 0 ? '+' : ''}${trend.slope.toFixed(1)}/s · ${trend.label}`}
+              </div>
             </div>
-            <div
-              className={cn(
-                'text-xs font-medium',
-                trend.label === 'draining'
-                  ? 'text-success'
-                  : trend.label === 'accumulating'
-                    ? 'text-danger'
-                    : 'text-faint'
-              )}
-            >
-              {depthNow == null
-                ? 'unavailable'
-                : trend.label === 'steady'
-                  ? 'steady'
-                  : `${trend.slope > 0 ? '+' : ''}${trend.slope.toFixed(1)}/s · ${trend.label}`}
-            </div>
-          </div>
-        </div>
+          }
+        />
         {!series.latest ? (
           fallback('Queue depth')
         ) : (
@@ -99,14 +103,5 @@ export function ThroughputCharts({ series }: { series: ReturnType<typeof useThro
         )}
       </Card>
     </>
-  );
-}
-
-function Legend({ color, label, value }: { color: string; label: string; value: number }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span className="size-2 rounded-full" style={{ background: color }} />
-      {label} <span className="text-fg">{value.toFixed(1)}/s</span>
-    </span>
   );
 }

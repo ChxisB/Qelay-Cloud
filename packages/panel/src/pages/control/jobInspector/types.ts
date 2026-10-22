@@ -1,3 +1,5 @@
+import type { ConfirmOptions } from '@/components/dashboard/stores/confirmStore';
+
 export type LookupMode = 'id' | 'custom';
 
 export interface JobLookupTarget {
@@ -25,7 +27,7 @@ export interface InspectorMessage {
 export type JobAction = (
   label: string,
   operation: () => Promise<unknown>,
-  confirmMessage?: string
+  confirm?: ConfirmOptions
 ) => Promise<void>;
 
 export type SetSearchParams = (

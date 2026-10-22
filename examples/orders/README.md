@@ -17,7 +17,7 @@ default here, `gcp-pubsub` and `aws-sqs` the others), `QCLOUD_GCP_PROJECT`, `QCL
 ## Run it locally (Postgres is the doorbell)
 
 ```bash
-docker compose -f examples/orders/docker-compose.yml up -d --wait   # Postgres 16 on 127.0.0.1:55452
+docker compose -f examples/orders/docker-compose.yml up -d --wait   # Postgres 18 on 127.0.0.1:55452
 bun run examples/orders/src/migrate.ts                              # create the qcloud_* tables
 bun run examples/orders/src/worker.ts                               # terminal 1: worker plus the in-process tick
 bun run examples/orders/src/producer.ts 5                           # terminal 2: 5 orders, a reminder, a failing charge

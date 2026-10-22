@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { CodeBlock } from '@/components/ui/CodeBlock';
 import { bq } from '@/lib/bq';
 
 /**
@@ -48,23 +49,27 @@ export function JobChildren({ jobId }: { jobId: string }) {
       <CardHeader
         title="Child values"
         action={
-          <Button size="sm" variant="ghost" onClick={toggle}>
+          <Button size="sm" aria-expanded={open} onClick={toggle}>
             {open ? 'Hide' : 'Show'}
           </Button>
         }
       />
       {!open ? (
-        <p className="text-xs text-faint">Resolved return values from this flow job's children.</p>
+        <p className="text-[13px] text-muted">
+          Resolved return values from this flow job's children.
+        </p>
       ) : loading ? (
-        <p className="text-xs text-faint">Loading child values…</p>
+        <p className="text-[13px] text-muted">Loading child values…</p>
       ) : error ? (
-        <p className="text-xs text-danger">{error}</p>
+        <p role="alert" className="text-[13px] font-semibold text-danger">
+          {error}
+        </p>
       ) : count === 0 ? (
-        <p className="text-xs text-faint">No child values available.</p>
+        <p className="text-[13px] text-muted">No child values available.</p>
       ) : (
-        <pre className="max-h-64 overflow-auto rounded-lg bg-surface-2 p-3 font-mono text-xs text-muted">
+        <CodeBlock label="Child values" className="max-h-64">
           {JSON.stringify(values, null, 2)}
-        </pre>
+        </CodeBlock>
       )}
     </Card>
   );

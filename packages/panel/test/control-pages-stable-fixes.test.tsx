@@ -10,9 +10,9 @@ import { DEFAULT_CONFIG } from '../src/pages/control/benchmark/engine';
 import { type BenchmarkLoopContext, createConsumer } from '../src/pages/control/benchmark/runLoops';
 import { freshBenchmarkStats } from '../src/pages/control/benchmark/runtimeState';
 import { validateBulkItems } from '../src/pages/control/bulkAdd/validation';
+import { Connections } from '../src/pages/control/gateway/Connections';
 import { LimitsCards } from '../src/pages/control/queue/LimitsCards';
 import { rateLimitArgs } from '../src/pages/control/queue/queueActionModel';
-import { Webhooks } from '../src/pages/control/Webhooks';
 import {
   button,
   byName,
@@ -30,7 +30,6 @@ import { repositoryOf } from './queue-operations-ui.repository';
 // against the pre-fix implementation.
 
 const realFetch = globalThis.fetch;
-const realConfirm = window.confirm;
 
 installStableFixHooks();
 
@@ -42,12 +41,10 @@ beforeEach(() => {
     agentToken: '',
     refreshMs: 60_000,
   });
-  window.confirm = () => true;
 });
 
 afterEach(() => {
   globalThis.fetch = realFetch;
-  window.confirm = realConfirm;
 });
 
 describe('benchmark count-mode drain with several workers', () => {
@@ -146,7 +143,7 @@ describe('webhook toggle lease', () => {
       return Promise.resolve(json({ ok: false, error: `Unexpected ${method} ${url}` }, 500));
     }) as typeof fetch;
 
-    const first = render(createElement(Webhooks));
+    const first = render(createElement(MemoryRouter, null, createElement(Connections)));
     await settle(20);
     click(first.host.querySelector('button[role="switch"]') as HTMLButtonElement);
     expect(toggles).toBe(1);
@@ -154,7 +151,7 @@ describe('webhook toggle lease', () => {
     firstToggle.resolve(json({ ok: true }));
     await settle(10);
 
-    const second = render(createElement(Webhooks));
+    const second = render(createElement(MemoryRouter, null, createElement(Connections)));
     await settle(20);
     click(second.host.querySelector('button[role="switch"]') as HTMLButtonElement);
     await settle(10);
@@ -232,16 +229,54 @@ describe('rate limit "Expires after" mode', () => {
         },
       })
     );
+    click(button(view.host, 'Edit'));
     change(byName(view.host, 'rate-limit'), '10');
     change(byName(view.host, 'rate-duration'), '1000');
     change(byName(view.host, 'rate-ttl-mode'), 'expires');
-    const replace = button(view.host, 'Replace policy');
+    const replace = button(view.host, 'Apply speed limit');
     expect(replace.disabled).toBe(true);
-    expect(view.host.textContent).toContain('Limit, window and TTL are required');
+    expect(view.host.textContent).toContain(
+      'Jobs allowed, the time window and how long it lasts are all needed'
+    );
     click(replace);
     expect(runs).toEqual([]);
 
     change(byName(view.host, 'rate-ttl'), '500');
-    expect(button(view.host, 'Replace policy').disabled).toBe(false);
+    expect(button(view.host, 'Apply speed limit').disabled).toBe(false);
+  });
+});
+
+describe('speed limit and concurrency cards say what this page set', () => {
+  test('they start without a value, say what was set, then what was removed', async () => {
+    const calls: string[] = [];
+    const view = render(
+      createElement(LimitsCards, {
+        queue: 'orders',
+        busy: false,
+        run: (label: string, _fn: unknown, _confirm?: string, onSuccess?: () => void) => {
+          calls.push(label);
+          onSuccess?.();
+        },
+      })
+    );
+    const text = () => view.host.textContent ?? '';
+    expect(text()).toContain('This server does not say what limit is set');
+    expect(text()).toContain('This server does not say what cap is set');
+    expect(view.host.querySelector('input')).toBeNull();
+
+    click(button(view.host, 'Edit'));
+    change(byName(view.host, 'rate-limit'), '100');
+    change(byName(view.host, 'rate-duration'), '60000');
+    click(button(view.host, 'Apply speed limit'));
+    expect(text()).toContain(
+      'You set this from this page: 100 jobs every minute, until you remove it.'
+    );
+    expect(view.host.querySelector('input')).toBeNull();
+
+    click(view.host.querySelector('button[aria-label="Edit jobs at the same time"]')!);
+    change(byName(view.host, 'concurrency'), '4');
+    click(button(view.host, 'Apply cap'));
+    expect(text()).toContain('at most 4 jobs at once');
+    expect(calls).toEqual(['Rate limit set', 'Concurrency set']);
   });
 });

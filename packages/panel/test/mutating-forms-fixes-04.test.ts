@@ -12,7 +12,6 @@ import {
   settle,
   test,
   useClampedPageCron,
-  useClampedPageHooks,
   useTransientFlag,
 } from './mutating-forms-fixes.helpers';
 
@@ -124,13 +123,9 @@ describe('Webhooks', () => {
   });
 });
 
-// The clamp hook is duplicated (one per page, additive-only), so exercise both.
-describe.each([
-  ['CronManager', useClampedPageCron],
-  ['Webhooks', useClampedPageHooks],
-])('%s useClampedPage', (_name, useClampedPage) => {
+describe('CronManager useClampedPage', () => {
   test('a list that shrinks then regrows does not jump the view forward', async () => {
-    const h = renderHook((pageCount: number) => useClampedPage(pageCount), 2);
+    const h = renderHook((pageCount: number) => useClampedPageCron(pageCount), 2);
     act(() => h.result.current[1](1));
     expect(h.result.current[0]).toBe(1);
     // The tail entry is deleted: one page left, so the state itself must clamp.

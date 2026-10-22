@@ -1,5 +1,8 @@
 import { Card, CardHeader } from '@/components/ui/Card';
+import { CodeBlock } from '@/components/ui/CodeBlock';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
+import { Tag } from '@/components/ui/Tag';
 
 export function SchemaView({
   schema,
@@ -20,55 +23,45 @@ export function SchemaView({
 }) {
   return (
     <div className="flex flex-col gap-6">
-      <div className="overflow-x-auto rounded-card border border-line bg-surface">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-line text-left eyebrow text-muted light:bg-surface-2">
-              <th className="px-4 py-2.5 font-semibold">Column</th>
-              <th className="px-4 py-2.5 font-semibold">Type</th>
-              <th className="px-4 py-2.5 font-semibold">Constraints</th>
-              <th className="px-4 py-2.5 font-semibold">Default</th>
+      <TableScroll className="rounded-card border border-line bg-surface">
+        <Table>
+          <THead>
+            <tr>
+              <Th>Column</Th>
+              <Th>Type</Th>
+              <Th>Constraints</Th>
+              <Th>Default</Th>
             </tr>
-          </thead>
+          </THead>
           <tbody>
             {schema.columns.map((c) => (
-              <tr key={c.name} className="border-b border-line last:border-0">
-                <td className="px-4 py-2 font-mono text-xs text-fg">{c.name}</td>
-                <td className="px-4 py-2 font-mono text-xs text-muted">{c.type}</td>
-                <td className="px-4 py-2 text-xs">
-                  {c.primaryKey && (
-                    <span className="mr-1 rounded-md bg-selected px-1.5 py-0.5 text-[10px] font-semibold text-link">
-                      PK
-                    </span>
-                  )}
-                  {c.notNull && (
-                    <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
-                      NOT NULL
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-faint">{c.defaultValue ?? '—'}</td>
-              </tr>
+              <Tr key={c.name} dense>
+                <Td className="font-mono text-[13px]">{c.name}</Td>
+                <Td className="font-mono text-[13px] text-muted">{c.type}</Td>
+                <Td>
+                  <span className="flex flex-wrap gap-1.5">
+                    {c.primaryKey && <Tag>PK</Tag>}
+                    {c.notNull && <Tag>NOT NULL</Tag>}
+                  </span>
+                </Td>
+                <Td className="font-mono text-[13px] text-muted">{c.defaultValue ?? '—'}</Td>
+              </Tr>
             ))}
           </tbody>
-        </table>
-      </div>
+        </Table>
+      </TableScroll>
 
       <Card>
         <CardHeader title={`Indexes (${schema.indexes.length})`} />
         {schema.indexes.length === 0 ? (
-          <p className="text-xs text-faint">No indexes on this table.</p>
+          <p className="m-0 text-[13px] text-muted">No indexes on this table.</p>
         ) : (
-          <ul className="flex flex-col gap-1.5">
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {schema.indexes.map((ix) => (
-              <li key={ix.name} className="flex flex-wrap items-center gap-2 font-mono text-xs">
-                <span className="text-fg">{ix.name}</span>
-                {ix.unique && (
-                  <span className="rounded-md bg-selected px-1.5 py-0.5 text-[10px] font-semibold text-link">
-                    UNIQUE
-                  </span>
-                )}
-                <span className="text-faint">({ix.columns.join(', ')})</span>
+              <li key={ix.name} className="flex flex-wrap items-center gap-2 font-mono text-[13px]">
+                <span className="font-bold text-fg">{ix.name}</span>
+                {ix.unique && <Tag>UNIQUE</Tag>}
+                <span className="text-muted">({ix.columns.join(', ')})</span>
               </li>
             ))}
           </ul>
@@ -78,9 +71,7 @@ export function SchemaView({
       {schema.sql && (
         <Card>
           <CardHeader title="DDL" action={<CopyButton value={schema.sql} />} />
-          <pre className="overflow-x-auto rounded-lg bg-surface-2 p-3 font-mono text-xs text-muted">
-            {schema.sql}
-          </pre>
+          <CodeBlock label="DDL">{schema.sql}</CodeBlock>
         </Card>
       )}
     </div>

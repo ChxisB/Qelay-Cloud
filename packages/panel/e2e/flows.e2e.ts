@@ -43,11 +43,15 @@ const tree = (page: Page) => page.locator('#main').getByRole('tree');
 const row = (page: Page, state: string) =>
   tree(page).locator(`[role="treeitem"][data-flow-state="${state}"]`);
 
+/** The jobs open as a graph on a wide screen; the tests that read the tree press List first. */
+const showList = (page: Page) =>
+  page.locator('#main fieldset').getByRole('button', { name: 'list', exact: true }).click();
+
 async function openFlowsPage(page: Page, mount: Mount = OPERATOR): Promise<void> {
   await clickNavLink(page, page.locator(`#app-nav nav a[href="${mount.basePath}/flows"]`));
   await expect(page).toHaveURL(`${mount.appUrl}/flows`);
   await expect(
-    page.locator('#main').getByRole('heading', { name: 'Job Flows', level: 1 })
+    page.locator('#main').getByRole('heading', { name: 'Flows', level: 1 })
   ).toBeVisible();
 }
 
@@ -67,6 +71,14 @@ test('flow: an operator finds a stuck flow, retries its failed child, and the pa
   await expect(listed).toContainText('1 stuck');
   await listed.getByRole('button').click();
   await expect(page).toHaveURL(new RegExp(`/flows\\?root=${encodeURIComponent(seeded.root)}`));
+  // It opens as a graph: one box per job, and the failed child says it holds its parent.
+  const graph = page.locator('#main').getByRole('group', { name: 'Graph of the jobs of the flow' });
+  await expect(graph.locator('[data-flow-state]')).toHaveCount(3);
+  const stuck = graph.getByRole('button', { name: /^failed job .*Holds parent/ });
+  await stuck.click();
+  await expect(page.locator('#main').getByText('seeded failure').first()).toBeVisible();
+  await expect(stuck).toHaveAttribute('aria-current', 'true');
+  await showList(page);
   await expect(tree(page).getByRole('treeitem')).toHaveCount(3);
   await expect(row(page, 'waiting-children')).toHaveCount(1);
   await expect(row(page, 'completed')).toHaveCount(1);
@@ -120,6 +132,7 @@ test('flow: a viewer reads the tree, is offered no action, and the server refuse
   const seeded = await seedFlow(request, queue);
   await unlockDashboard(page, false, VIEWER);
   await goInApp(page, `/flows?root=${encodeURIComponent(seeded.root)}`, VIEWER);
+  await showList(page);
   await expect(tree(page).getByRole('treeitem')).toHaveCount(3);
   await row(page, 'failed').click();
   await expect(page.locator('#main').getByText('seeded failure').first()).toBeVisible();
@@ -152,6 +165,11 @@ test('flow: a link to a job inside a flow opens the flow at that job, and a stal
   await goInApp(page, `/flows?root=${encodeURIComponent(seeded.failed)}`);
   await expect(page).toHaveURL(new RegExp(`root=${encodeURIComponent(seeded.root)}`));
   await expect(page).toHaveURL(new RegExp(`node=${encodeURIComponent(seeded.failed)}`));
+  // The graph is the default view: the job the link names is the marked node there, and the selected row in the list.
+  await expect(
+    page.locator('#main [data-flow-state="failed"] [aria-current="true"]')
+  ).toBeVisible();
+  await showList(page);
   await expect(row(page, 'failed')).toHaveAttribute('aria-selected', 'true');
 
   // An id that is no job at all says so instead of showing an empty page.

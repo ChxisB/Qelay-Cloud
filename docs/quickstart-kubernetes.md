@@ -2,12 +2,12 @@
 
 The Control API, the panel, the tick and your workers on any Kubernetes cluster, from one Helm chart. The chart and the two
 images are published to ghcr.io by the [release workflow](../.github/workflows/release.yml) when a version is tagged. It runs
-no database: you bring a Postgres 16 or later, and the chart takes its connection string from a Secret.
+no database: you bring a Postgres 18 or later, and the chart takes its connection string from a Secret.
 
 ## What you need
 
 - A cluster, `kubectl` and Helm 3.8 or later (OCI charts).
-- A Postgres 16 or later the cluster can reach, and a database in it.
+- A Postgres 18 or later the cluster can reach, and a database in it.
 - An OpenID Connect provider that issues RS256 or ES256 JWTs, with a public client for the panel (authorization code with
   PKCE). The [deployment runbook](runbooks/deploy-gcp.md#sign-in) lists what the token must carry.
 - Two host names for the ingress: the API cannot be mounted under a path, so the API and the panel each get one.

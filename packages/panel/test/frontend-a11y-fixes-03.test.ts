@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import {
   act,
   createElement,
@@ -70,7 +71,7 @@ describe('honest async failures', () => {
     await settle(10);
     expect(host.textContent).toContain('Server reachable');
     expect(host.textContent).toContain('qelay v2.8.55 · degraded');
-    expect(host.querySelector('[role="status"].text-danger')?.textContent).toContain('degraded');
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('degraded');
     unmount();
   });
 
@@ -119,7 +120,7 @@ describe('honest async failures', () => {
       return Promise.resolve(Response.json({ ok: true }));
     }) as typeof fetch;
 
-    const { host, unmount } = render(createElement(Database));
+    const { host, unmount } = render(createElement(MemoryRouter, null, createElement(Database)));
     await settle(30);
     expect(host.textContent).toContain('Could not read database metadata — metadata unavailable');
     const schemaButton = Array.from(host.querySelectorAll('button')).find(
