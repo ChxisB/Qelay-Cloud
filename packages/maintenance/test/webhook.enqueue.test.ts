@@ -27,16 +27,10 @@ describe('webhook attempt: a queue route adds a job', () => {
     const [job] = e.calls[0]!;
     expect(job).toMatchObject({
       queue: 'refunds',
-      name: 'job.completed',
+      name: 'webhook.test',
       options: { jobId: routeJobId('41') },
     });
-    expect(job!.data).toMatchObject({
-      id: '41',
-      event: 'job.completed',
-      queue: 'emails',
-      jobId: 'j-1',
-      state: 'completed',
-    });
+    expect(job!.data).toMatchObject({ id: '41', event: 'webhook.test' });
     // No network and no name lookup: there is no url to check.
     expect(s.calls).toEqual([]);
     expect(s.lookups).toEqual([]);

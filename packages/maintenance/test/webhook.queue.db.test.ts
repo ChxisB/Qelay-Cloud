@@ -5,13 +5,7 @@ import { describeDb } from '../../../test/support/db';
 import { resetTables } from '../../store-postgres/test/finishHelpers';
 import type { TestStore } from '../../store-postgres/test/storeHelpers';
 import { openTestStore } from '../../store-postgres/test/storeHelpers';
-import {
-  addHook,
-  event,
-  journal,
-  KEY,
-  rawDeliveries,
-} from '../../store-postgres/test/webhookHelpers';
+import { addHook, KEY, rawDeliveries, send } from '../../store-postgres/test/webhookHelpers';
 import { RecordingTransport } from './support';
 import { senderHarness, status } from './webhookSending';
 
@@ -40,20 +34,13 @@ describeDb('webhook sender: a queue route adds a job through the tick', () => {
     () => transport
   );
 
-  /** A queue route from `from` to `to` on `job.pushed`. */
-  const route = (from: string, to: string) =>
-    addHook(t, {
-      destination: 'queue',
-      url: undefined,
-      queue: from,
-      target: to,
-      events: ['job.pushed'],
-    });
+  /** A queue route that adds a job to `to` for each request of the source. */
+  const route = (to: string) => addHook(t, { destination: 'queue', url: undefined, target: to });
   const jobsIn = async (queue: string) => (await t.store.listJobs({ queue, limit: 50 })).items;
 
-  test('A is pushed, then B is enqueued once, with no request made', async () => {
-    const hook = await route('orders', 'refunds');
-    await journal(t, [event('pushed', 'orders', 'o-1')]);
+  test('a request is posted, then a job is enqueued once, with no request made', async () => {
+    const hook = await route('refunds');
+    await send(t, { id: 500, name: 'chris' });
     const s = sending(() => status(200));
 
     expect((await s.pass()).webhooks).toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
@@ -63,8 +50,8 @@ describeDb('webhook sender: a queue route adds a job through the tick', () => {
     const deliveryId = first!.id;
     expect(jobs[0]).toMatchObject({
       id: routeJobId(deliveryId),
-      name: 'job.pushed',
-      data: { event: 'job.pushed', queue: 'orders', jobId: 'o-1' },
+      name: 'request.received',
+      data: { id: 500, name: 'chris' },
     });
     expect(s.seen).toEqual([]);
 
@@ -81,8 +68,8 @@ describeDb('webhook sender: a queue route adds a job through the tick', () => {
   });
 
   test('a crash after the job was added and before the result was recorded makes no second job', async () => {
-    await route('orders', 'refunds');
-    await journal(t, [event('pushed', 'orders', 'o-1')]);
+    await route('refunds');
+    await send(t);
     const s = sending(() => status(200));
     await s.pass();
     // What the store holds after that crash: the delivery claimed, its job already there.
@@ -93,26 +80,23 @@ describeDb('webhook sender: a queue route adds a job through the tick', () => {
     expect(await jobsIn('refunds')).toHaveLength(1);
   });
 
-  test('routes feeding routes: A to B to C, one job each', async () => {
-    await route('a', 'b');
-    await route('b', 'c');
-    await journal(t, [event('pushed', 'a', 'j1')]);
+  test('a request makes one job in each queue route, and those jobs make no further delivery', async () => {
+    await route('b');
+    await route('c');
+    await send(t, { id: 1 });
     const s = sending(() => status(200));
 
-    await s.pass();
-    expect(await jobsIn('b')).toHaveLength(1);
-    // The job the first route added is a job like any other: its event matches the second route.
-    await s.pass();
-    expect(await jobsIn('c')).toHaveLength(1);
-    await s.pass();
-    expect(await jobsIn('a')).toHaveLength(0);
+    expect((await s.pass()).webhooks).toMatchObject({ claimed: 2, delivered: 2 });
     expect(await jobsIn('b')).toHaveLength(1);
     expect(await jobsIn('c')).toHaveLength(1);
+    // A job makes no event (D14), so there is nothing more for the next passes to find.
+    expect((await s.pass()).webhooks.claimed).toBe(0);
+    expect(await rawDeliveries(t)).toHaveLength(2);
   });
 
   test('a refused enqueue is a failed attempt that retries on the webhook schedule, and then succeeds', async () => {
-    await route('orders', 'refunds');
-    await journal(t, [event('pushed', 'orders', 'o-1')]);
+    await route('refunds');
+    await send(t);
     const refusing = Object.create(t.store, {
       enqueue: {
         value: async () => {
@@ -135,9 +119,9 @@ describeDb('webhook sender: a queue route adds a job through the tick', () => {
   });
 
   test('an http route beside a queue route is sent as before', async () => {
-    await addHook(t, { events: ['job.pushed'], queue: 'orders' });
-    await route('orders', 'refunds');
-    await journal(t, [event('pushed', 'orders', 'o-1')]);
+    await addHook(t);
+    await route('refunds');
+    await send(t);
     const s = sending(() => status(200));
 
     expect((await s.pass()).webhooks).toMatchObject({ claimed: 2, delivered: 2 });

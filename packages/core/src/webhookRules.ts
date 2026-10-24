@@ -1,10 +1,11 @@
 import { UnsupportedOptionError } from './errors';
-import type { WebhookSubject } from './webhookFilter';
 import { isPlainObject } from './webhookFilter';
+import type { WebhookDocument } from './webhookPath';
+import { isDocumentPath, readPath } from './webhookPath';
 
 /**
  * The rules a connection can have beside `filter` and `shape` (D13): a name, a delay and a dedupe. All of
- * them are data. Delay and dedupe are applied by the delivery writer, so they need it on, as a filter does.
+ * them are data. The accept transaction applies delay and dedupe when it makes a request's deliveries (D14).
  */
 
 export const WEBHOOK_NAME_CHARS = 80;
@@ -35,14 +36,16 @@ export const webhookPausedBy = (route: {
       ? 'operator'
       : 'failures';
 
-/** The fields two events can be compared on: those of a job event that name what happened, not when. */
-export const DEDUPE_FIELDS = ['event', 'queue', 'jobId', 'state', 'error'] as const;
-export type DedupeField = (typeof DEDUPE_FIELDS)[number];
+/** Most fields a dedupe key is made of. */
+export const MAX_DEDUPE_FIELDS = 5;
 
-/** Of the events a route accepts, the first with these values goes; the same values inside `windowMs` are dropped. */
+/**
+ * Of the requests a route accepts, the first with these values goes; the same values inside `windowMs` are dropped.
+ * A field is a path into a request document (`body.id`).
+ */
 export interface WebhookDedupe {
   readonly windowMs: number;
-  readonly fields: readonly DedupeField[];
+  readonly fields: readonly string[];
 }
 
 const hasControl = (text: string, allowNewline: boolean): boolean => {
@@ -92,10 +95,7 @@ export function validateDelay(value: unknown): number | null {
   return value;
 }
 
-const isDedupeField = (name: unknown): name is DedupeField =>
-  (DEDUPE_FIELDS as readonly unknown[]).includes(name);
-
-/** A dedupe with its fields in `DEDUPE_FIELDS` order and none twice, or null for none. */
+/** A dedupe with its paths sorted and none twice, or null for none. */
 export function validateDedupe(value: unknown): WebhookDedupe | null {
   if (value === undefined || value === null) return null;
   const bad = (reason: string): never => {
@@ -113,12 +113,14 @@ export function validateDedupe(value: unknown): WebhookDedupe | null {
   ) {
     return bad(`windowMs must be from ${MIN_DEDUPE_WINDOW_MS} to ${MAX_DEDUPE_WINDOW_MS}`);
   }
-  if (!Array.isArray(fields) || fields.length === 0 || !fields.every(isDedupeField)) {
-    return bad(`fields must name at least one of ${DEDUPE_FIELDS.join(', ')}`);
+  if (!Array.isArray(fields) || fields.length === 0 || !fields.every(isDocumentPath)) {
+    return bad('fields must name at least one path such as body.id');
   }
-  return { windowMs, fields: DEDUPE_FIELDS.filter((field) => fields.includes(field)) };
+  const paths = [...new Set<string>(fields)].sort();
+  if (paths.length > MAX_DEDUPE_FIELDS) return bad(`fields must be at most ${MAX_DEDUPE_FIELDS}`);
+  return { windowMs, fields: paths };
 }
 
-/** What two events must share to be the same: the chosen fields' values, as text. A missing value is null, not "null". */
-export const dedupeValues = (fields: readonly DedupeField[], subject: WebhookSubject): string =>
-  JSON.stringify(fields.map((field) => subject[field] ?? null));
+/** What two requests must share to be the same: the chosen fields' values, as text. A missing value is null, not "null". */
+export const dedupeValues = (fields: readonly string[], subject: WebhookDocument): string =>
+  JSON.stringify(fields.map((field) => readPath(subject, field) ?? null));

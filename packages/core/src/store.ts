@@ -1,3 +1,4 @@
+import type { DlqRetryManyOptions, DlqRetryManyResult, DlqRetryResult } from './dlqRetry';
 import type { StoreError } from './errors';
 import type {
   ClaimedJob,
@@ -122,6 +123,19 @@ export interface StateStore {
   counts(queue: string): Promise<StateCounts>;
   /** The queue's DLQ entries: exactly one per failed job, never rewritten. */
   listDlq(queue: string): Promise<DlqEntry[]>;
+  /**
+   * Puts one dead-lettered job back on the queue: waiting again with no attempt used, no error and no
+   * entry (the `retry-dlq` transition), a new `version`, and the bell in `rings`. Fenced by
+   * `expectedVersion` when given. A job that is not in the DLQ of `queue`, a stale version and a flow
+   * member each answer `ok: false` with a reason and change nothing, so a second call, or one that lost a
+   * race with a purge, is harmless.
+   */
+  retryDlq(queue: string, jobId: string, options?: OperatorOptions): Promise<DlqRetryResult>;
+  /**
+   * `retryDlq` for up to `limit` (at most 500) entries of the queue, oldest failure first, in one
+   * transaction. Flow members are skipped. `remaining` says how many more match.
+   */
+  retryDlqMany(queue: string, options: DlqRetryManyOptions): Promise<DlqRetryManyResult>;
 
   /** Releases connections. Waits at most `timeout` ms for in-flight calls. */
   close(options?: { readonly timeout?: number }): Promise<void>;

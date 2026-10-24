@@ -7,7 +7,7 @@ import type { WebhookDeliveryFull } from '@/lib/bq';
 import type { WebhookFull } from '@/lib/bqTypes';
 import { formatDateTime } from '@/lib/format';
 import { AttemptLine } from './AttemptLine';
-import { EVENT_WORDS, isOnHold, routeName, sourceLabel } from './model';
+import { EVENT_WORDS, isOnHold, requestLabel, routeName, sourceLabel } from './model';
 
 /**
  * One event in full: what happened, where it went, and every attempt kept for it, drawn as a line of stops
@@ -59,8 +59,8 @@ export function EventDetail({
         <Facts
           items={[
             { label: 'Event', value: delivery.event },
-            { label: 'Job', value: `${delivery.queue} / ${delivery.jobId}` },
-            { label: 'From', value: route ? sourceLabel(route) : `Qelay jobs: ${delivery.queue}` },
+            { label: 'Request', value: requestLabel(delivery) },
+            { label: 'From', value: route ? sourceLabel(route) : 'A connection that was removed' },
             {
               label: 'To',
               value: route ? routeName(route) : 'A connection that was removed',

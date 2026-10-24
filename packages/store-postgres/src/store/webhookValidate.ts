@@ -1,23 +1,26 @@
 import {
   isWebhookDestination,
-  isWebhookEvent,
   MAX_WEBHOOK_URL_CHARS,
   UnsupportedOptionError,
+  validateBatch,
   validateDedupe,
   validateDelay,
   validateDescription,
   validateFilter,
   validateName,
+  validateSchedule,
   validateShape,
-  WEBHOOK_EVENTS,
 } from '@qelay-cloud/core';
 import type {
+  WebhookBatch,
   WebhookDedupe,
   WebhookDestination,
   WebhookFilter,
+  WebhookSchedule,
   WebhookShape,
 } from '@qelay-cloud/core';
 import { identifier } from './prepare';
+import { checkSchedule } from './webhookSchedule';
 import type { WebhookSpec } from './webhookTypes';
 
 /** What a spec says once it has been checked: the rules of `WebhookSpec`, in the form the store writes them. */
@@ -28,8 +31,7 @@ export interface Valid {
   readonly destination: WebhookDestination;
   readonly url: string;
   readonly target: string | null;
-  readonly events: string[];
-  readonly queue: string | null;
+  readonly source: string;
   readonly secret: string | null;
   readonly enabled: boolean;
   readonly filter: WebhookFilter | null;
@@ -38,6 +40,15 @@ export interface Valid {
   readonly description: string | null;
   readonly delayMs: number | null;
   readonly dedupe: WebhookDedupe | null;
+  readonly schedule: WebhookSchedule | null;
+  readonly batch: WebhookBatch | null;
+}
+
+/** The schedule checked down to its cron (`core` checks the shape, the store reads the expression), or null for none. */
+export function checkedSchedule(value: unknown): WebhookSchedule | null {
+  const schedule = validateSchedule(value);
+  if (schedule !== null) checkSchedule(schedule);
+  return schedule;
 }
 
 /** The secret as given (null for none), or `UnsupportedOptionError('secret', …)`. */
@@ -87,42 +98,16 @@ export function checkAddress(
   return { destination, url, target: null };
 }
 
-/** The address and queue of a route: a `queue` route also needs a source queue. */
-function validateDestination(spec: WebhookSpec): Pick<Valid, 'destination' | 'url' | 'target'> {
-  const destination = spec.destination ?? 'http';
-  if (destination === 'queue' && spec.queue == null) {
-    throw new UnsupportedOptionError('queue', 'a queue route needs a source queue');
-  }
-  return checkAddress(destination, spec.url, spec.target);
-}
-
-/** The events as a list without repeats, or `UnsupportedOptionError('events', …)`. */
-export function checkEvents(events: unknown): string[] {
-  if (!Array.isArray(events) || events.length === 0) {
-    throw new UnsupportedOptionError(
-      'events',
-      `must name at least one of ${WEBHOOK_EVENTS.join(', ')}`
-    );
-  }
-  for (const event of events) {
-    if (!isWebhookEvent(event)) {
-      throw new UnsupportedOptionError('events', `unknown event; use ${WEBHOOK_EVENTS.join(', ')}`);
-    }
-  }
-  return [...new Set<string>(events)];
-}
-
 export function validate(spec: WebhookSpec): Valid {
-  const route = validateDestination(spec);
-  const events = checkEvents(spec.events);
+  const route = checkAddress(spec.destination ?? 'http', spec.url, spec.target);
+  if (spec.source == null) throw new UnsupportedOptionError('source', 'a route needs a source');
   const secret = checkSecret(spec.secret);
   if (secret !== null && route.destination === 'queue') {
     throw new UnsupportedOptionError('secret', 'a queue route is not signed: it has no secret');
   }
   return {
     ...route,
-    events,
-    queue: spec.queue == null ? null : identifier('queue', spec.queue),
+    source: identifier('source', spec.source),
     secret,
     enabled: spec.enabled ?? true,
     filter: spec.filter == null ? null : validateFilter(spec.filter),
@@ -131,19 +116,7 @@ export function validate(spec: WebhookSpec): Valid {
     description: validateDescription(spec.description),
     delayMs: validateDelay(spec.delayMs),
     dedupe: validateDedupe(spec.dedupe),
+    schedule: checkedSchedule(spec.schedule),
+    batch: validateBatch(spec.batch, route.destination),
   };
 }
-
-/** The first rule a route has that only the delivery writer applies (the trigger cannot), by its option name; null for none. */
-export const needsWriter = (
-  rules: Pick<Valid, 'filter' | 'shape' | 'delayMs' | 'dedupe'>
-): 'filter' | 'shape' | 'delayMs' | 'dedupe' | null =>
-  rules.filter !== null
-    ? 'filter'
-    : rules.shape !== null
-      ? 'shape'
-      : rules.delayMs !== null
-        ? 'delayMs'
-        : rules.dedupe !== null
-          ? 'dedupe'
-          : null;

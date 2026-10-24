@@ -7,8 +7,9 @@ import {
   GroupFullError,
   PayloadTooComplexError,
   PayloadTooLargeError,
-  RouteChainError,
-  RouteCycleError,
+  SourceInUseError,
+  SourceLimitError,
+  SourceNameTakenError,
   WebhookDisabledError,
   WebhookKeyError,
   WebhookLimitError,
@@ -125,19 +126,20 @@ export function toApiError(error: unknown, requestId: string): ApiError {
       { connections: error.connections }
     );
   }
-  if (error instanceof RouteCycleError) {
-    return new ApiError(
-      409,
-      'route_cycle',
-      'the route would make a loop: a queue would end up adding jobs to itself'
-    );
+  if (error instanceof SourceLimitError) {
+    return new ApiError(409, 'source_limit', 'the namespace has the most sources it may', {
+      limit: error.limit,
+    });
   }
-  if (error instanceof RouteChainError) {
+  if (error instanceof SourceNameTakenError) {
+    return new ApiError(409, 'source_name_taken', 'a source already has that name');
+  }
+  if (error instanceof SourceInUseError) {
     return new ApiError(
       409,
-      'route_chain_too_long',
-      'the route would make a chain of routes longer than the most allowed',
-      { limit: error.limit }
+      'source_in_use',
+      'routes listen to the source; delete or move them first',
+      { routes: error.routes }
     );
   }
   if (error instanceof WebhookDisabledError) {

@@ -2,15 +2,25 @@ import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { describeDb } from '../../../test/support/db';
 import type { PostgresStore } from '../src/postgresStore';
 import { resetTables } from './finishHelpers';
+import { post } from './inboundHelpers';
 import type { TestStore } from './storeHelpers';
-import { enqueueN, openTestStore } from './storeHelpers';
-import { addHook, event, journal, KEY, outcome, POLICY, rawDeliveries } from './webhookHelpers';
+import { openTestStore } from './storeHelpers';
+import {
+  addHook,
+  hookSource,
+  KEY,
+  outcome,
+  POLICY,
+  rawDeliveries,
+  send,
+  sendAll,
+} from './webhookHelpers';
 
 const SENDERS = 4;
 const HOOKS = 6;
 const EVENTS_PER_HOOK = 40;
 
-describeDb('webhooks: concurrent senders and writers', () => {
+describeDb('webhooks: concurrent senders and accepts', () => {
   let t: TestStore;
   let senders: PostgresStore[];
   beforeAll(async () => {
@@ -25,13 +35,11 @@ describeDb('webhooks: concurrent senders and writers', () => {
   });
 
   test(`${SENDERS} senders claiming at once never take a delivery twice`, async () => {
-    for (let h = 0; h < HOOKS; h++) {
-      await addHook(t, { queue: `q${h}`, events: ['job.pushed'] });
-      await journal(
-        t,
-        Array.from({ length: EVENTS_PER_HOOK }, (_, i) => event('pushed', `q${h}`, `j${h}-${i}`))
-      );
-    }
+    for (let h = 0; h < HOOKS; h++) await addHook(t);
+    await sendAll(
+      t,
+      Array.from({ length: EVENTS_PER_HOOK }, (_, i) => ({ id: i }))
+    );
     const total = HOOKS * EVENTS_PER_HOOK;
     const claims = { limit: 10, leaseMs: 600_000, ratePerMinute: 100_000 };
     const taken: Array<{ sender: number; deliveryId: string; attempt: number }> = [];
@@ -62,7 +70,7 @@ describeDb('webhooks: concurrent senders and writers', () => {
 
   test('senders working one webhook leave nothing for a second claim while the first holds it', async () => {
     await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     const results = await Promise.all(
       senders.map((store) =>
         store.webhooks.claimDue({ limit: 5, leaseMs: 60_000, ratePerMinute: 100 })
@@ -71,39 +79,51 @@ describeDb('webhooks: concurrent senders and writers', () => {
     expect(results.flat()).toHaveLength(1);
   });
 
-  test('registering and deleting webhooks while jobs are pushed never fails a push', async () => {
-    const steady = await addHook(t, { events: ['job.pushed'], queue: 'busy' });
-    const pushes = 4 * 40;
+  test('registering and deleting routes while requests are accepted never fails an accept', async () => {
+    const steady = await addHook(t);
+    const source = await hookSource(t);
+    const accepts = 4 * 40;
     const churn = async (): Promise<void> => {
       for (let i = 0; i < 40; i++) {
-        const hook = await addHook(t, { events: ['job.pushed'], queue: 'busy' });
+        const hook = await addHook(t);
         await t.store.webhooks.delete(hook.id);
       }
     };
-    const push = async (): Promise<void> => {
-      for (let i = 0; i < 40; i++) await enqueueN(t.another(), 1, {}, 'busy');
+    const accept = async (): Promise<void> => {
+      const store = t.another();
+      for (let i = 0; i < 40; i++) {
+        const result = await store.sources.accept(source, post({ i }));
+        if (result.outcome !== 'accepted') throw new Error(result.outcome);
+      }
     };
-    const outcomes = await Promise.allSettled([churn(), churn(), push(), push(), push(), push()]);
+    const outcomes = await Promise.allSettled([
+      churn(),
+      churn(),
+      accept(),
+      accept(),
+      accept(),
+      accept(),
+    ]);
     expect(outcomes.filter((o) => o.status === 'rejected')).toEqual([]);
     const rows = await rawDeliveries(t);
-    expect(rows.filter((row) => row.webhook_id === steady.id)).toHaveLength(pushes);
+    expect(rows.filter((row) => row.webhook_id === steady.id)).toHaveLength(accepts);
     const strays = await t.fresh.sql`
       SELECT count(*)::int AS n FROM qcloud_deliveries d
       WHERE NOT EXISTS (SELECT 1 FROM qcloud_webhooks w WHERE w.id = d.webhook_id)`;
     expect(strays[0]!.n).toBe(0);
   });
 
-  test('a sender holding a webhook does not stall a job push', async () => {
-    const hook = await addHook(t, { events: ['job.pushed'] });
-    await journal(t, [event('pushed', 'q', 'seed')]);
-    // The claim's transaction holds the webhook row `FOR NO KEY UPDATE`; the trigger needs `KEY SHARE`.
+  test('a sender holding a webhook does not stall an accept', async () => {
+    const hook = await addHook(t);
+    await send(t, { id: 'seed' });
+    // The claim's transaction holds the webhook row `FOR NO KEY UPDATE`; the accept needs `KEY SHARE`.
     const held = t.fresh.sql.begin(async (tx) => {
       await tx`SELECT id FROM qcloud_webhooks WHERE id = ${hook.id} FOR NO KEY UPDATE`;
       await Bun.sleep(300);
     });
     await Bun.sleep(50);
     const started = performance.now();
-    await enqueueN(t.another(), 1, {}, 'q');
+    await send({ store: t.another() }, { id: 'late' });
     expect(performance.now() - started).toBeLessThan(250);
     await held;
     expect(await rawDeliveries(t)).toHaveLength(2);

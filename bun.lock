@@ -41,6 +41,17 @@
       "name": "@qelay-cloud/core",
       "version": "0.0.0",
     },
+    "packages/ingest": {
+      "name": "@qelay-cloud/ingest",
+      "version": "0.0.0",
+      "bin": {
+        "qcloud-ingest": "./src/bin.ts",
+      },
+      "dependencies": {
+        "@qelay-cloud/core": "workspace:*",
+        "@qelay-cloud/store-postgres": "workspace:*",
+      },
+    },
     "packages/maintenance": {
       "name": "@qelay-cloud/maintenance",
       "version": "0.0.0",
@@ -132,9 +143,13 @@
     "packages/transport-gcp": {
       "name": "@qelay-cloud/transport-gcp",
       "version": "0.0.0",
+      "bin": {
+        "qcloud-import-pubsub": "./src/importBin.ts",
+      },
       "dependencies": {
         "@google-cloud/pubsub": "6.1.0",
         "@qelay-cloud/core": "workspace:*",
+        "qelay-cloud": "workspace:*",
       },
     },
     "packages/transport-local": {
@@ -385,6 +400,8 @@
     "@qelay-cloud/control-api": ["@qelay-cloud/control-api@workspace:packages/control-api"],
 
     "@qelay-cloud/core": ["@qelay-cloud/core@workspace:packages/core"],
+
+    "@qelay-cloud/ingest": ["@qelay-cloud/ingest@workspace:packages/ingest"],
 
     "@qelay-cloud/maintenance": ["@qelay-cloud/maintenance@workspace:packages/maintenance"],
 

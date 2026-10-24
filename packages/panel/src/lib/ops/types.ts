@@ -31,6 +31,8 @@ const storeRowSchema = z.object({
   reRingDue: z.number().int(),
   oldestNotRungAgeMs: z.number().nullable(),
   paused: z.boolean(),
+  /** Outside its run window: held on purpose, so not a missing bell. */
+  windowClosed: z.boolean(),
   capped: z.boolean(),
 });
 export type StoreRow = z.infer<typeof storeRowSchema>;

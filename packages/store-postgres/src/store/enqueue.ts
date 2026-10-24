@@ -2,13 +2,14 @@ import type { EnqueuedJob, NewJob } from '@qelay-cloud/core';
 import type { TransactionSQL } from 'bun';
 import { applyPlan } from './apply';
 import type { StoreContext } from './context';
-import { lockAdmissionKeys, lockGroupCapacity, lockQueuesShared, registerQueues } from './locks';
+import { lockAdmissionKeys, lockGroupCapacity, lockQueuesShared } from './locks';
 import type { ExistingRow } from './lookup';
 import { countPendingByGroup, findById, findLiveByKey } from './lookup';
 import type { Admitted, Plan } from './plan';
 import { planAdmission } from './plan';
 import type { PreparedJob } from './prepare';
 import { prepareJobs } from './prepare';
+import { applyPolicies, registerQueues } from './queuePolicy';
 import { coverRings } from './ringCover';
 import { ringFor } from './state';
 
@@ -43,12 +44,10 @@ export async function admitJobs(
   const existingById = await findById(tx, ctx.namespace, customIds(prepared));
   const plan = await planAndWrite(ctx, tx, prepared, now, existingById);
   await ctx.recorder.record(tx, plan.events, now);
-  return coverRings(
-    ctx,
-    tx,
-    plan.admitted.map((admitted) => result(ctx, admitted, now)),
-    now
-  );
+  const jobs = plan.admitted.map((admitted) => result(ctx, admitted, now));
+  // A queue outside its run window would spend the bell on an empty claim (DESIGN.md D17): the tick rings the job when it opens.
+  const rung = plan.closed.size === 0 ? jobs : jobs.map((job) => unringIfClosed(job, plan.closed));
+  return coverRings(ctx, tx, rung, now);
 }
 
 /** The custom ids of `prepared`, which admission looks up (and locks) as rows. */
@@ -92,17 +91,25 @@ export async function lockAdmission(
 
 /**
  * Plans `prepared` against what exists (`existingById`, read under the locks of `lockAdmission`) and
- * writes the plan and the queue registrations. The caller journals `plan.events`, so a flow can fix
- * the state of the parents' `pushed` events first.
+ * writes the plan. The queues are registered first, in the one statement that also reads their
+ * policies, which fill the settings a job left out (DESIGN.md D17) before it is planned. The caller
+ * journals `plan.events`, so a flow can fix the state of the parents' `pushed` events first.
  */
 export async function planAndWrite(
   ctx: StoreContext,
   tx: TransactionSQL,
-  prepared: readonly PreparedJob[],
+  submitted: readonly PreparedJob[],
   now: number,
   existingById: ReadonlyMap<string, ExistingRow>
-): Promise<Plan> {
+): Promise<Plan & { readonly closed: ReadonlySet<string> }> {
   const { namespace } = ctx;
+  const { policies, closed } = await registerQueues(
+    tx,
+    namespace,
+    submitted.map((job) => job.queue),
+    now
+  );
+  const prepared = applyPolicies(submitted, policies, ctx.codec, ctx.limits.maxPayloadBytes);
   const capped = cappedGroups(prepared);
   const keyed = prepared.flatMap((job) =>
     job.dedupKey === null ? [] : [{ queue: job.queue, key: job.dedupKey }]
@@ -116,13 +123,11 @@ export async function planAndWrite(
     nextId: () => ctx.nextId(now),
   });
   await applyPlan(tx, namespace, plan, now);
-  await registerQueues(
-    tx,
-    namespace,
-    plan.inserts.map((insert) => insert.job.queue)
-  );
-  return plan;
+  return { ...plan, closed };
 }
+
+const unringIfClosed = (job: EnqueuedJob, closed: ReadonlySet<string>): EnqueuedJob =>
+  job.ring !== null && closed.has(job.ring.bell.queue) ? { ...job, ring: null } : job;
 
 function result(ctx: StoreContext, admitted: Admitted, now: number): EnqueuedJob {
   if (admitted.kind === 'duplicate') {

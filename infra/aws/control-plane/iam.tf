@@ -9,6 +9,9 @@
 #                     files and a config document, and holds no AWS credential at all
 #   migrate execution pull the image, write the migration's log group, read the direct database secret
 #                     (and no task role, for the same reason)
+#   ingest execution  (only with `ingest`) pull the image, write the ingest's log group, read the database URL and the
+#                     webhook key. No task role either: the ingest stores what it is sent in the database and reaches
+#                     no queue and no other AWS service, so it holds no AWS credential at all
 #
 # The database is reached on its private address with a password, so no role holds an RDS permission. The data
 # plane's queue policies deny everything to a principal they do not name: the API's task role is the one they name
@@ -18,11 +21,14 @@ locals {
   logs_arn = "arn:${local.partition}:logs:${var.region}:${var.account_id}:log-group"
 
   # Each execution role: its log group, the secrets ECS reads for it, and the repositories it may pull from.
-  execution = {
-    api     = { log_group = local.log_groups.api, secrets = compact([var.database_url_secret, var.webhook_key_secret]) }
-    panel   = { log_group = local.log_groups.panel, secrets = [] }
-    migrate = { log_group = local.log_groups.migrate, secrets = [local.migrate_url_secret] }
-  }
+  execution = merge(
+    {
+      api     = { log_group = local.log_groups.api, secrets = compact([var.database_url_secret, var.webhook_key_secret]) }
+      panel   = { log_group = local.log_groups.panel, secrets = [] }
+      migrate = { log_group = local.log_groups.migrate, secrets = [local.migrate_url_secret] }
+    },
+    local.ingest ? { ingest = { log_group = local.log_groups.ingest, secrets = compact([var.database_url_secret, var.webhook_key_secret]) } } : {},
+  )
 }
 
 data "aws_iam_policy_document" "ecs_tasks_trust" {

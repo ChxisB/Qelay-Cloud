@@ -5,7 +5,6 @@ import {
   DestinationInUseError,
   DestinationLimitError,
   DestinationNameTakenError,
-  RouteCycleError,
 } from '../src/errors';
 import type { DestinationSpec } from '../src/store/webhookDestinationTypes';
 import type { WebhookSpec } from '../src/store/webhookTypes';
@@ -32,8 +31,6 @@ describeDb('saved destinations (migration 19)', () => {
   const save = (spec: DestinationSpec = BILLING) => t.store.webhooks.createDestination(spec, 'me');
   const made = (id: string, extra: Partial<WebhookSpec> = {}) =>
     addHook(t, { url: undefined, destinationId: id, ...extra });
-  const queueRoute = (from: string, to: string) =>
-    addHook(t, { destination: 'queue', url: undefined, queue: from, target: to });
 
   describe('saving and reading', () => {
     test('a destination is saved with its address, listed oldest first and read by id', async () => {
@@ -110,18 +107,11 @@ describeDb('saved destinations (migration 19)', () => {
       expect((await addHook(t)).destinationId).toBeNull();
     });
 
-    test('a queue destination makes a queue route that needs its source queue', async () => {
+    test('a queue destination makes a queue route', async () => {
       const orders = await save({ name: 'Orders', kind: 'queue', target: 'orders' });
-      const hook = await made(orders.id, { queue: 'intake' });
-      expect(hook).toMatchObject({
-        destination: 'queue',
-        url: '',
-        target: 'orders',
-        queue: 'intake',
-      });
+      const hook = await made(orders.id);
+      expect(hook).toMatchObject({ destination: 'queue', url: '', target: 'orders' });
       expect(hook.secret).toBeNull();
-      const error = await refused(made(orders.id));
-      expect((error as UnsupportedOptionError).option).toBe('queue');
     });
 
     test('the address is the destination or the spec, not both; an unknown id is refused', async () => {
@@ -191,17 +181,11 @@ describeDb('saved destinations (migration 19)', () => {
       expect(await t.store.webhooks.getDestination(billing.id)).toEqual(billing);
     });
 
-    test('a queue address that would make a loop is refused and nothing changes', async () => {
+    test('a queue address changes for every route that uses it', async () => {
       const orders = await save({ name: 'Orders', kind: 'queue', target: 'b' });
-      const hook = await made(orders.id, { queue: 'a' });
-      await queueRoute('c', 'a');
-      // a -> c with c -> a is a loop.
-      const error = await refused(t.store.webhooks.updateDestination(orders.id, { target: 'c' }));
-      expect(error).toBeInstanceOf(RouteCycleError);
-      expect((await t.store.webhooks.getDestination(orders.id))!.target).toBe('b');
-      expect((await t.store.webhooks.get(hook.id))!.target).toBe('b');
-      const fine = await t.store.webhooks.updateDestination(orders.id, { target: 'd' });
-      expect(fine!.target).toBe('d');
+      const hook = await made(orders.id);
+      const moved = await t.store.webhooks.updateDestination(orders.id, { target: 'd' });
+      expect(moved!.target).toBe('d');
       expect((await t.store.webhooks.get(hook.id))!.target).toBe('d');
     });
   });

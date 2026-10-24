@@ -38,6 +38,8 @@ const EXPECTED_PATHS = [
   '/cron-manager',
   '/dlq-control',
   '/events-gateway',
+  '/events-gateway/sources',
+  '/events-gateway/requests',
   '/events-gateway/events',
   '/events-gateway/metrics',
   '/events-gateway/issues',

@@ -6,6 +6,7 @@ import { demoFlowReply } from './flows';
 import { DEMO_JOB_POOL, demoJobForId, retagDemoJob } from './jobs';
 import { demoOpsResponse } from './ops';
 import { F, type Json } from './shared';
+import { demoReplay, demoRequest, demoRequests, demoSources } from './sources';
 import { demoAllWebhookDeliveries, demoWebhookDeliveries, demoWebhookStats } from './webhooks';
 import { demoWorkflowReply } from './workflows';
 
@@ -26,6 +27,8 @@ export const API_ROOTS = new Set([
   'jobs',
   'crons',
   'webhooks',
+  'sources',
+  'requests',
   'workers',
   'dlq',
   'control',
@@ -71,6 +74,33 @@ function demoQueueResponse(segments: string[], search: string): Json | null {
         maxAge: null,
         maxEntries: 1000,
       },
+    };
+  }
+  // `emails` shows a filled policy and a closed window; every other queue has neither.
+  if (segments[2] === 'policy') {
+    return {
+      ok: true,
+      policy:
+        queue === 'emails'
+          ? { attempts: 5, backoff: { type: 'exponential', delay: 1000 }, timeout: 30_000 }
+          : null,
+    };
+  }
+  if (segments[2] === 'run-window') {
+    const hour = 3_600_000;
+    return {
+      ok: true,
+      runWindow:
+        queue === 'emails'
+          ? {
+              cron: '0 0 * * *',
+              durationMs: 4 * hour,
+              timezone: 'Europe/London',
+              open: false,
+              opensAt: Date.now() + 6 * hour,
+              closesAt: Date.now() + 10 * hour,
+            }
+          : null,
     };
   }
   if (segments[2] !== 'jobs' || segments[3] !== 'list') return null;
@@ -168,6 +198,7 @@ function mutationResponse(clean: string, segments: string[]): Json {
   if (clean.endsWith('/rotate-secret')) {
     return { ok: true, data: { secret: 'demo-secret-not-for-real-use' } };
   }
+  if (clean.endsWith('/dlq/retry')) return { ok: true, count: 2, remaining: 0, done: true };
   if (clean.endsWith('/jobs') || clean.endsWith('/jobs/bulk')) {
     return { ok: true, id: `demo-${segments.join('-')}`, ids: ['demo-1'] };
   }
@@ -186,7 +217,14 @@ export function demoApiResponse(path: string, method: string, search: string): J
   if (segments[0] === 'workflows') return demoWorkflowReply(segments, method, search).body;
   if (segments[0] === 'backup') return demoBackupResponse(segments, method);
   if (segments[0] === 'flows') return demoFlowReply(segments, method).body;
+  if (method === 'POST' && segments[0] === 'requests' && segments[2] === 'replay')
+    return demoReplay();
   if (method !== 'GET') return mutationResponse(clean, segments);
+  if (clean === '/sources') return demoSources();
+  if (clean === '/requests') return demoRequests(search);
+  if (segments[0] === 'requests' && segments[1] && !segments[2]) {
+    return demoRequest(decodeURIComponent(segments[1]));
+  }
   if (clean === '/webhooks/deliveries') return demoAllWebhookDeliveries(search);
   if (clean === '/webhooks/stats') return demoWebhookStats(search);
   if (segments[0] === 'webhooks' && segments[1] && segments[2] === 'deliveries') {

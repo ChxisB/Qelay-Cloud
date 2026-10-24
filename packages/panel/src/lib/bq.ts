@@ -65,11 +65,22 @@ export type {
   WebhookStatsFull,
   WebhookStatsQuery,
 } from './bq/types';
-export { WEBHOOK_EVENTS } from './bq/types';
 export type {
   AddDestinationBody,
+  AddSourceBody,
   DestinationFull,
   DestinationPatchBody,
+  ReplayResult,
+  RequestDetailFull,
+  RequestFull,
+  RequestsPage,
+  RequestsQuery,
+  RequestStatus,
+  SourceFull,
+  SourceIssued,
+  SourcePatchBody,
+  SourceVerificationKind,
+  WebhookBatchFull,
   WebhookDedupeFull,
   WebhookGroupStatFull,
   WebhookGroupStatsFull,
@@ -79,10 +90,15 @@ export type {
   WebhookIssuesQuery,
   WebhookIssueStatus,
   WebhookPatchBody,
+  WebhookScheduleFull,
   WebhookPausedBy,
   WebhookPauseMode,
 } from './bq/gatewayTypes';
-export { WEBHOOK_DEDUPE_FIELDS, WEBHOOK_ISSUE_STATUSES } from './bq/gatewayTypes';
+export {
+  SOURCE_VERIFICATION_KINDS,
+  WEBHOOK_DEDUPE_FIELDS,
+  WEBHOOK_ISSUE_STATUSES,
+} from './bq/gatewayTypes';
 
 export const bq = {
   ...serverInfoApi,

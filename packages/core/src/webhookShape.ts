@@ -1,20 +1,22 @@
 import { UnsupportedOptionError } from './errors';
-import type { SubjectField, WebhookFilter, WebhookSubject } from './webhookFilter';
-import { isPlainObject, isSubjectField, matchesFilter, SUBJECT_FIELDS } from './webhookFilter';
+import type { WebhookFilter } from './webhookFilter';
+import { isPlainObject, matchesFilter } from './webhookFilter';
+import type { WebhookDocument } from './webhookPath';
+import { DOCUMENT_ROOTS, isDocumentPath, readPath } from './webhookPath';
 
 /**
- * A webhook's body template. The delivery writer renders it once, when it writes the delivery row,
+ * A webhook's body template. The accept transaction renders it once, when it makes the delivery row,
  * and stores the bytes: every attempt sends exactly those bytes and signs them, so a retry never
  * differs from the first attempt. A template is JSON data, evaluated by this file's two functions
  * and nothing else: no code, no network, no job payload.
  *
  * - The top level is an object; objects, arrays and plain values nest inside it.
- * - `{ "$": "<field>" }` is replaced by the field of the event (`SUBJECT_FIELDS`); with
- *   `"default": <plain value>` it takes that when the event has none, and without one the key is left
- *   out (an array entry becomes null).
+ * - `{ "$": "<path>" }` is replaced by the value at a path of the request document (`body.name`,
+ *   `headers.x-event`); with `"default": <plain value>` it takes that when the request has none, and without one
+ *   the key is left out (an array entry becomes null).
  * - Keys starting with `$` are reserved.
- * - A text value taken from the event is cut to `MAX_REF_CHARS`. A body that still passes
- *   `MAX_SHAPED_BODY_BYTES` is not sent: the delivery is recorded as failed with that reason.
+ * - A value from the request is not cut; a body that passes `MAX_SHAPED_BODY_BYTES` is not sent: the delivery is
+ *   recorded as failed with that reason.
  *
  * Object keys come out shortest first, then alphabetically, whatever order the template has them in.
  *
@@ -27,7 +29,6 @@ export const MAX_SHAPE_DEPTH = 6;
 export const MAX_SHAPE_KEY_CHARS = 64;
 /** The template's own JSON text. */
 export const MAX_SHAPE_BYTES = 8 * 1024;
-export const MAX_REF_CHARS = 512;
 export const MAX_SHAPED_BODY_BYTES = 64 * 1024;
 
 function bad(message: string): never {
@@ -74,8 +75,8 @@ function checkNode(node: unknown, depth: number, budget: { nodes: number }): voi
 
 function checkRef(node: Record<string, unknown>): void {
   const field = node.$;
-  if (typeof field !== 'string' || !isSubjectField(field)) {
-    bad(`$ must name one of ${SUBJECT_FIELDS.join(', ')}`);
+  if (typeof field !== 'string' || !isDocumentPath(field)) {
+    bad(`$ must name a path under ${DOCUMENT_ROOTS.join(', ')}`);
   }
   if (Object.keys(node).some((key) => key !== '$' && key !== 'default')) {
     bad('a { "$": field } value takes only "default" beside it');
@@ -90,13 +91,12 @@ function checkRef(node: Record<string, unknown>): void {
   }
 }
 
-function build(node: unknown, subject: WebhookSubject): unknown {
+function build(node: unknown, subject: WebhookDocument): unknown {
   if (Array.isArray(node)) return node.map((entry) => build(entry, subject));
   if (!isPlainObject(node)) return node;
   if (isRef(node)) {
-    const value = subject[node.$ as SubjectField];
-    if (value === undefined || value === null) return node.default;
-    return typeof value === 'string' ? value.slice(0, MAX_REF_CHARS) : value;
+    const value = readPath(subject, node.$ as string);
+    return value === undefined || value === null ? node.default : value;
   }
   // `fromEntries` defines own properties, so a key named `__proto__` stays data.
   return Object.fromEntries(
@@ -122,7 +122,7 @@ export type Rendered =
   | { readonly ok: false; readonly error: string };
 
 /** The JSON text a shape makes of an event, or why there is none (too large). */
-export function renderShape(shape: WebhookShape, subject: WebhookSubject): Rendered {
+export function renderShape(shape: WebhookShape, subject: WebhookDocument): Rendered {
   const body = JSON.stringify(build(shape, subject));
   if (new TextEncoder().encode(body).byteLength > MAX_SHAPED_BODY_BYTES) {
     return { ok: false, error: `shaped body is larger than ${MAX_SHAPED_BODY_BYTES} bytes` };
@@ -130,37 +130,30 @@ export function renderShape(shape: WebhookShape, subject: WebhookSubject): Rende
   return { ok: true, body };
 }
 
-/** What the test-before-saving call returns: whether the filter lets the event through, and the body it would send. */
+/** What the test-before-saving call returns: whether the filter lets the request through, and the body it would send. */
 export interface WebhookPreview {
   readonly matches: boolean;
-  /** Null when the filter excludes the event, or the shaped body is too large (`error`). Without a shape, the default body (without its `id`). */
+  /** Null when the filter excludes the request, or the shaped body is too large (`error`), or there is no shape and the request was not JSON. */
   readonly body: string | null;
   readonly error: string | null;
 }
 
-export function previewWebhook(
-  spec: { readonly filter?: WebhookFilter | null; readonly shape?: WebhookShape | null },
-  subject: WebhookSubject
-): WebhookPreview {
-  if (spec.filter != null && !matchesFilter(spec.filter, subject)) {
+type PreviewSpec = { readonly filter?: WebhookFilter | null; readonly shape?: WebhookShape | null };
+
+/**
+ * What a route would send for a request document. With no shape the destination gets the request body unchanged, so
+ * that is the preview (re-serialised: the real delivery sends the original bytes). Null when the request was not JSON.
+ */
+export function previewRequest(spec: PreviewSpec, document: WebhookDocument): WebhookPreview {
+  if (spec.filter != null && !matchesFilter(spec.filter, document)) {
     return { matches: false, body: null, error: null };
   }
-  if (spec.shape == null) return { matches: true, body: defaultPreview(subject), error: null };
-  const rendered = renderShape(spec.shape, subject);
+  if (spec.shape == null) {
+    const body = document.body === undefined ? null : JSON.stringify(document.body);
+    return { matches: true, body, error: null };
+  }
+  const rendered = renderShape(spec.shape, document);
   return rendered.ok
     ? { matches: true, body: rendered.body, error: null }
     : { matches: true, body: null, error: rendered.error };
-}
-
-function defaultPreview(subject: WebhookSubject): string {
-  const body: Record<string, unknown> = {
-    event: subject.event,
-    timestamp: subject.occurredAt,
-    queue: subject.queue,
-    jobId: subject.jobId,
-  };
-  if (subject.state != null) body.state = subject.state;
-  if (subject.error != null) body.error = subject.error;
-  if (subject.progress != null) body.progress = subject.progress;
-  return JSON.stringify(body);
 }

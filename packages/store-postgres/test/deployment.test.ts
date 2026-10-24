@@ -29,6 +29,7 @@ describeDb('deployment: what the Deployment page reads', () => {
           reRingDue: 0,
           oldestNotRungAgeMs: null,
           paused: false,
+          windowClosed: false,
           capped: false,
         },
       ]);
@@ -91,6 +92,22 @@ describeDb('deployment: what the Deployment page reads', () => {
       expect(rows.map((row) => [row.queue, row.claimable, row.paused])).toEqual([
         ['a', 2, false],
         ['b', 1, true],
+      ]);
+    });
+
+    test('says which queues are outside their run window', async () => {
+      await enqueueN(t.store, 1, {}, 'a');
+      await enqueueN(t.store, 1, {}, 'b');
+      // 08:00 UTC on the test clock, so a window that opened at 03:00 for an hour has closed.
+      await t.store.queues.setRunWindow('b', {
+        cron: '0 3 * * *',
+        durationMs: 3_600_000,
+        timezone: 'UTC',
+      });
+      const rows = await t.store.deployment.doorbellHealth(['a', 'b']);
+      expect(rows.map((row) => [row.queue, row.windowClosed])).toEqual([
+        ['a', false],
+        ['b', true],
       ]);
     });
 

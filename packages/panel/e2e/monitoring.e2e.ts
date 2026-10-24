@@ -116,7 +116,8 @@ test('shows a real failed job in the DLQ, with purge disabled and no retry offer
   await expect(
     page.getByRole('row').filter({ has: page.locator(`a[href="${E2E_BASE_PATH}/job?id=${id}"]`) })
   ).toBeVisible();
-  // Neither purging nor retrying a dead job is offered here: the Control API answers them with 501 (`dlq-retry`).
-  await expect(page.getByRole('button', { name: /^(Retry|Purge)/ })).toHaveCount(0);
+  // The page offers to retry a dead job (the Control API accepts it) but has no purge button.
+  await expect(page.getByRole('button', { name: `Retry job ${id}` })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Purge/ })).toHaveCount(0);
   expectNoBrowserErrors(browserErrors);
 });

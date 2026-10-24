@@ -20,7 +20,9 @@ import { metricsRoutes } from './metrics';
 import { queueConfigRoutes } from './queueConfig';
 import { queueActionRoutes } from './queueOps';
 import { queueReadRoutes } from './queues';
+import { requestRoutes } from './requests';
 import { serverStatusRoutes } from './serverStatus';
+import { sourceRoutes } from './sources';
 import { unsupportedRoutes } from './unsupported';
 import { webhookDestinationRoutes } from './webhookDestinations';
 import { webhookIssueRoutes } from './webhookIssues';
@@ -71,6 +73,8 @@ export function jobsModule(
       ...webhookRoutes(ctx, deps.webhookUrlPolicy ?? STRICT_URL_POLICY),
       ...webhookIssueRoutes(ctx),
       ...webhookDestinationRoutes(ctx, deps.webhookUrlPolicy ?? STRICT_URL_POLICY),
+      ...sourceRoutes(ctx),
+      ...requestRoutes(ctx),
       ...workerRoutes(ctx),
       ...eventRoutes(ctx),
       ...flowRoutes(ctx),

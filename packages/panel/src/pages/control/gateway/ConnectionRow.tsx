@@ -81,7 +81,6 @@ export function ConnectionRow({
           </div>
         </Td>
       )}
-      <Td className="text-[13px] text-muted">{route.events.join(', ')}</Td>
       <Td>
         <RouteStatePill state={state} />
       </Td>

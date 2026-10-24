@@ -7,7 +7,6 @@ import {
   MAX_FILTER_LIST,
   MAX_FILTER_NODES,
   MAX_FILTER_STRING,
-  MAX_REF_CHARS,
   MAX_SHAPE_BYTES,
   MAX_SHAPE_DEPTH,
   MAX_SHAPE_NODES,
@@ -15,9 +14,10 @@ import {
   MAX_WEBHOOK_URL_CHARS,
   MAX_WEBHOOKS,
   signWebhook,
-  WEBHOOK_EVENTS,
   WEBHOOK_HEADERS,
   WEBHOOK_HISTORY_ENTRIES,
+  WEBHOOK_REQUEST_EVENT,
+  WEBHOOK_TEST_EVENT,
   webhookRetryDelayMs,
 } from '../../packages/core/src';
 import {
@@ -57,7 +57,7 @@ async function documentedVerifier(): Promise<Verify> {
 }
 
 const SECRET = 'a-shared-secret-of-16+';
-const BODY = '{"id":"7","event":"job.failed","timestamp":1,"queue":"q","jobId":"j"}';
+const BODY = '{"id":500,"name":"chris"}';
 const NOW = 1_800_000_000_000;
 
 async function request(over: { body?: string; at?: number; signature?: string } = {}) {
@@ -146,7 +146,9 @@ describe('docs/webhooks.md: its figures are the code', () => {
     expect(doc).toContain(`At most **${MAX_WEBHOOKS}** webhooks`);
     expect(doc).toContain(`${MIN_SECRET_CHARS} to ${MAX_SECRET_CHARS} characters`);
     expect(doc).toContain(`**last ${WEBHOOK_HISTORY_ENTRIES} attempts**`);
-    for (const event of WEBHOOK_EVENTS) expect(doc).toContain(`\`${event}\``);
+    for (const event of [WEBHOOK_REQUEST_EVENT, WEBHOOK_TEST_EVENT]) {
+      expect(doc).toContain(`\`${event}\``);
+    }
     for (const header of Object.values(WEBHOOK_HEADERS)) expect(doc).toContain(`\`${header}\``);
   });
 });
@@ -160,7 +162,6 @@ describe('docs/webhooks.md: the filter and shape limits are the code', () => {
     expect(flat).toContain(
       `At most ${MAX_SHAPE_NODES} values, ${MAX_SHAPE_DEPTH} levels deep, ${MAX_SHAPE_BYTES / 1024} KiB for the template`
     );
-    expect(flat).toContain(`cut to ${MAX_REF_CHARS} characters`);
     expect(flat).toContain(`body past ${MAX_SHAPED_BODY_BYTES / 1024} KiB`);
     expect(flat).toContain(`larger than ${MAX_SHAPED_BODY_BYTES} bytes`);
   });

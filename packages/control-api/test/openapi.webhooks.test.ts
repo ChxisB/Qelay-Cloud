@@ -3,12 +3,12 @@ import { describeDb } from '../../../test/support/db';
 import {
   addHook,
   CLAIM,
-  event,
-  journal,
+  hookSource,
   KEY,
   outcome,
   POLICY,
   SECRET,
+  send,
 } from '../../store-postgres/test/webhookHelpers';
 import type { JobsApi, JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
@@ -24,8 +24,8 @@ describeDb('docs/openapi.yaml webhook bodies', () => {
   beforeAll(async () => {
     f = await openJobsFixture({ webhookKey: KEY });
     api = f.api();
-    hookId = (await addHook(f, { events: ['job.pushed'], secret: SECRET })).id;
-    await journal(f.t, [event('pushed', 'q', 'j1')]);
+    hookId = (await addHook(f, { secret: SECRET })).id;
+    await send(f.t, { id: 500, name: 'chris' });
     const claimed = await f.store.webhooks.claimDue(CLAIM);
     await f.store.webhooks.record(
       claimed.map((c) => outcome(c, { ok: false })),
@@ -49,7 +49,7 @@ describeDb('docs/openapi.yaml webhook bodies', () => {
     expect(keysFit(one.data.webhook, 'Webhook')).toEqual([]);
     const created = await fits('WebhookEnvelope', 'POST', '/webhooks', {
       url: 'https://hooks.example.com/b',
-      events: ['job.completed'],
+      source: await hookSource(f),
     });
     expect(keysFit(created.data.webhook, 'Webhook')).toEqual([]);
     const edited = await fits('WebhookEnvelope', 'PATCH', `/webhooks/${hookId}`, {
@@ -130,7 +130,7 @@ describeDb('docs/openapi.yaml webhook bodies', () => {
     });
     const made = await fits('WebhookEnvelope', 'POST', '/webhooks', {
       destinationId: id,
-      events: ['job.completed'],
+      source: await hookSource(f),
     });
     expect(made.data.webhook.destinationId).toBe(id);
     await fits('Ok', 'DELETE', `/webhooks/${made.data.webhook.id}`);
@@ -169,30 +169,33 @@ describeDb('docs/openapi.yaml webhook bodies', () => {
 
   test('the create body names every field the route accepts, and the secret is never in a response schema', () => {
     expect(Object.keys(schema('WebhookCreate').properties ?? {}).sort()).toEqual([
+      'batch',
       'dedupe',
       'delayMs',
       'description',
       'destination',
       'destinationId',
       'enabled',
-      'events',
       'filter',
       'name',
-      'queue',
+      'schedule',
       'secret',
       'shape',
+      'source',
       'target',
       'url',
     ]);
-    // The edit body is the create body's rules and events: nothing that is fixed at creation.
+    // The edit body is the create body's rules and source: nothing that is fixed at creation.
     expect(Object.keys(schema('WebhookPatch').properties ?? {}).sort()).toEqual([
+      'batch',
       'dedupe',
       'delayMs',
       'description',
-      'events',
       'filter',
       'name',
+      'schedule',
       'shape',
+      'source',
     ]);
     for (const name of ['Webhook', 'WebhookDelivery', 'WebhookAttempt']) {
       expect(Object.keys(schema(name).properties ?? {}), name).not.toContain('secret');

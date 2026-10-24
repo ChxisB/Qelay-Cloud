@@ -8,11 +8,6 @@ import type { Planned } from './schema.planned';
  */
 export const PLANNED_WEBHOOK: readonly Planned[] = [
   {
-    query: "webhook routes: the namespace's queue routes, read to refuse a loop on save",
-    sql: `SELECT queue, target FROM qcloud_webhooks WHERE namespace = 'ns' AND destination = 'queue'`,
-    index: 'qcloud_webhooks_pkey',
-  },
-  {
     query: 'webhook claim: does a webhook have a delivery due',
     sql: `SELECT w.id FROM qcloud_webhooks w
           WHERE w.namespace = 'ns' AND w.enabled
@@ -137,14 +132,7 @@ export const PLANNED_WEBHOOK: readonly Planned[] = [
     alternatives: ['qcloud_deliveries_history_idx'],
   },
   {
-    query: 'webhook trigger: the delivery an event already has for a webhook',
-    sql: `SELECT id FROM qcloud_deliveries
-          WHERE namespace = 'ns' AND webhook_id = 'w3' AND event_id = 43`,
-    index: 'qcloud_deliveries_event_idx',
-  },
-  {
-    query:
-      'webhook dedupe: the windows of the keys a page of events carries (the writer, once per page)',
+    query: "webhook dedupe: a key's window (the arbiter of the accept's upsert)",
     sql: `SELECT d.webhook_id, d.key, d.until FROM qcloud_webhook_dedupe d
           WHERE d.namespace = 'ns' AND d.webhook_id = 'w' AND d.key = 'k'`,
     index: 'qcloud_webhook_dedupe_pkey',
@@ -250,18 +238,5 @@ export const PLANNED_WEBHOOK: readonly Planned[] = [
     query: 'webhook partitions: whether a day without a partition has rows in the default one',
     sql: `SELECT 1 FROM qcloud_deliveries_default WHERE created_at >= 1000000 AND created_at < 87400000`,
     index: 'qcloud_deliveries_default_created_idx',
-  },
-  {
-    query:
-      "webhook writer: the namespace's cursor, locked (also what the trigger checks per event)",
-    sql: `SELECT commit_seq, event_id FROM qcloud_webhook_writers
-          WHERE namespace = 'ns' FOR NO KEY UPDATE SKIP LOCKED`,
-    index: 'qcloud_webhook_writers_pkey',
-  },
-  {
-    query: 'webhook trigger: namespaces of the new events that have a writer on',
-    sql: `SELECT x.namespace FROM qcloud_webhook_writers x
-          WHERE NOT x.stopping AND x.namespace IN ('ns', 'other') FOR KEY SHARE OF x`,
-    index: 'qcloud_webhook_writers_pkey',
   },
 ];

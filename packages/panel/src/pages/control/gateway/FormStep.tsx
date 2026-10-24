@@ -34,8 +34,7 @@ export function Step({
 
 /** The step a refusal belongs to; a refusal that names no field is shown at Save. */
 export const stepOf = (error: unknown): StepNumber =>
-  error instanceof BqError &&
-  (error.code === 'route_cycle' || error.code === 'destination_not_found')
+  error instanceof BqError && error.code === 'destination_not_found'
     ? 2
     : error instanceof BqError && error.code === 'webhook_key_missing'
       ? 3

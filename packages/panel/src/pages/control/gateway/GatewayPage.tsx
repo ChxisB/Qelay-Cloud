@@ -18,7 +18,7 @@ export function GatewayPage({
     <div>
       <PageHeader
         title="Event gateway"
-        description="Job events from your queues, sent to an address or to another queue, with the history of every attempt."
+        description="Requests sent to your inbound sources, passed on to an address or a queue, with the history of every attempt."
         live={live}
         actions={actions}
       />

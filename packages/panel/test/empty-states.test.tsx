@@ -62,7 +62,7 @@ describe('teaching empty states', () => {
     const view = render(createElement(ConnectionsPage));
     await settle(10);
     expect(view.host.textContent).toContain('No connections yet');
-    expect(view.host.textContent).toContain("a queue's job events to an address of yours");
+    expect(view.host.textContent).toContain('requests of an inbound source to an address of yours');
     expect(picture(view.host)).not.toBeNull();
     view.unmount();
   });

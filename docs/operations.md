@@ -15,6 +15,7 @@ emulator; where a number is a threshold you must tune, it says so.
 | Workers (your code, the SDK's `Worker`) | as many as you need | yes | Scale on the queue's depth. A worker's `concurrency` does not change its connections. |
 | The tick | one at a time is enough; two may overlap | yes | Called once a minute by the cloud scheduler; see [the maintenance tick](concepts.md#the-maintenance-tick). |
 | Control API | at least one, always on (event streams) | yes | `qcloud-api serve`; the release step is `qcloud-api migrate`. |
+| Ingest | none, or any number (opt-in) | yes | `qcloud-ingest`, the public `POST /s/<token>`. It stores and answers and never calls out, so it needs no outbound network. Each instance counts as a control process in the connection budget. [Runbook](runbooks/inbound-source-trouble.md). |
 | Panel | any | no | Static files plus `/config.json`. |
 | Postgres | one | - | The only state. Back it up. |
 
@@ -127,6 +128,11 @@ You have three views: the cloud's alarms, the panel and the Control API's `/depl
 - **The tick.** On AWS an alarm fires when no tick reported `ok` for five minutes; on GCP it fires when the scheduler job
   logs errors. While the tick is stopped, delayed jobs past the broker's window, cron and lease recovery do not run.
   `GET /deployment` records the last tick and whether the deployment is keeping up.
+- **The ingest** (when you run it). `GET /healthz` is the probe, and it touches no database: a database that is down makes
+  the ingest answer `503` with `Retry-After`, which a sender retries, and logs `lookup failed` or `accept failed` at most
+  once in ten seconds. A rise in `429` is the rate limits working or a flood; a rise in rejected requests (the panel's
+  Requests tab, status Rejected) is a sender whose secret or body is wrong. The cloud load balancer's own 5xx and 429 counts
+  are the alert; none is shipped ([known issues](known-issues.md), row 12).
 - **The failed jobs** of each queue are in Qelay's own dead-letter queue (`GET /queues/{queue}/dlq`, or the panel). They are
   yours to read; the reason `max_attempts_exceeded` means the job used up its attempts.
 
@@ -151,6 +157,11 @@ Releases are built to be rolled out with the previous version still connected.
    stops after the release). A released job runs again; if the release itself fails, the tick recovers the job after its
    lease. Set the grace longer than your longest job to avoid the rerun.
 
+**Set a route schedule or a queue run window only after every process runs this release.** A worker or tick from before
+versions 22 and 23 does not know them: it claims from a queue whose window is closed, and sends a scheduled route's events at
+once. During a rolling upgrade, finish the rollout, then set them. The settings to start with are in
+[production settings](production.md).
+
 **Migrations are forward-only.** A migration may add a nullable column, a column with a default, a table or an index. It
 never drops, renames or retypes anything the previous release still reads or writes; that takes two releases (stop using it,
 then remove it). A shipped migration is never edited: its checksum is recorded, and an edited one stops every process with
@@ -171,16 +182,17 @@ again after its lease lapses: at least once, as always. The old table is dropped
 and dropped by the tick (`QCLOUD_WEBHOOK_KEEP_MS`); watch `pg_inherits` for `qcloud_deliveries` if a drop seems late: a day with
 a delivery still waiting is kept.
 
-**Rolling back past version 14 (the webhook delivery writer).** Version 14 adds `qcloud_webhook_writers`, three webhook columns
-(`filter`, `shape`, `active_from`) and `qcloud_deliveries.body`. The previous release ignores all of them, but a namespace
-with the writer on has no trigger-made deliveries: **run `qcloud-tick webhook-writer off` before rolling back**, or the old
-release's webhooks get no new deliveries until the newer release runs again. A webhook that has a `filter` or `shape` blocks
-`off`; delete it first, or the old release sends it unfiltered and with the default body.
+**Rolling back past version 21 (the job events are removed).** Version 21 drops the delivery trigger and its function, the
+`qcloud_webhook_writers` table and a webhook's `events`, `queue` and `active_from` columns, and lets a delivery have no job.
+It is **not safe with a previous release connected**, and a rollback is a restore from a backup taken before the migration
+(nothing in 1.0.0 had shipped when it was decided, D14). Routes that listened to a queue are kept but off, with the reason
+"its source, a queue's job events, was removed". The webhook columns version 14 added (`filter`, `shape` and a delivery's
+`body`) stay.
 
 **Rolling back past version 15 (webhook pause and rotation).** Version 15 adds six `qcloud_webhooks` columns (the failure
 streak, the alert level, the pause reason and time, and the previous sealed secret and its end). The previous release
 ignores them, with two consequences: a webhook the newer release paused has `enabled = false`, so the old release
-sends nothing for it either and the writer's held deliveries expire; and a secret still in its rotation window signs with
+sends nothing for it either and its held deliveries expire; and a secret still in its rotation window signs with
 the new secret only. Enable paused webhooks again after the rollback if they should send.
 
 **Rolling back past versions 16 to 19 (the event gateway).** Each adds nullable or defaulted columns or a new table, and the
@@ -189,9 +201,7 @@ previous release ignores them:
 - **16 (queue destinations).** The previous release cannot send a `queue` route: it fails each event of it without a request,
   and auto-pause then pauses the route. Resume it after the newer release runs again; **Retry all failed** puts its events back.
 - **17 (name, description, delay, de-duplication).** The previous release shows no name and ignores `delay_ms` and `dedupe`:
-  its writer sends at once and does not drop repeats. Its `webhook-writer off` is blocked only by a filter or a shape, so a
-  webhook with a delay or a de-duplication alone does not stop it, and goes back to the trigger without either rule. Delete
-  such a webhook first, or accept that it sends at once and repeats are not dropped. `qcloud_webhook_dedupe` stays and is never pruned
+  it sends at once and does not drop repeats. `qcloud_webhook_dedupe` stays and is never pruned
   while the old tick runs; it is small and pruned once the newer release runs again.
 - **18 (issues).** Nothing reads or updates `qcloud_webhook_issues`, so its rows stop changing: an issue stays open after its
   connection recovers, and no new one opens. The newer release resolves and opens them correctly on its next settled delivery.
@@ -199,14 +209,15 @@ previous release ignores them:
   so an address edited in the panel does not reach the connections that use it. Connections keep delivering to the copy they
   hold. Do not edit a destination while any worker runs the previous release.
 
-### Switching webhook deliveries to the writer
+**Rolling back past versions 22 and 23 (schedule, batch, queue policy and run window).** Both add nullable columns and one
+index, and the previous release ignores them:
 
-`qcloud-tick webhook-writer on | off | status` (see [webhooks](webhooks.md#filters-and-shapes)) switches who makes a
-namespace's webhook deliveries. Each is safe to repeat and loses no event. `on` starts from the journal's end now. `off` waits for
-job transactions that were already running, and can take a few seconds under load; it is refused while a webhook has a filter,
-shape, delay or de-duplication. While the writer is on, **a process that writes must be running**: the tick with `QCLOUD_WEBHOOK_BATCH` above 0, or
-`qcloud-tick send`. The gauge `qcloud.tick.webhooks.writer_gaps` at 1 means the journal's retention removed events before the
-writer read them (those events made no deliveries): run `send` so the writer is never far behind.
+- **22 (route schedule and batch).** The previous release sends each delivery alone, and does not move a new delivery to the
+  fire time, so a route with a schedule sends at once and one with a batch sends one request per event. Deliveries made by the
+  newer release keep their fire time and are sent at it. `qcloud_deliveries.batch_id` stays.
+- **23 (queue policy and run window).** Jobs the previous release enqueues take the built-in attempts, backoff and time limit,
+  not the queue's policy. **It claims from a queue whose window is closed**, so every queue with a run window runs jobs at any
+  time until the newer release runs again. Remove the windows first if a job must not start outside its window.
 
 ### Rotating the database secret
 
@@ -224,6 +235,9 @@ against a real project. The steps are in the [GCP runbook](runbooks/deploy-gcp.m
 - **Retention.** The tick removes old completed jobs, events, completion records, group state and metric buckets by the rules of each queue
   (`POST /queues/{queue}/clean` removes finished jobs on demand). A queue's dead-letter queue keeps its entries for the
   configured time (`/queues/{queue}/dlq-config`).
+- **A stored inbound request** (and its rejections) is kept for 2 days (`QCLOUD_WEBHOOK_KEEP_MS`, never less than 48 hours)
+  and then deleted by the tick. It holds the body as the sender posted it, so a source whose senders post personal data keeps
+  it for that long: a shorter window is the setting above, and a route's `shape` does not change what is stored.
 - **A webhook delivery** is retried 8 times over about an hour and can reach a receiver twice; deduplicate on `X-Webhook-Id`
   ([webhooks.md](webhooks.md)).
 

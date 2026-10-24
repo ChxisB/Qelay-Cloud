@@ -1,4 +1,4 @@
-import { address, answerAdd, field, page, posts } from './gateway-create.helpers';
+import { address, answerAdd, field, page, pickSource, posts } from './gateway-create.helpers';
 import { serveGateway } from './gateway.helpers';
 import {
   act,
@@ -20,6 +20,7 @@ describe('signing secret on the create page', () => {
     const calls = serveGateway([]);
     const view = page();
     await settle(10);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
     const secret = field(view.host, 'webhook-secret');
     expect(secret.type).toBe('password');
@@ -37,7 +38,7 @@ describe('signing secret on the create page', () => {
     expect(calls.bodies).toEqual([
       {
         url: 'https://receiver.test/hook',
-        events: ['job.completed', 'job.failed'],
+        source: 'src_1',
         secret: generated,
       },
     ]);
@@ -51,6 +52,7 @@ describe('signing secret on the create page', () => {
     const calls = serveGateway([]);
     const view = page();
     await settle(10);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/h');
     setInput(field(view.host, 'webhook-secret'), 'short');
     await settle(5);
@@ -76,6 +78,7 @@ describe('signing secret on the create page', () => {
     answerAdd(json({ ok: true, data: { webhook: { id: 'new-1' }, secret: made } }, 201));
     const view = page();
     await settle(10);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
     act(() => buttonByText(view.host, 'Add connection').click());
     await settle(20);

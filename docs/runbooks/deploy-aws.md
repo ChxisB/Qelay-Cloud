@@ -26,6 +26,7 @@ resources and needs the go-ahead of decision D9. What was and was not run is at 
 | `<name>-api` | control plane, ECS service | `qcloud-api serve` |
 | `<name>-panel` | control plane, ECS service | the panel's static build and the server that makes `/config.json` |
 | `<name>-migrate` | control plane, a task definition only | `qcloud-api migrate`, once per release |
+| `<name>-ingest` | control plane, optional (`ingest = { image, hostname }`), ECS service | `qcloud-ingest`: the public `POST /s/<token>` of the event gateway, on its own host name behind the same load balancer (only `/s/*` is forwarded). Stores and answers, calls no destination, has no task role |
 
 ## What differs from GCP
 
@@ -65,7 +66,7 @@ Order matters: the control plane reads what the data plane made.
 1. **Data plane first** (once). In its variables: `tick_image` the API image with
    `tick_command = ["bun", "/app/packages/maintenance/src/bin.ts"]`; `database_ca_pem` the PEM text of the RDS bundle of
    your region (`https://truststore.pki.rds.amazonaws.com/<region>/<region>-bundle.pem`; behind RDS Proxy also the Amazon
-   roots); `control_processes = 4` (two ticks plus two API tasks; more API tasks need more); for webhooks `webhooks = true`
+   roots); `control_processes = 4` (two ticks plus two API tasks; more API tasks need more, and each ingest task is one more); for webhooks `webhooks = true`
    (it makes the key, which is in the Terraform state: back it up), `tick_loop = {}` and `webhook_sender = {}` (ECS
    services of the tick image, each holding a pool the budget counts); and
    `additional_principal_arns = ["arn:aws:iam::<account>:role/<control plane name>-api-task"]`, **before** the queues'
@@ -96,6 +97,15 @@ Order matters: the control plane reads what the data plane made.
    Then copy `ci.tfvars.example` to your own `*.tfvars` and set `name` (the same as the data plane's, and the name in the
    `additional_principal_arns` entry), the two images, the `oidc_*` values, `certificate_arn` and the two host names. `*.tfvars` and
    the handover file are not committed.
+
+   **To take posts from outside (the event gateway's sources), add the ingest:** build `packages/ingest/Dockerfile` the same way
+   and set `ingest = { image = "…", hostname = "…" }`. The hostname is a third name your certificate must cover, pointed at the
+   load balancer like the others, and the data plane's `control_processes` must count `ingest.instances` (each task holds
+   `ingest.pool_size` connections); the control plane's plan refuses otherwise. The per-address limit is the WAF's
+   (`ingest.rate_limit_per_minute`) and exists only when `edge_rate_limit_per_minute` is set; the service's own limits are per
+   task. A source that verifies needs the webhook key (`webhooks = true` in the data plane). After the apply, `terraform output
+   ingest_url` is the base of every source's address (`<ingest_url>/s/<token>`). Day-two trouble:
+   [inbound source trouble](inbound-source-trouble.md).
 5. **Plan, then apply the control plane.** `terraform -chdir=infra/aws/control-plane plan` and read it: the load balancer
    and its listeners, two services, three task definitions, two roles (the API's task role and a shared execution role, every statement
    scoped; the panel and the migration have no task role) and, in public mode, a subnet per zone and a route to the
@@ -214,6 +224,7 @@ bun run check:terraform          # fmt, init -backend=false, validate, a credent
 bun run scripts/smoke-aws.ts --local
 docker build -f packages/control-api/Dockerfile -t qcloud-api:test .
 docker build -f packages/panel/Dockerfile -t qcloud-panel:test .
+docker build -f packages/ingest/Dockerfile -t qcloud-ingest:test .
 ```
 
 The plan check drops every `AWS_*` variable and gives the provider placeholder keys, so real credentials are never used and

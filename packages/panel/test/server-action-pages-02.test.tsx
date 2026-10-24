@@ -114,7 +114,7 @@ describe('retarget-safe bounded fan-outs', () => {
     view.unmount();
   });
 
-  test('DlqPro draws no global retry or purge and sends no mutation', async () => {
+  test('DlqPro with no queue chosen has no Purge, a disabled Retry, and sends no mutation', async () => {
     const mutationUrls: string[] = [];
     const queues = Array.from({ length: 8 }, (_, index) => dashboardQueue(`q${index + 1}`, 1));
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -153,8 +153,10 @@ describe('retarget-safe bounded fan-outs', () => {
       createElement(MemoryRouter, { initialEntries: ['/dlq'] }, createElement(DlqPro))
     );
     await settle(35);
-    const labels = [...view.host.querySelectorAll('button')].map((b) => b.textContent?.trim());
-    expect(labels.filter((label) => /^(Retry|Purge)/.test(label ?? ''))).toEqual([]);
+    const buttons = [...view.host.querySelectorAll('button')];
+    expect(buttons.filter((b) => b.textContent?.startsWith('Purge'))).toEqual([]);
+    const retry = buttons.filter((b) => b.textContent?.startsWith('Retry'));
+    expect(retry.map((b) => b.disabled)).toEqual([true]);
     await settle(10);
     expect(mutationUrls).toEqual([]);
     view.unmount();

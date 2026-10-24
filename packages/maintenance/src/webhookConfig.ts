@@ -29,7 +29,7 @@ export const MIN_LEASE_MARGIN_MS = 5_000;
 
 /** What an operator may set. Every field is optional; see the defaults above. */
 export interface WebhookSenderOptions {
-  /** Deliveries one pass sends at most. 0 turns sending off. */
+  /** Requests one pass sends at most (a batch route's deliveries are one request, D15). 0 turns sending off. */
   readonly batch?: number;
   /** Requests in flight at once. */
   readonly concurrency?: number;

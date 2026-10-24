@@ -5,13 +5,7 @@ import { describeDb } from '../../../test/support/db';
 import { resetTables } from '../../store-postgres/test/finishHelpers';
 import type { TestStore } from '../../store-postgres/test/storeHelpers';
 import { openTestStore } from '../../store-postgres/test/storeHelpers';
-import {
-  addHook,
-  event,
-  journal,
-  KEY,
-  rawDeliveries,
-} from '../../store-postgres/test/webhookHelpers';
+import { addHook, KEY, rawDeliveries, sendAll } from '../../store-postgres/test/webhookHelpers';
 import { resolveWebhookConfig } from '../src/webhookConfig';
 import { RecordingTransport, ticker } from './support';
 
@@ -35,13 +29,11 @@ describeDb('webhook sender: concurrent ticks', () => {
   });
 
   test(`${TICKERS} ticks at once never send the same attempt twice`, async () => {
-    for (let h = 0; h < HOOKS; h++) {
-      await addHook(t, { queue: `q${h}`, events: ['job.pushed'] });
-      await journal(
-        t,
-        Array.from({ length: EVENTS_PER_HOOK }, (_, i) => event('pushed', `q${h}`, `j${h}-${i}`))
-      );
-    }
+    for (let h = 0; h < HOOKS; h++) await addHook(t);
+    await sendAll(
+      t,
+      Array.from({ length: EVENTS_PER_HOOK }, (_, i) => ({ id: i }))
+    );
     const total = HOOKS * EVENTS_PER_HOOK;
     const sent = new Map<string, number>();
     const config = resolveWebhookConfig(

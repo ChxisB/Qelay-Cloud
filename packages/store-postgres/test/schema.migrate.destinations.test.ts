@@ -12,6 +12,9 @@ const failure = (query: PromiseLike<unknown>) =>
     (error: unknown) => error
   );
 
+/** Version 19 as it shipped to the tests: later migrations drop `events`, which this version's inserts name. */
+const UPTO_19 = MIGRATIONS.filter((m) => m.version <= 19);
+
 describeDb('schema migrate: saved destinations (version 19)', () => {
   let fresh: FreshSchema;
   beforeEach(async () => {
@@ -27,7 +30,7 @@ describeDb('schema migrate: saved destinations (version 19)', () => {
       INSERT INTO qcloud_webhooks (namespace, id, url, events, created_by, created_at)
       VALUES ('ns', 'old', 'https://a.example.com/', ARRAY['job.failed'], 'me', 1)`;
 
-    expect((await migrate(fresh.db)).to).toBe(LATEST_VERSION);
+    expect((await migrate(fresh.db, { migrations: UPTO_19 })).to).toBe(19);
     // The statement the release before this one runs: it names no `destination_id`.
     await fresh.sql`
       INSERT INTO qcloud_webhooks (namespace, id, url, events, created_by, created_at)
@@ -38,10 +41,15 @@ describeDb('schema migrate: saved destinations (version 19)', () => {
       { id: 'old', destination_id: null },
       { id: 'older-release', destination_id: null },
     ]);
+    // The later migrations keep both routes (migration 21 disables them).
+    expect((await migrate(fresh.db)).to).toBe(LATEST_VERSION);
+    expect(
+      await fresh.sql<Array<{ id: string }>>`SELECT id FROM qcloud_webhooks ORDER BY id`
+    ).toEqual([{ id: 'old' }, { id: 'older-release' }]);
   });
 
   test('the key restricts: a destination in use cannot be deleted, a missing one cannot be named', async () => {
-    await migrate(fresh.db);
+    await migrate(fresh.db, { migrations: UPTO_19 });
     await fresh.sql`
       INSERT INTO qcloud_webhook_destinations
         (namespace, id, name, kind, url, created_by, created_at, updated_at)

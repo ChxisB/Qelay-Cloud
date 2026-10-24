@@ -16,7 +16,6 @@ import type {
   DestinationRecord,
   DestinationSpec,
 } from './webhookDestinationTypes';
-import { assertRoutesAcyclic } from './webhookRouteCheck';
 import type { WebhookSpec } from './webhookTypes';
 import { checkAddress } from './webhookValidate';
 
@@ -24,7 +23,7 @@ import { checkAddress } from './webhookValidate';
  * Saved destinations (migration 19): a named address that webhooks are made from. A webhook keeps `destination_id` and
  * its own copy of the address, so the sender never looks a destination up; changing a destination rewrites the copies in
  * the same transaction. Every write takes the namespace's `webhooks` advisory lock, the one a webhook save takes, so a
- * count, a name check or a loop check cannot be raced by another save.
+ * count or a name check cannot be raced by another save.
  */
 
 type Time = number | string | bigint;
@@ -158,8 +157,7 @@ export async function getDestination(
 
 /**
  * Renames a destination or moves its address. A new address is copied to every webhook made from it in the same
- * transaction, and for a `queue` destination the routes are checked again: a change that would make a loop or a chain is
- * refused (`RouteCycleError`, `RouteChainError`) and nothing changes. Null when there is no such destination.
+ * transaction. Null when there is no such destination.
  */
 export async function updateDestination(
   ctx: StoreContext,
@@ -200,7 +198,6 @@ export async function updateDestination(
           `UPDATE qcloud_webhooks SET url = $3, target = $4 WHERE namespace = $1 AND destination_id = $2`,
           [ctx.namespace, key, address.url, address.target]
         );
-        if (address.destination === 'queue') await assertRoutesAcyclic(tx, ctx);
       }
       return readOne(tx, ctx, key);
     })

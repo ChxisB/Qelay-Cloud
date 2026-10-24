@@ -67,7 +67,6 @@ export function ConnectionOverview({ route, state }: { route: WebhookFull; state
                   : `${route.signed ? 'signed' : 'unsigned'}${route.urlRedacted ? ' · path hidden' : ''}`}
               </span>
             </Row>
-            <Row label="Events">{route.events.join(', ')}</Row>
             <Row label="Rules">
               {chips.length === 0 ? (
                 <span className="text-muted">None: every matching event is sent</span>

@@ -239,11 +239,6 @@ export const api = {
     ),
   dlqStats: (queue: string) =>
     request<{ ok: boolean; stats: DlqStats }>(`/queues/${q(queue)}/dlq/stats`),
-  retryDlq: (_queue: string): never => {
-    throw new TypeError(
-      'DLQ retry is unavailable in Qelay because the endpoint has no atomic flow-safety precondition.'
-    );
-  },
   purgeDlq: (queue: string) => post(`/queues/${q(queue)}/dlq/purge`, { confirm: queue }),
 
   // ---- Resources ----

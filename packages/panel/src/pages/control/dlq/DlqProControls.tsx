@@ -1,4 +1,4 @@
-import { IconButton } from '@/components/ui/Button';
+import { Button, IconButton } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Figure } from '@/components/ui/Figure';
 import { Select } from '@/components/ui/form';
@@ -135,6 +135,9 @@ export function DlqFilters({
   onSort,
   onSearch,
   onExport,
+  onRetryAll,
+  retryingAll,
+  nothingFailed,
 }: {
   queue: string;
   queues: DlqQueueOption[];
@@ -148,6 +151,11 @@ export function DlqFilters({
   onSort: (value: 'newest' | 'oldest') => void;
   onSearch: (value: string) => void;
   onExport: () => void;
+  /** Absent when the caller may not retry or the server has closed it. */
+  onRetryAll?: () => void;
+  retryingAll?: boolean;
+  /** The queue's failed list is known to be empty. */
+  nothingFailed?: boolean;
 }) {
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -214,6 +222,15 @@ export function DlqFilters({
       >
         <IconDownload className="size-3.5" />
       </IconButton>
+      {onRetryAll && (
+        <Button disabled={!queue || retryingAll || nothingFailed} onClick={onRetryAll}>
+          {retryingAll
+            ? 'Retrying…'
+            : reason === 'all'
+              ? 'Retry up to 500'
+              : 'Retry up to 500 with this reason'}
+        </Button>
+      )}
     </div>
   );
 }

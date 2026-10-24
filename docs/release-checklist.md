@@ -49,7 +49,7 @@ time. Then, in each of `infra/gcp/example`, `infra/gcp/control-plane`, `infra/aw
 terraform init -backend=false && terraform validate
 ```
 
-Build the two images (`packages/control-api/Dockerfile`, `packages/panel/Dockerfile`), scan them, and keep their SBOMs
+Build the three images (`packages/control-api/Dockerfile`, `packages/panel/Dockerfile`, `packages/ingest/Dockerfile`), scan them, and keep their SBOMs
 (finding F-5).
 
 ## 2. Push and let CI run
@@ -100,9 +100,9 @@ done
 
 The panel is not published to npm: it ships as an image and static files.
 
-The tag also starts [release.yml](../.github/workflows/release.yml): the full CI, then the `qelay-api` and `qelay-panel` images
+The tag also starts [release.yml](../.github/workflows/release.yml): the full CI, then the `qelay-api`, `qelay-panel` and `qelay-ingest` images
 (amd64 and arm64, with SBOM and provenance) and the Helm chart, pushed to `ghcr.io/<owner>`, and a GitHub Release. Only
-`GITHUB_TOKEN` is used. The first push of each of the three packages is private: make them public once, in the package
+`GITHUB_TOKEN` is used. The first push of each of the four packages is private: make them public once, in the package
 settings, or `helm install` and `docker pull` need a login. Pre-release tags (`v1.0.0-rc.1`) go through the same steps and
 are marked as pre-releases; use one first, because no image has ever been built.
 

@@ -5,6 +5,7 @@ import { resolveWorkflowConfig, TickLoop, transportWindowMs } from '../../packag
 import type { TickLoopOptions, WorkflowSweepOptions } from '../../packages/maintenance/src';
 import type {
   FlowProducerOptions,
+  JobWorkerOptions,
   Processor,
   QueueOptions,
   WorkerOptions,
@@ -255,7 +256,7 @@ export async function openStack(kind: StackKind, options: StackOptions = {}): Pr
         heartbeatInterval: 0,
         closeTransport: !factory.shared && extra.transport === undefined,
         ...extra,
-      } as WorkerOptions);
+      } as JobWorkerOptions);
       opened.push(worker as unknown as { close(options?: object): Promise<void> });
       return worker;
     },

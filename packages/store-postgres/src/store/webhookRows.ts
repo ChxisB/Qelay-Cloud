@@ -4,7 +4,6 @@ import type {
   DeliveryStatus,
   WebhookDedupe,
   WebhookDestination,
-  WebhookEvent,
   WebhookFilter,
   WebhookShape,
 } from '@qelay-cloud/core';
@@ -24,8 +23,7 @@ export interface WebhookRow {
   readonly url: string;
   readonly target: string | null;
   readonly destination_id: string | null;
-  readonly events: string[];
-  readonly queue: string | null;
+  readonly source_id: string | null;
   readonly secret_sealed: string | null;
   readonly enabled: boolean;
   readonly filter: unknown;
@@ -34,6 +32,10 @@ export interface WebhookRow {
   readonly description: string | null;
   readonly delay_ms: Time | null;
   readonly dedupe: unknown;
+  readonly schedule_cron: string | null;
+  readonly schedule_timezone: string | null;
+  readonly batch_max_events: number | null;
+  readonly batch_max_bytes: number | null;
   readonly created_by: string;
   readonly created_at: Time;
   readonly success_count: Time;
@@ -50,8 +52,7 @@ export interface DeliveryRow {
   readonly id: Time;
   readonly webhook_id: string;
   readonly event_name: string;
-  readonly queue: string;
-  readonly job_id: string;
+  readonly request_id: Time | null;
   readonly occurred_at: Time;
   readonly status: string;
   readonly attempts: number;
@@ -61,14 +62,16 @@ export interface DeliveryRow {
   readonly history: unknown;
   readonly created_at: Time;
   readonly finished_at: Time | null;
+  readonly batch_id?: string | null;
 }
 
-export const WEBHOOK_COLUMNS = `id, destination, url, target, destination_id, events, queue, secret_sealed, enabled, filter, shape, name, description,
-  delay_ms, dedupe, created_by, created_at, success_count, failure_count, last_triggered, consecutive_failures, alert_level,
-  disabled_reason, disabled_at, secret_previous_until`;
+export const WEBHOOK_COLUMNS = `id, destination, url, target, destination_id, source_id, secret_sealed, enabled, filter, shape, name, description,
+  delay_ms, dedupe, schedule_cron, schedule_timezone, batch_max_events, batch_max_bytes, created_by, created_at,
+  success_count, failure_count, last_triggered, consecutive_failures, alert_level, disabled_reason, disabled_at,
+  secret_previous_until`;
 
-export const DELIVERY_COLUMNS = `id, webhook_id, event_name, queue, job_id, occurred_at, status, attempts,
-  next_attempt_at, last_status_code, last_error, history, created_at, finished_at`;
+export const DELIVERY_COLUMNS = `id, webhook_id, event_name, request_id, occurred_at, status, attempts,
+  next_attempt_at, last_status_code, last_error, history, created_at, finished_at, batch_id`;
 
 const orNull = (value: Time | null): number | null => (value === null ? null : Number(value));
 
@@ -84,8 +87,7 @@ export const webhookOf = (row: WebhookRow): WebhookRecord => ({
   url: row.url,
   target: row.target,
   destinationId: row.destination_id,
-  events: row.events as WebhookEvent[],
-  queue: row.queue,
+  source: row.source_id,
   signed: row.secret_sealed !== null,
   enabled: row.enabled,
   filter: jsonOrNull<WebhookFilter>(row.filter),
@@ -94,6 +96,14 @@ export const webhookOf = (row: WebhookRow): WebhookRecord => ({
   description: row.description,
   delayMs: orNull(row.delay_ms),
   dedupe: jsonOrNull<WebhookDedupe>(row.dedupe),
+  schedule:
+    row.schedule_cron === null || row.schedule_timezone === null
+      ? null
+      : { cron: row.schedule_cron, timezone: row.schedule_timezone },
+  batch:
+    row.batch_max_events === null || row.batch_max_bytes === null
+      ? null
+      : { maxEvents: row.batch_max_events, maxBytes: row.batch_max_bytes },
   createdBy: row.created_by,
   createdAt: Number(row.created_at),
   lastTriggered: orNull(row.last_triggered),
@@ -116,8 +126,7 @@ export const deliveryOf = (row: DeliveryRow): DeliveryRecord => ({
   id: String(row.id),
   webhookId: row.webhook_id,
   event: row.event_name as DeliveredEvent,
-  queue: row.queue,
-  jobId: row.job_id,
+  requestId: row.request_id === null ? null : String(row.request_id),
   occurredAt: Number(row.occurred_at),
   status: row.status as DeliveryStatus,
   attempts: row.attempts,
@@ -127,6 +136,7 @@ export const deliveryOf = (row: DeliveryRow): DeliveryRecord => ({
   history: historyOf(row.history),
   createdAt: Number(row.created_at),
   finishedAt: orNull(row.finished_at),
+  batchId: row.batch_id ?? null,
 });
 
 /** Cuts an error to what the delivery keeps. NUL is dropped: a text column refuses it. */

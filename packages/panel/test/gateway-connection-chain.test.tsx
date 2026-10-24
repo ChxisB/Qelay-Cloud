@@ -129,7 +129,7 @@ describe('The chain on its own', () => {
   const view = (props: Partial<Parameters<typeof ConnectionChain>[0]> = {}) =>
     render(
       createElement(ConnectionChain, {
-        source: { ...end, kind: 'source', name: 'Qelay jobs: emails' },
+        source: { ...end, kind: 'source', name: 'Source: src_1' },
         destination: end,
         stations: [],
         state: 'active',

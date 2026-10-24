@@ -8,8 +8,8 @@ This is **Qelay's own dead-letter queue**: jobs that used their last attempt. It
 ([poison bells](transport-dead-letters.md)).
 
 **What is safe.** The entries are kept, with their error, for the queue's retention (`GET /queues/{queue}/dlq-config`). Reading
-changes nothing. **Retrying an entry is not supported in v1.0.0** ([unsupported](../unsupported.md)): the fix is to correct the
-cause and add the work again.
+changes nothing. Nothing retries an entry by itself ([unsupported](../unsupported.md)): correct the cause, then put the work back
+yourself (Fix, below).
 
 ## Check
 
@@ -23,15 +23,17 @@ cause and add the work again.
 ## Fix
 
 1. Fix the handler or the dependency, and deploy it.
-2. Add the work again from the entries you want: read each job's data (`GET /jobs/{id}`) and `POST /queues/{queue}/jobs`, or
-   `POST /queues/{queue}/jobs/bulk` for many. They are new jobs with new ids: use a `jobId` or a deduplication key if the
-   handler is not idempotent.
+2. Put the failed jobs back: `POST /queues/{queue}/dlq/{jobId}/retry` for one, or `POST /queues/{queue}/dlq/retry` with
+   `{ "confirm": "<queue>", "limit": 100, "reason": "max_attempts_exceeded" }` for many (at most 500, oldest failure first; `reason` is
+   optional). They return to `waiting` with the same id and no attempt used, so a handler that is not idempotent must
+   be fixed first. `remaining` in the answer is what another call would still retry. A flow member is left in the DLQ:
+   retry the flow. The queue's dead-letter page has a Retry button on each entry and one for up to 500.
 3. When you no longer need the entries, `POST /queues/{queue}/dlq/purge` deletes **every** entry of that queue's DLQ. Read
    what you are removing first; it cannot be undone.
 
 ## Verify
 
-New jobs complete, `failed_total` stops rising, and the alert closes when the rate falls under the window.
+The retried jobs complete, `failed_total` stops rising, and the alert closes when the rate falls under the window.
 
 ## Escalate
 

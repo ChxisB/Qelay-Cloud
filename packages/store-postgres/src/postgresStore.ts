@@ -2,6 +2,9 @@ import type {
   ClaimedJob,
   ClaimOptions,
   DlqEntry,
+  DlqRetryManyOptions,
+  DlqRetryManyResult,
+  DlqRetryResult,
   EnqueuedJob,
   FailureInfo,
   JobQuery,
@@ -31,6 +34,7 @@ import { deploymentApi } from './store/deployment';
 import type { DeploymentApi } from './store/deployment';
 import type { DlqPage, DlqStats } from './store/dlq';
 import { dlqStats, listDlq, listDlqPage, purgeDlq, purgeExpiredDlq } from './store/dlq';
+import { retryDlq, retryDlqMany } from './store/dlqRetry';
 import type { DoorbellApi } from './store/doorbell';
 import { doorbellApi } from './store/doorbell';
 import { enqueueJobs } from './store/enqueue';
@@ -61,6 +65,8 @@ import {
 import { failJob } from './store/fail';
 import type { FlowApi } from './store/flowApi';
 import { flowApi } from './store/flowApi';
+import type { SourceApi } from './store/inboundApi';
+import { sourceApi } from './store/inboundApi';
 import { heartbeat, release } from './store/lease';
 import { pauseQueue, resumeQueue, setConcurrencyLimit, setRateLimit } from './store/limits';
 import { cancelJob, changePriority, promoteJob } from './store/operator';
@@ -113,6 +119,8 @@ export class PostgresStore implements StateStore {
   readonly audit: AuditApi;
   /** Webhooks: registrations, deliveries, and the calls the sender makes. */
   readonly webhooks: WebhookApi;
+  /** Inbound sources: registrations, and the calls the ingest makes (D12, D14). */
+  readonly sources: SourceApi;
   /** Durable workflow executions: the workflow engine's store. */
   readonly workflows: WorkflowApi;
   /** How long a lease lasts from a claim or a heartbeat: a worker beats at a third of it. */
@@ -136,6 +144,7 @@ export class PostgresStore implements StateStore {
     this.deployment = deploymentApi(this.ctx);
     this.audit = auditApi(this.ctx);
     this.webhooks = webhookApi(this.ctx);
+    this.sources = sourceApi(this.ctx);
     this.workflows = workflowApi(this.ctx);
     this.leaseMs = this.ctx.leaseMs;
     this.ringWindowMs = this.ctx.ringWindowMs;
@@ -168,6 +177,14 @@ export class PostgresStore implements StateStore {
 
   listDlq(queue: string): Promise<DlqEntry[]> {
     return listDlq(this.ctx, queue);
+  }
+
+  retryDlq(queue: string, jobId: string, options?: OperatorOptions): Promise<DlqRetryResult> {
+    return retryDlq(this.ctx, queue, jobId, options);
+  }
+
+  retryDlqMany(queue: string, options: DlqRetryManyOptions): Promise<DlqRetryManyResult> {
+    return retryDlqMany(this.ctx, queue, options);
   }
 
   close(options?: { readonly timeout?: number }): Promise<void> {

@@ -22,6 +22,7 @@ export const COMMAND_NAMES = [
   'promote',
   'changePriority',
   'cancel',
+  'retryDlq',
   'tick',
   'recover',
   'crash',

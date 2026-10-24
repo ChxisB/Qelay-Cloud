@@ -10,6 +10,7 @@ import { trimEvents } from './eventRetention';
 import { expirePending } from './expiry';
 import { pruneGroupStates } from './groupRetention';
 import { pruneMetricBuckets } from './metricRetention';
+import { advanceWindows } from './queueWindow';
 import { recoverExpired } from './recovery';
 import { dueForRing } from './ringQuery';
 import { pruneWebhookDeliveries } from './webhookRetention';
@@ -34,11 +35,12 @@ function positive(name: string, value: number): number {
  * 6. trim the event journal to its window and caps, and delete the commit envelopes nothing uses;
  * 7. delete completion records of jobs that are gone, group state nothing uses, and metric buckets
  *    past their retention;
- * 8. find every job that needs a bell (always: this is what bounds a lost bell, invariant 3).
+ * 8. move on the run window of every queue whose window ended (always: a queue whose window never moves is closed for good);
+ * 9. find every job that needs a bell (always: this is what bounds a lost bell, invariant 3).
  *
  * Each step is capped by `maxItems`. When `maxDurationMs` of wall-clock time has gone by after a
  * step, the steps (2 to 7) still to come are skipped and `moreWork` is true. `skipUpkeep` leaves
- * out steps 5 to 7 (the loop's rounds between upkeeps, with no `moreWork`). Steps 1 and 8 are not
+ * out steps 5 to 7 (the loop's rounds between upkeeps, with no `moreWork`). Steps 1, 8 and 9 are not
  * skipped: they are what the tick is for, and each is bounded by its own cap. The cap on rings per
  * queue is not "more work": a backlog is rung from the oldest, and the next tick rings the next
  * stretch as the first bells age past `reRingAfterMs`.
@@ -139,6 +141,9 @@ export async function runTick(ctx: StoreContext, budget: TickBudget): Promise<Ti
       await timed(step, run);
     }
   }
+
+  const windows = await timed('windows', () => advanceWindows(ctx, maxItems));
+  note(windows.more);
 
   const due = await timed('ringQuery', () =>
     dueForRing(ctx, {

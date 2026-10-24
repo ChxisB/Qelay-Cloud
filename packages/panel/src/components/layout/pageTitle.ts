@@ -17,6 +17,8 @@ const TITLES: Record<string, string> = {
   '/jobs/bulk-add': 'Bulk Add Jobs',
   '/job': 'Job Inspector',
   '/events-gateway': 'Event gateway',
+  '/events-gateway/sources': 'Gateway sources',
+  '/events-gateway/requests': 'Gateway requests',
   '/events-gateway/events': 'Gateway events',
   '/events-gateway/metrics': 'Gateway metrics',
   '/events-gateway/issues': 'Gateway issues',

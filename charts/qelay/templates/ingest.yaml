@@ -1,0 +1,36 @@
+{{- define "qelay.ingestEnv" -}}
+{{ include "qelay.env" (dict "root" . "poolSize" .Values.ingest.poolSize) }}
+- name: QCLOUD_INGEST_HOST
+  value: "0.0.0.0"
+- name: QCLOUD_INGEST_PORT
+  value: "8081"
+{{- include "qelay.extraEnv" .Values.ingest.env }}
+{{- end }}
+{{- if .Values.ingest.enabled }}
+---
+{{ include "qelay.deployment" (dict
+  "root" .
+  "component" "ingest"
+  "replicas" .Values.ingest.replicas
+  "image" (include "qelay.image" (dict "root" . "image" .Values.ingest.image))
+  "env" (include "qelay.ingestEnv" .)
+  "port" 8081
+  "livePath" "/healthz"
+  "readyPath" "/healthz"
+  "serviceAccountName" (printf "%s-ingest" (include "qelay.fullname" .))
+  "resources" .Values.ingest.resources) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "qelay.fullname" . }}-ingest
+  labels:
+    {{- include "qelay.labels" (dict "root" . "component" "ingest") | nindent 4 }}
+spec:
+  selector:
+    {{- include "qelay.selector" (dict "root" . "component" "ingest") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}

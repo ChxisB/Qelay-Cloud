@@ -249,21 +249,34 @@ variable "edge" {
     behind one shared address share the count, so size it above the busiest. The in-process limiter stays on: it is per
     instance and per principal, this is per address across every instance. The load balancer, the policy and its rule bill
     separately (see Google's Cloud Load Balancing and Cloud Armor pricing). Only HTTPS is served: nothing listens on port 80.
+    With `ingest` set the load balancer fronts it too and `ingest_hostname` is required: a third name, a third host rule and
+    a policy of its own, because senders are a few shared addresses and their limit (`ingest_rate_limit_per_minute`, per
+    client address) is not the panel's.
   EOT
   type = object({
-    api_hostname          = string
-    panel_hostname        = string
-    rate_limit_per_minute = optional(number, 1200)
+    api_hostname                 = string
+    panel_hostname               = string
+    rate_limit_per_minute        = optional(number, 1200)
+    ingest_hostname              = optional(string)
+    ingest_rate_limit_per_minute = optional(number, 6000)
   })
   default = null
 
   validation {
-    condition     = var.edge == null ? true : alltrue([for host in [var.edge.api_hostname, var.edge.panel_hostname] : can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", host))]) && var.edge.api_hostname != var.edge.panel_hostname
-    error_message = "edge.api_hostname and edge.panel_hostname are two different lowercase DNS names."
+    condition     = var.edge == null ? true : alltrue([for host in concat([var.edge.api_hostname, var.edge.panel_hostname], var.edge.ingest_hostname == null ? [] : [var.edge.ingest_hostname]) : can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", host))])
+    error_message = "edge.api_hostname, edge.panel_hostname and edge.ingest_hostname (when set) are lowercase DNS names."
+  }
+  validation {
+    condition     = var.edge == null ? true : length(distinct(concat([var.edge.api_hostname, var.edge.panel_hostname], var.edge.ingest_hostname == null ? [] : [var.edge.ingest_hostname]))) == (var.edge.ingest_hostname == null ? 2 : 3)
+    error_message = "edge.api_hostname, edge.panel_hostname and edge.ingest_hostname (when set) must be different names: one name cannot serve two of the services."
   }
   validation {
     condition     = var.edge == null ? true : var.edge.rate_limit_per_minute >= 1 && floor(var.edge.rate_limit_per_minute) == var.edge.rate_limit_per_minute
     error_message = "edge.rate_limit_per_minute is a whole number from 1."
+  }
+  validation {
+    condition     = var.edge == null ? true : var.edge.ingest_rate_limit_per_minute >= 1 && floor(var.edge.ingest_rate_limit_per_minute) == var.edge.ingest_rate_limit_per_minute
+    error_message = "edge.ingest_rate_limit_per_minute is a whole number from 1."
   }
 }
 
@@ -348,6 +361,32 @@ variable "api_memory" {
   default = "512Mi"
 }
 
+variable "ingest" {
+  description = <<-EOT
+    The inbound listener (packages/ingest; docs/event-gateway.md): the public address a sender posts to. Null (the default):
+    none is deployed, and a source's address cannot be reached. It is its own Cloud Run service, open to the internet like
+    the API (`exposure` and `edge` apply to it too), with its own service account that reads the database secrets and
+    holds no Pub/Sub role: it stores what it is sent and never calls a destination. Each instance holds `pool_size`
+    database connections, which the data plane's connection budget must count (see budgeted_control_processes). Its limits
+    are per process (body size, a rate per source, a global rate); the per-address limit is the edge's.
+  EOT
+  type = object({
+    image         = string
+    min_instances = optional(number, 1)
+    max_instances = optional(number, 2)
+    pool_size     = optional(number, 2)
+    concurrency   = optional(number, 100)
+    cpu           = optional(string, "1")
+    memory        = optional(string, "256Mi")
+  })
+  default = null
+
+  validation {
+    condition     = var.ingest == null ? true : var.ingest.max_instances >= 1 && floor(var.ingest.max_instances) == var.ingest.max_instances && var.ingest.pool_size >= 1 && floor(var.ingest.pool_size) == var.ingest.pool_size
+    error_message = "ingest.max_instances and ingest.pool_size are whole numbers, 1 or more."
+  }
+}
+
 variable "panel_min_instances" {
   type    = number
   default = 1
@@ -383,7 +422,7 @@ variable "migrate_timeout_seconds" {
 # --- the connection budget -------------------------------------------------------------------------------------
 
 variable "budgeted_control_processes" {
-  description = "The data plane's `control_processes`: how many processes with a pool its connection budget counts. The tick is one, each API instance is one; the panel holds no connection."
+  description = "The data plane's `control_processes`: how many processes with a pool its connection budget counts. The tick is one, each API instance is one, each ingest instance is one; the panel holds no connection."
   type        = number
   default     = 3
 }

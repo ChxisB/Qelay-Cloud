@@ -5,11 +5,10 @@ import type { TestStore } from '../../store-postgres/test/storeHelpers';
 import { openTestStore } from '../../store-postgres/test/storeHelpers';
 import {
   addHook,
-  event,
-  journal,
   KEY,
   rawDeliveries,
   SECRET,
+  send,
 } from '../../store-postgres/test/webhookHelpers';
 import { RecordingTransport, recordedTelemetry, ticker } from './support';
 import { senderHarness, status } from './webhookSending';
@@ -40,8 +39,8 @@ describeDb('webhook sender: deliveries through the tick', () => {
   );
 
   test('fail twice then succeed: one delivery, three attempts, the documented backoff', async () => {
-    const hook = await addHook(t, { events: ['job.pushed'], secret: SECRET });
-    await journal(t, [event('pushed', 'q', 'j1')]);
+    const hook = await addHook(t, { secret: SECRET });
+    await send(t);
     const s = sending((call) => status([500, 503, 200][call - 1]!));
 
     expect((await s.pass()).webhooks).toMatchObject({ claimed: 1, retrying: 1, delivered: 0 });
@@ -88,8 +87,8 @@ describeDb('webhook sender: deliveries through the tick', () => {
   });
 
   test('a receiver that keeps failing ends failed after the attempt budget, and a retry restarts it', async () => {
-    const hook = await addHook(t, { events: ['job.pushed'] });
-    await journal(t, [event('pushed')]);
+    const hook = await addHook(t);
+    await send(t);
     const s = sending(() => status(500));
     for (let i = 0; i < 3; i++) {
       await s.pass();
@@ -108,8 +107,8 @@ describeDb('webhook sender: deliveries through the tick', () => {
   });
 
   test('a failing receiver is not a failing tick', async () => {
-    await addHook(t, { events: ['job.pushed'] });
-    await journal(t, [event('pushed')]);
+    await addHook(t);
+    await send(t);
     const s = sending(() => status(500));
     const report = await s.run();
     expect(report.ok).toBe(true);
@@ -118,8 +117,8 @@ describeDb('webhook sender: deliveries through the tick', () => {
   });
 
   test('a store that cannot be reached fails the step, not the pass, and marks the tick failed', async () => {
-    await addHook(t, { events: ['job.pushed'] });
-    await journal(t, [event('pushed')]);
+    await addHook(t);
+    await send(t);
     const telemetry = recordedTelemetry();
     const s = sending(() => status(200), {}, t.store, telemetry);
     const original = t.store.webhooks.claimDue;
@@ -140,8 +139,8 @@ describeDb('webhook sender: deliveries through the tick', () => {
   });
 
   test('without webhook settings the tick sends nothing and leaves deliveries pending', async () => {
-    await addHook(t, { events: ['job.pushed'] });
-    await journal(t, [event('pushed')]);
+    await addHook(t);
+    await send(t);
     const report = await ticker(t.store, transport, { intervalMs: 5_000 }).pass();
     expect(report.webhooks).toEqual({
       claimed: 0,

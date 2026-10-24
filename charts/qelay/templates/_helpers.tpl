@@ -73,7 +73,7 @@ helm.sh/chart: {{ printf "%s-%s" .root.Chart.Name .root.Chart.Version | replace 
 
 {{/*
 One Deployment: .root, .component, .replicas, .image, .env (rendered list), and optionally
-.command, .args, .port (adds probes on .livePath and .readyPath), .resources.
+.command, .args, .port (adds probes on .livePath and .readyPath), .resources, .serviceAccountName.
 */}}
 {{- define "qelay.deployment" -}}
 apiVersion: apps/v1
@@ -92,7 +92,7 @@ spec:
       labels:
         {{- include "qelay.selector" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "qelay.fullname" .root }}
+      serviceAccountName: {{ .serviceAccountName | default (include "qelay.fullname" .root) }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

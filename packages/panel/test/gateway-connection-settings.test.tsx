@@ -50,6 +50,9 @@ describe('Connection settings: rules', () => {
         shape: { text: 'Job failed' },
         delayMs: 90_000,
         dedupe: { windowMs: 3_600_000, fields: ['event', 'jobId'] },
+        schedule: { cron: '0 0 * * *', timezone: 'Europe/London' },
+        nextSendAt: Date.UTC(2027, 0, 16, 0, 0),
+        batch: { maxEvents: 50, maxBytes: 262_144 },
       }),
     ]);
     const view = settings(`${BASE}/hook-1/settings`);
@@ -60,6 +63,8 @@ describe('Connection settings: rules', () => {
       'Deduplicate',
       'Shape',
       'Delay',
+      'Schedule',
+      'Batch',
       'Rate limit',
       'Retry',
       'Auto-pause',
@@ -68,9 +73,13 @@ describe('Connection settings: rules', () => {
     expect(items[1]).toContain('event, jobId within 1 hour');
     expect(items[2]).toContain('Job failed');
     expect(items[3]).toContain('waits 90 seconds');
-    expect(items[4]).toContain(`${RATE_PER_MINUTE} attempts a minute`);
-    expect(items[5]).toContain(RETRY_WORDS);
-    expect(items[6]).toContain(`${PAUSE_AFTER} failed events in a row`);
+    // The next send is read in the schedule's own zone, not the browser's.
+    expect(items[4]).toContain('Every night at midnight, in Europe/London');
+    expect(items[4]).toMatch(/Next send Sat 16 Jan.*00:00 GMT/u);
+    expect(items[5]).toContain('up to 50 events or 256 KiB');
+    expect(items[6]).toContain(`${RATE_PER_MINUTE} attempts a minute`);
+    expect(items[7]).toContain(RETRY_WORDS);
+    expect(items[8]).toContain(`${PAUSE_AFTER} failed events in a row`);
     view.unmount();
   });
 
@@ -80,7 +89,7 @@ describe('Connection settings: rules', () => {
     const view = settings(`${BASE}/hook-1/settings`);
     await settle(20);
     const items = [...view.host.querySelectorAll('ol li')].map((item) => item.textContent ?? '');
-    for (const index of [0, 1, 2, 3]) expect(items[index]).toContain('Off');
+    for (const index of [0, 1, 2, 3, 4, 5]) expect(items[index]).toContain('Off');
     expect(view.host.querySelector('ol pre')).toBeNull();
     expect(view.host.querySelectorAll('button')).toHaveLength(0);
     expect(view.host.querySelector('textarea, input')).toBeNull();

@@ -6,7 +6,7 @@ import { secretContext } from '../src/store/webhooks';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore } from './storeHelpers';
-import { addHook, KEY, SECRET } from './webhookHelpers';
+import { addHook, hookSource, KEY, SECRET } from './webhookHelpers';
 
 describeDb('webhooks: the registry', () => {
   let t: TestStore;
@@ -21,16 +21,12 @@ describeDb('webhooks: the registry', () => {
   });
 
   test('create returns the webhook with its defaults, and list and get agree', async () => {
-    const { secret, ...hook } = await addHook(t, {
-      events: ['job.failed', 'job.failed', 'job.pushed'],
-      queue: 'q',
-    });
+    const { secret, ...hook } = await addHook(t);
     // A store with a key signs every webhook: none was given, so one is made and returned this once.
     expect(secret).toMatch(/^whsec_[0-9a-f]{64}$/);
     expect(hook).toMatchObject({
       url: 'https://hooks.example.com/in',
-      events: ['job.failed', 'job.pushed'],
-      queue: 'q',
+      source: await hookSource(t),
       signed: true,
       enabled: true,
       createdBy: 'tester',
@@ -59,15 +55,13 @@ describeDb('webhooks: the registry', () => {
 
   test('a secret needs a key, and a store with none refuses it before writing anything', async () => {
     const keyless = t.another({ webhookKey: undefined as never });
+    const source = await hookSource(t);
     await expect(
-      keyless.webhooks.create(
-        { url: 'https://hooks.example.com/in', events: ['job.pushed'], secret: SECRET },
-        'op'
-      )
+      keyless.webhooks.create({ url: 'https://hooks.example.com/in', source, secret: SECRET }, 'op')
     ).rejects.toBeInstanceOf(WebhookKeyError);
     expect(await t.store.webhooks.list()).toEqual([]);
     const unsigned = await keyless.webhooks.create(
-      { url: 'https://hooks.example.com/in', events: ['job.pushed'] },
+      { url: 'https://hooks.example.com/in', source },
       'op'
     );
     expect(unsigned.signed).toBe(false);
@@ -79,9 +73,8 @@ describeDb('webhooks: the registry', () => {
 
   test.each([
     ['an empty url', { url: '' }],
-    ['no events', { events: [] }],
-    ['an unknown event', { events: ['job.exploded'] }],
-    ['a queue with NUL', { queue: 'a\0b' }],
+    ['no source', { source: null }],
+    ['a source with NUL', { source: 'a\0b' }],
     ['a short secret', { secret: 'short' }],
     ['a long secret', { secret: 'x'.repeat(257) }],
     ['a url over the limit', { url: `https://example.com/${'a'.repeat(2048)}` }],
@@ -91,6 +84,7 @@ describeDb('webhooks: the registry', () => {
   });
 
   test('a namespace holds at most MAX_WEBHOOKS, even when creations race', async () => {
+    await hookSource(t);
     await Promise.all(Array.from({ length: MAX_WEBHOOKS - 5 }, () => addHook(t)));
     const racing = await Promise.allSettled(Array.from({ length: 12 }, () => addHook(t)));
     expect(racing.filter((r) => r.status === 'fulfilled')).toHaveLength(5);
@@ -99,9 +93,9 @@ describeDb('webhooks: the registry', () => {
     expect(refused.every((r) => r.reason instanceof WebhookLimitError)).toBe(true);
     expect(await t.store.webhooks.list()).toHaveLength(MAX_WEBHOOKS);
     // Another namespace has its own allowance.
-    await t
-      .another({ namespace: 'other' })
-      .webhooks.create({ url: 'https://hooks.example.com/in', events: ['job.pushed'] }, 'op');
+    const other = t.another({ namespace: 'other' });
+    const source = (await other.sources.create({ name: 'Other' }, 'op')).id;
+    await other.webhooks.create({ url: 'https://hooks.example.com/in', source }, 'op');
   });
 
   test('setEnabled and delete say whether the webhook was there', async () => {

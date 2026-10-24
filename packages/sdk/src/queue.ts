@@ -1,4 +1,10 @@
-import type { DlqEntry } from '@qelay-cloud/core';
+import type {
+  DlqEntry,
+  DlqRetryManyOptions,
+  QueuePolicy,
+  QueueRunWindowInput,
+  QueueRunWindowState,
+} from '@qelay-cloud/core';
 import type { DlqStats } from '@qelay-cloud/store-postgres';
 import {
   cleanJobs,
@@ -9,7 +15,7 @@ import {
   promoteJobs,
   resumeQueue,
 } from './admin';
-import type { DlqConfig, DlqFilter, StallConfig } from './config';
+import type { DlqConfig, DlqFilter, DlqRetryAnswer, StallConfig } from './config';
 import * as config from './config';
 import type { Job } from './job';
 import type { QueueOptions } from './options';
@@ -100,6 +106,33 @@ export class Queue<T = unknown> extends QueueReads<T> {
     return promoteJobs(this.rt, opts.count);
   }
 
+  /**
+   * The attempts, backoff and timeout a job of this queue gets when it sets none of its own. Applied as the job is
+   * added, so jobs already there keep what they have. `null` or `{}` removes it. Resolves with the policy as stored.
+   */
+  setPolicy(policy: QueuePolicy | null): Promise<QueuePolicy | null> {
+    return config.setPolicy(this.rt, policy);
+  }
+
+  /** The queue's retry policy, or `null` when it has none. */
+  getPolicy(): Promise<QueuePolicy | null> {
+    return config.getPolicy(this.rt);
+  }
+
+  /**
+   * When this queue may start jobs: `cron` opens the window, `durationMs` is how long it stays open, `timezone` defaults
+   * to `UTC`. Outside it the jobs wait; running ones finish. The queue is rung at the first tick after it opens. Pausing
+   * still wins. `null` removes it. Set it only once every process runs this release: an older worker ignores it.
+   */
+  setRunWindow(window: QueueRunWindowInput | null): Promise<QueueRunWindowState | null> {
+    return config.setRunWindow(this.rt, window);
+  }
+
+  /** The queue's run window and whether it is open now, or `null` when it has none. */
+  getRunWindow(): Promise<QueueRunWindowState | null> {
+    return config.getRunWindow(this.rt);
+  }
+
   setStallConfig(stall: Partial<StallConfig>): Promise<StallConfig> {
     return config.setStall(this.rt, stall);
   }
@@ -161,6 +194,25 @@ export class Queue<T = unknown> extends QueueReads<T> {
 
   purgeDlqAsync(): Promise<number> {
     return this.purgeDlq();
+  }
+
+  /**
+   * Puts one failed job back in the queue with no attempt used, and rings it. Resolves with `{ ok: true }`, or `{ ok: false,
+   * reason }` and nothing changed: `not_found`, `not_failed`, `version` (with `expectedVersion`), `flow_member` (retry the
+   * flow instead) or `duplicate` (a live job holds its dedup key). Nothing retries by itself: this is the one way back.
+   */
+  retryDlq(id: string, options?: { readonly expectedVersion?: number }): Promise<DlqRetryAnswer> {
+    return config.retryDlq(this.rt, id, options);
+  }
+
+  /**
+   * Puts up to `limit` (1 to 500) failed jobs back, oldest failure first, optionally only those that failed for `reason`.
+   * `remaining` is what is still there to retry, so a caller loops until it is 0.
+   */
+  retryDlqMany(
+    options: DlqRetryManyOptions
+  ): Promise<{ readonly retried: string[]; readonly remaining: number }> {
+    return config.retryDlqMany(this.rt, options);
   }
 
   removeDlqJob(id: string): Promise<boolean> {

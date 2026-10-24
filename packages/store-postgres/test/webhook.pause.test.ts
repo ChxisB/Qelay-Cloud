@@ -3,7 +3,7 @@ import { describeDb } from '../../../test/support/db';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore } from './storeHelpers';
-import { addHook, CLAIM, event, journal, KEY, outcome } from './webhookHelpers';
+import { addHook, CLAIM, KEY, outcome, send, sendAll } from './webhookHelpers';
 
 /** One attempt per delivery, so a failed attempt is a failed delivery; the third in a row pauses. */
 const POLICY = { maxAttempts: 1, baseDelayMs: 1_000, maxDelayMs: 60_000, disableAfter: 3 };
@@ -22,7 +22,7 @@ describeDb('webhooks: pausing after failed deliveries in a row', () => {
 
   /** Sends one event through to a recorded result; returns the record summary. */
   const run = async (ok: boolean, jobId: string) => {
-    await journal(t, [event('pushed', 'q', jobId)]);
+    await send(t, { id: jobId });
     const [claimed] = await t.store.webhooks.claimDue({ ...CLAIM, limit: 1 });
     return t.store.webhooks.record([outcome(claimed!, { ok })], POLICY);
   };
@@ -49,7 +49,7 @@ describeDb('webhooks: pausing after failed deliveries in a row', () => {
       disabledReason: '3 failed deliveries in a row',
       disabledAt: t.clock.now(),
     });
-    await journal(t, [event('pushed', 'q', 'd')]);
+    await send(t, { id: 'd' });
     expect(await t.store.webhooks.claimDue(CLAIM)).toEqual([]);
   });
 
@@ -63,9 +63,9 @@ describeDb('webhooks: pausing after failed deliveries in a row', () => {
       alertLevel: 0,
     });
     // Fail, fail, deliver, fail in one batch: the streak ends at 1, so nothing pauses.
-    await journal(
+    await sendAll(
       t,
-      ['a', 'b', 'c', 'd'].map((id) => event('pushed', 'q', id))
+      ['a', 'b', 'c', 'd'].map((id) => ({ id }))
     );
     const claimed = await t.store.webhooks.claimDue(CLAIM);
     const results = [false, false, true, false];
@@ -80,9 +80,9 @@ describeDb('webhooks: pausing after failed deliveries in a row', () => {
   test('a paused webhook keeps collecting deliveries; enabling it sends them and clears the pause', async () => {
     const hook = await addHook(t);
     for (const id of ['a', 'b', 'c']) await run(false, id);
-    await journal(t, [event('pushed', 'q', 'held')]);
+    const held = await send(t, { id: 'held' });
     expect((await t.store.webhooks.deliveries(hook.id))!.items[0]).toMatchObject({
-      jobId: 'held',
+      requestId: held,
       status: 'pending',
     });
     expect(await t.store.webhooks.setEnabled(hook.id, true)).toMatchObject({
@@ -92,12 +92,12 @@ describeDb('webhooks: pausing after failed deliveries in a row', () => {
       disabledReason: null,
       disabledAt: null,
     });
-    expect(await t.store.webhooks.claimDue(CLAIM)).toMatchObject([{ jobId: 'held' }]);
+    expect(await t.store.webhooks.claimDue(CLAIM)).toMatchObject([{ requestId: held }]);
   });
 
   test('disabling by hand is not a pause: it carries no reason, and late results do not pause it', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed', 'q', 'a')]);
+    await send(t, { id: 'a' });
     const [claimed] = await t.store.webhooks.claimDue(CLAIM);
     expect(await t.store.webhooks.setEnabled(hook.id, false)).toMatchObject({
       enabled: false,
@@ -115,9 +115,9 @@ describeDb('webhooks: pausing after failed deliveries in a row', () => {
 
   test('disableAfter 0 never pauses', async () => {
     const hook = await addHook(t);
-    await journal(
+    await sendAll(
       t,
-      ['a', 'b', 'c'].map((id) => event('pushed', 'q', id))
+      ['a', 'b', 'c'].map((id) => ({ id }))
     );
     const claimed = await t.store.webhooks.claimDue(CLAIM);
     const summary = await t.store.webhooks.record(

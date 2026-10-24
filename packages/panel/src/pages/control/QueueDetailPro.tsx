@@ -273,6 +273,11 @@ export function QueueDetailPro() {
                   setMsg({ ok: true, text: 'Stall config saved ✓' });
                   toast.success('Stall config saved', name);
                 }}
+                onDlqSaved={() => {
+                  setMsg({ ok: true, text: 'Failed job limits saved ✓' });
+                  toast.success('Failed job limits saved', name);
+                  refetch();
+                }}
               />
               {!operationsHidden && (
                 <Disclosure summary="Developer tools" className="mb-6">

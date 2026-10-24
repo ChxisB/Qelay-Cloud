@@ -1,21 +1,21 @@
 import type { PostgresStore } from '@qelay-cloud/store-postgres';
 import type { Telemetry } from './telemetry';
+import { sendUnit, unitsOf } from './webhookBatchSend';
 import type { WebhookSenderConfig } from './webhookConfig';
 import type { Destinations } from './webhookDestinations';
 import type { Enqueue } from './webhookEnqueue';
 import type { PostFunction } from './webhookHttp';
 import { postOverSocket } from './webhookPool';
 import type { Resolver, SendDeps } from './webhookSend';
-import { sendDelivery, systemResolver } from './webhookSend';
-import { writeOnce } from './webhookWrite';
+import { systemResolver } from './webhookSend';
 
 /**
  * The webhook step of a tick pass: claim due deliveries, send them, record what came of each.
  * Network I/O belongs here and not in the store, which only hands deliveries out and takes results
  * back (`store.webhooks.claimDue` and `record`).
  *
- * Deliveries are claimed in chunks of `concurrency`, each chunk sent in parallel and recorded in one
- * transaction, until `batch` are done, the budget is spent or nothing is due. Sending is bounded by
+ * Deliveries are claimed in chunks of `concurrency` requests (a batch route's deliveries are one request, D15), each chunk
+ * sent in parallel and recorded in one transaction, until `batch` requests are done, the budget is spent or nothing is due. Sending is bounded by
  * the claim's lease: a chunk's requests all end within `timeoutMs`, and the lease outlasts that, so
  * a delivery is never in two senders' hands unless one of them died.
  *
@@ -106,17 +106,6 @@ export async function sendDueWebhooks(
   let total = NO_WEBHOOKS;
   let remaining = config.batch;
   let moreWork = false;
-  // A namespace with the delivery writer on gets its deliveries made here too, so a tick alone is enough.
-  let writeErrors = 0;
-  for (;;) {
-    const pass = await writeOnce(store, telemetry);
-    writeErrors += pass.failed ? 1 : 0;
-    if (!pass.more) break;
-    if (performance.now() - started >= config.budgetMs) {
-      moreWork = true;
-      break;
-    }
-  }
   try {
     while (remaining > 0) {
       const take = Math.min(config.concurrency, remaining);
@@ -126,8 +115,9 @@ export async function sendDueWebhooks(
         ratePerMinute: config.ratePerMinute,
       });
       if (claimed.length === 0) break;
-      remaining -= claimed.length;
-      const outcomes = await Promise.all(claimed.map((delivery) => sendDelivery(delivery, deps)));
+      const units = unitsOf(claimed);
+      remaining -= units.length;
+      const outcomes = (await Promise.all(units.map((unit) => sendUnit(unit, deps)))).flat();
       const summary = await store.webhooks.record(outcomes, config.retry);
       total = addWebhooks(total, {
         claimed: claimed.length,
@@ -139,7 +129,7 @@ export async function sendDueWebhooks(
         errors: 0,
       });
       // A short claim took everything that was due (or everything the rate limit allowed).
-      if (claimed.length < take) break;
+      if (units.length < take) break;
       if (remaining === 0 || performance.now() - started >= config.budgetMs) {
         moreWork = true;
         break;
@@ -149,7 +139,6 @@ export async function sendDueWebhooks(
     telemetry.error('webhooks', error);
     total = addWebhooks(total, { ...NO_WEBHOOKS, errors: 1 });
   }
-  total = addWebhooks(total, { ...NO_WEBHOOKS, errors: writeErrors });
   telemetry.duration('webhooks', Math.round(performance.now() - started));
   return { ...total, moreWork };
 }

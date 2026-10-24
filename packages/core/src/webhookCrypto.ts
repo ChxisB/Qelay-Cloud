@@ -38,8 +38,18 @@ const hmacKey = (secret: string, usage: 'sign' | 'verify'): Promise<CryptoKey> =
     usage,
   ]);
 
-const signedText = (timestamp: number | string, body: string): Uint8Array<ArrayBuffer> =>
-  encoder.encode(`${timestamp}.${body}`);
+/** `<timestamp>.<body>` as bytes: a body that is bytes (a request's own) is signed as received, never re-encoded. */
+const signedText = (
+  timestamp: number | string,
+  body: string | Uint8Array
+): Uint8Array<ArrayBuffer> => {
+  const prefix = encoder.encode(`${timestamp}.`);
+  const tail = typeof body === 'string' ? encoder.encode(body) : body;
+  const signed = new Uint8Array(prefix.byteLength + tail.byteLength);
+  signed.set(prefix);
+  signed.set(tail, prefix.byteLength);
+  return signed;
+};
 
 /** A new signing secret: `whsec_` and 32 random bytes in hex (70 characters, within the secret limits). */
 export const generateWebhookSecret = (): string =>
@@ -49,7 +59,7 @@ export const generateWebhookSecret = (): string =>
 export async function signWebhook(
   secret: string,
   timestamp: number | string,
-  body: string
+  body: string | Uint8Array
 ): Promise<string> {
   const key = await hmacKey(secret, 'sign');
   const mac = await crypto.subtle.sign('HMAC', key, signedText(timestamp, body));

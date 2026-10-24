@@ -35,6 +35,7 @@ interface Settled {
   readonly statusCode: number | null;
   readonly error: string | null;
   readonly history: AttemptRecord[];
+  readonly batchId: string | null;
 }
 
 /**
@@ -43,6 +44,10 @@ interface Settled {
  * manual retry, the late result is dropped (`stale`) and the newer attempt owns the delivery. A
  * delivered attempt finishes it; a failed one is retried after `webhookRetryDelayMs`, or fails the
  * delivery once its attempts (since the last manual retry) reach `policy.maxAttempts`.
+ *
+ * The deliveries of one batch (D15) that go on to a retry share one retry time: one jitter draw, taken at the most attempts any
+ * of them has used, so they are due together and go out as a batch again. Each delivery still counts its own attempts and
+ * its own place in the webhook's streak.
  *
  * A webhook's streak is its failed deliveries (attempts used up) in a row; a delivered one resets it.
  * It sets the webhook's `alert_level` (`webhookAlertLevel`) and, on reaching `policy.disableAfter`,
@@ -80,6 +85,8 @@ export async function recordAttempts(
       const settled: Settled[] = [];
       // Final outcomes per webhook, in order: true delivered, false exhausted.
       const tally = new Map<string, { ok: number; failed: number; runs: boolean[] }>();
+      // The most attempts used by a batch's members that retry, by batch id.
+      const retryUsed = new Map<string, number>();
       let stale = 0;
       let paused = 0;
       outcomes.forEach((outcome, index) => {
@@ -100,10 +107,12 @@ export async function recordAttempts(
           statusCode: outcome.statusCode,
           error,
           ...(response === null ? {} : { response }),
+          ...(outcome.batchId ? { batchId: outcome.batchId } : {}),
         });
         const counts = tally.get(outcome.webhookId) ?? { ok: 0, failed: 0, runs: [] };
         tally.set(outcome.webhookId, counts);
-        const base = { id: number, statusCode: outcome.statusCode, error, history };
+        const batchId = outcome.batchId ?? null;
+        const base = { id: number, statusCode: outcome.statusCode, error, history, batchId };
         if (outcome.ok) {
           counts.ok += 1;
           counts.runs.push(true);
@@ -113,32 +122,43 @@ export async function recordAttempts(
           counts.runs.push(false);
           settled.push({ ...base, status: 'failed', nextAttemptAt: now, finishedAt: now });
         } else {
+          if (batchId !== null) retryUsed.set(batchId, Math.max(used, retryUsed.get(batchId) ?? 0));
           settled.push({
             ...base,
             status: 'pending',
-            nextAttemptAt: now + webhookRetryDelayMs(used, rules, ctx.backoff.random),
+            nextAttemptAt:
+              batchId === null ? now + webhookRetryDelayMs(used, rules, ctx.backoff.random) : 0,
             finishedAt: null,
           });
         }
       });
+      const batchRetry = new Map(
+        [...retryUsed].map(([id, used]) => [
+          id,
+          now + webhookRetryDelayMs(used, rules, ctx.backoff.random),
+        ])
+      );
+      const due = (s: Settled): number =>
+        s.status === 'pending' && s.batchId !== null ? batchRetry.get(s.batchId)! : s.nextAttemptAt;
       if (settled.length > 0) {
         // One JSON document, not parallel arrays: `tx.array` writes a null element as the text "null".
         await tx`
           UPDATE qcloud_deliveries d
           SET status = c.status, next_attempt_at = c.next_attempt_at, finished_at = c.finished_at,
-              last_status_code = c.status_code, last_error = c.error, history = c.history
+              last_status_code = c.status_code, last_error = c.error, history = c.history, batch_id = c.batch_id
           FROM jsonb_to_recordset(${JSON.stringify(
             settled.map((s) => ({
               id: s.id,
               status: s.status,
-              next_attempt_at: s.nextAttemptAt,
+              next_attempt_at: due(s),
               finished_at: s.finishedAt,
               status_code: s.statusCode,
               error: s.error,
               history: s.history,
+              batch_id: s.batchId,
             }))
           )}::text::jsonb) AS c(id bigint, status text, next_attempt_at bigint, finished_at bigint,
-                          status_code integer, error text, history jsonb)
+                          status_code integer, error text, history jsonb, batch_id text)
           WHERE d.id = c.id`;
         const counted = [...tally].filter(([, n]) => n.runs.length > 0);
         if (counted.length > 0) {

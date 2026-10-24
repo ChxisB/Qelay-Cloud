@@ -2,6 +2,7 @@
 {{- $root := . }}
 {{- $hosts := dict "api" .Values.ingress.api.host }}
 {{- if .Values.panel.enabled }}{{- $_ := set $hosts "panel" .Values.ingress.panel.host }}{{- end }}
+{{- if .Values.ingest.enabled }}{{- $_ := set $hosts "ingest" .Values.ingress.ingest.host }}{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

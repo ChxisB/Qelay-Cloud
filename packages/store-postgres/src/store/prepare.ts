@@ -58,6 +58,14 @@ export interface PreparedJob {
   readonly dedupReplace: boolean;
   readonly groupId: string | null;
   readonly groupMaxSize: number | null;
+  /** What `payload` was encoded from, kept so a queue policy can change the backoff and encode it again. */
+  readonly envelope: Envelope;
+  /** Which of the three settings the job set itself: a queue policy only fills the others (DESIGN.md D17). */
+  readonly own: {
+    readonly attempts: boolean;
+    readonly backoff: boolean;
+    readonly timeout: boolean;
+  };
 }
 
 export interface PrepareLimits extends ShapeLimits {
@@ -96,7 +104,7 @@ function groupId(value: string | number): string {
   return text('group.id', String(value), MAX_IDENTIFIER_CHARS);
 }
 
-function backoffOf(backoff: JobOptions['backoff']): Envelope['backoff'] {
+export function backoffOf(backoff: JobOptions['backoff']): Envelope['backoff'] {
   if (backoff === undefined) return { type: 'fixed', delay: DEFAULT_BACKOFF_MS };
   if (typeof backoff === 'number') return { type: 'fixed', delay: backoff };
   return backoff.maxDelay === undefined
@@ -165,6 +173,12 @@ function prepareOne(job: NewJob, index: number, codec: Codec, limits: PrepareLim
     dedupReplace: deduplication?.replace ?? false,
     groupId: grouped,
     groupMaxSize: grouped === null ? null : (group?.maxSize ?? null),
+    envelope,
+    own: {
+      attempts: options.attempts !== undefined,
+      backoff: options.backoff !== undefined,
+      timeout: options.timeout !== undefined,
+    },
   };
 }
 

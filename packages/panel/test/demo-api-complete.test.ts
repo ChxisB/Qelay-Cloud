@@ -27,6 +27,8 @@ describe('demo API dispatcher complete route surface', () => {
       'jobs',
       'crons',
       'webhooks',
+      'sources',
+      'requests',
       'workers',
       'dlq',
       'control',
@@ -167,6 +169,17 @@ describe('demo API dispatcher complete route surface', () => {
     });
     expect(demoApiResponse('/queues/orders/dlq-config', 'GET', '')).toMatchObject({
       config: { autoRetry: false, maxEntries: 1000 },
+    });
+    expect(demoApiResponse('/queues/orders/policy', 'GET', '')).toEqual({ ok: true, policy: null });
+    expect(demoApiResponse('/queues/emails/policy', 'GET', '')).toMatchObject({
+      policy: { attempts: 5 },
+    });
+    expect(demoApiResponse('/queues/orders/run-window', 'GET', '')).toEqual({
+      ok: true,
+      runWindow: null,
+    });
+    expect(demoApiResponse('/queues/emails/run-window', 'GET', '')).toMatchObject({
+      runWindow: { cron: '0 0 * * *', open: false },
     });
 
     const waiting = demoApiResponse('/queues/orders/jobs/list', 'GET', '?states=waiting') as {

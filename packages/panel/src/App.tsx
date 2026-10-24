@@ -95,6 +95,12 @@ const Issues = retryableLazy(() =>
 const Destinations = retryableLazy(() =>
   import('./pages/control/gateway/Destinations').then((m) => ({ default: m.Destinations }))
 );
+const Sources = retryableLazy(() =>
+  import('./pages/control/gateway/Sources').then((m) => ({ default: m.Sources }))
+);
+const Requests = retryableLazy(() =>
+  import('./pages/control/gateway/Requests').then((m) => ({ default: m.Requests }))
+);
 const WorkersPro = retryableLazy(() =>
   import('./pages/control/WorkersPro').then((m) => ({ default: m.WorkersPro }))
 );
@@ -153,6 +159,8 @@ export function App() {
         <Route path="/dlq-control" element={<Navigate to="/dlq" replace />} />
         {/* Webhooks are connections of the Event gateway; old links and bookmarks land on its first screen. */}
         <Route path="/events-gateway" element={<Connections />} />
+        <Route path="/events-gateway/sources" element={<Sources />} />
+        <Route path="/events-gateway/requests" element={<Requests />} />
         <Route path="/events-gateway/events" element={<Events />} />
         <Route path="/events-gateway/metrics" element={<GatewayMetrics />} />
         <Route path="/events-gateway/issues" element={<Issues />} />

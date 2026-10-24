@@ -14,13 +14,23 @@ import {
 } from '../gatewayFeedPayloads';
 import { parseWebhookStatsPayload } from '../gatewayPayloads';
 import {
+  parseReplayPayload,
+  parseRequestDetailPayload,
+  parseRequestsPayload,
+  parseSourceIssuedPayload,
+  parseSourcesPayload,
+} from '../sourcePayloads';
+import {
   decodedHttpPathSegment,
   eventQueuePathSegment,
   opaqueHttpPathSegment,
 } from '../upstreamPaths';
 import type {
   AddDestinationBody,
+  AddSourceBody,
   DestinationPatchBody,
+  RequestsQuery,
+  SourcePatchBody,
   WebhookGroupStatsQuery,
   WebhookIssuesQuery,
   WebhookIssueStatus,
@@ -87,6 +97,33 @@ export const resourceApi = {
     ),
   removeDestination: (id: string) =>
     srv(`/webhooks/destinations/${opaqueHttpPathSegment(id)}`, { method: 'DELETE' }),
+  sources: async () => parseSourcesPayload(await srv<unknown>('/sources')),
+  /** The answer holds the URL token and the secret, shown once: the caller keeps them in state only. */
+  addSource: async (source: AddSourceBody) =>
+    parseSourceIssuedPayload(await srv<unknown>('/sources', body('POST', source))),
+  updateSource: async (id: string, patch: SourcePatchBody) =>
+    parseSourceIssuedPayload(
+      await srv<unknown>(`/sources/${opaqueHttpPathSegment(id)}`, body('PATCH', patch))
+    ),
+  /** No body: the server makes the secret; the old one verifies for a day more. */
+  rotateSourceSecret: async (id: string) =>
+    parseSourceIssuedPayload(
+      await srv<unknown>(`/sources/${opaqueHttpPathSegment(id)}/rotate-secret`, body('POST'))
+    ),
+  /** A leaked address gets a new token; the old one stops at once. */
+  rotateSourceToken: async (id: string) =>
+    parseSourceIssuedPayload(
+      await srv<unknown>(`/sources/${opaqueHttpPathSegment(id)}/rotate-token`, body('POST'))
+    ),
+  removeSource: (id: string) => srv(`/sources/${opaqueHttpPathSegment(id)}`, { method: 'DELETE' }),
+  requests: async (query: RequestsQuery = {}) =>
+    parseRequestsPayload(await srv<unknown>(`/requests${search(query)}`)),
+  request: async (id: string) =>
+    parseRequestDetailPayload(await srv<unknown>(`/requests/${opaqueHttpPathSegment(id)}`)),
+  replayRequest: async (id: string) =>
+    parseReplayPayload(
+      await srv<unknown>(`/requests/${opaqueHttpPathSegment(id)}/replay`, body('POST'))
+    ),
   webhookDeliveries: async (id: string, query: WebhookDeliveriesQuery = {}) =>
     parseWebhookDeliveriesPayload(
       await srv<unknown>(`/webhooks/${opaqueHttpPathSegment(id)}/deliveries${search(query)}`)

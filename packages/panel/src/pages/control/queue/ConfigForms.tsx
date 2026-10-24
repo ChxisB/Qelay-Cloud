@@ -7,6 +7,8 @@ export {
   type DlqDraft,
   dlqConfigMutationPayload,
   dlqConfigPayload,
+  type DlqRetentionDraft,
+  dlqRetentionPayload,
   isDlqConfig,
   isStallConfig,
   type MutableDlqConfig,

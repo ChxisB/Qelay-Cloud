@@ -2,7 +2,17 @@ import { Route, Routes } from 'react-router-dom';
 import { ConnectionPage } from '../src/pages/control/gateway/ConnectionPage';
 import { CreateConnection } from '../src/pages/control/gateway/CreateConnection';
 import { NEW_CONNECTION } from '../src/pages/control/gateway/model';
-import { address, alertOf, answerAdd, field, page, posts, stepOf } from './gateway-create.helpers';
+import {
+  address,
+  alertOf,
+  answerAdd,
+  field,
+  page,
+  pickSource,
+  posts,
+  sourceSelect,
+  stepOf,
+} from './gateway-create.helpers';
 import { at, route, serveGateway } from './gateway.helpers';
 import {
   act,
@@ -53,7 +63,7 @@ describe('Create connection page', () => {
       'Rules',
       'Save',
     ]);
-    expect(stepOf(field(view.host, 'webhook-queue'))).toBe('Source');
+    expect(stepOf(sourceSelect(view.host))).toBe('Source');
     expect(stepOf(field(view.host, 'webhook-url'))).toBe('Destination');
     expect(stepOf(field(view.host, 'webhook-secret'))).toBe('Rules');
     view.unmount();
@@ -64,6 +74,7 @@ describe('Create connection page', () => {
     answerAdd(json({ ok: true, data: { webhook: { id: 'new-1' } } }, 201));
     const view = page();
     await settle(10);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
     act(() => buttonByText(view.host, 'Add connection').click());
     await settle(20);
@@ -72,16 +83,15 @@ describe('Create connection page', () => {
     view.unmount();
   });
 
-  test('an address connection with no secret sends the url and events only', async () => {
+  test('an address connection with no secret sends the source and url only', async () => {
     const calls = serveGateway([]);
     const view = page();
     await settle(10);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
     act(() => buttonByText(view.host, 'Add connection').click());
     await settle(20);
-    expect(calls.bodies).toEqual([
-      { url: 'https://receiver.test/hook', events: ['job.completed', 'job.failed'] },
-    ]);
+    expect(calls.bodies).toEqual([{ url: 'https://receiver.test/hook', source: 'src_1' }]);
     // The fixture answers without an id, so the list is the place to land.
     expect(address()).toBe('/events-gateway');
     view.unmount();
@@ -92,6 +102,7 @@ describe('Create connection page', () => {
     answerAdd(json({ ok: true, id: 'ignored' }, 201));
     const view = page();
     await settle(10);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
     act(() => buttonByText(view.host, 'Add connection').click());
     await settle(20);
@@ -103,6 +114,7 @@ describe('Create connection page', () => {
     const calls = serveGateway([]);
     const view = page();
     await settle(10);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
     const add = buttonByText(view.host, 'Add connection');
     act(() => {
@@ -119,63 +131,38 @@ describe('Create connection page', () => {
     const view = page();
     await settle(10);
     act(() => buttonByText(view.host, 'Another queue').click());
-    setInput(field(view.host, 'webhook-queue'), 'orders');
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'route-target'), 'refunds');
     act(() => buttonByText(view.host, 'Add connection').click());
     await settle(20);
-    expect(calls.bodies).toEqual([
-      {
-        destination: 'queue',
-        queue: 'orders',
-        target: 'refunds',
-        events: ['job.completed', 'job.failed'],
-      },
-    ]);
+    expect(calls.bodies).toEqual([{ destination: 'queue', source: 'src_1', target: 'refunds' }]);
     view.unmount();
   });
 
-  test('a queue route with no source or no target is refused before anything is sent', async () => {
+  test('a connection with no source is refused before anything is sent', async () => {
+    const calls = serveGateway([]);
+    const view = page();
+    await settle(10);
+    setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
+    act(() => buttonByText(view.host, 'Add connection').click());
+    await settle(10);
+    expect(alertOf(view.host)?.textContent).toContain('source is required');
+    expect(posts(calls)).toEqual([]);
+    view.unmount();
+  });
+
+  test('a queue route with no target is refused before anything is sent', async () => {
     const calls = serveGateway([]);
     const view = page();
     await settle(10);
     act(() => buttonByText(view.host, 'Another queue').click());
+    pickSource(view.host, 'src_1');
     act(() => buttonByText(view.host, 'Add connection').click());
     await settle(10);
-    expect(alertOf(view.host)).not.toBeNull();
+    expect(alertOf(view.host)?.textContent).toContain('target queue');
     expect(stepOf(alertOf(view.host))).toBe('Save');
     expect(posts(calls)).toEqual([]);
     expect(address()).toBe('/events-gateway/connections/new');
-    view.unmount();
-  });
-
-  test('a loop is shown in the Destination step, and what was typed is kept', async () => {
-    serveGateway([]);
-    answerAdd(
-      json(
-        {
-          ok: false,
-          error: {
-            code: 'route_cycle',
-            message: 'the route would make a loop: a queue would end up adding jobs to itself',
-          },
-        },
-        409
-      )
-    );
-    const view = page();
-    await settle(10);
-    act(() => buttonByText(view.host, 'Another queue').click());
-    setInput(field(view.host, 'webhook-queue'), 'orders');
-    setInput(field(view.host, 'route-target'), 'orders');
-    act(() => buttonByText(view.host, 'Add connection').click());
-    await settle(20);
-    expect(alertOf(view.host)?.textContent).toContain('loop');
-    expect(stepOf(alertOf(view.host))).toBe('Destination');
-    expect(field(view.host, 'webhook-queue').value).toBe('orders');
-    expect(field(view.host, 'route-target').value).toBe('orders');
-    expect(address()).toBe('/events-gateway/connections/new');
-    // The refusal does not lock the form: a second try is sent.
-    expect(buttonByText(view.host, 'Add connection').disabled).toBe(false);
     view.unmount();
   });
 
@@ -189,6 +176,7 @@ describe('Create connection page', () => {
     );
     const view = page();
     await settle(10);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
     setInput(field(view.host, 'webhook-secret'), 'sixteen-characters-long');
     act(() => buttonByText(view.host, 'Add connection').click());
@@ -211,6 +199,7 @@ describe('Create connection page', () => {
     );
     const view = page();
     await settle(10);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
     act(() => buttonByText(view.host, 'Add connection').click());
     await settle(20);

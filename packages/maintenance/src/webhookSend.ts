@@ -1,9 +1,9 @@
 import { lookup } from 'node:dns/promises';
 import {
-  deliveryBody,
   firstBlockedAddress,
   signWebhook,
   validateWebhookUrl,
+  WEBHOOK_BATCH_EVENT,
   WEBHOOK_ERROR_CHARS,
   WEBHOOK_HEADERS,
   WEBHOOK_SCHEMA_VERSION,
@@ -14,6 +14,8 @@ import type { Destinations } from './webhookDestinations';
 import type { Enqueue } from './webhookEnqueue';
 import { enqueueDelivery } from './webhookEnqueue';
 import type { PostFailure, PostFunction, PostResult } from './webhookHttp';
+import type { Payload } from './webhookPayload';
+import { deliveryPayload } from './webhookPayload';
 import { postOverSocket } from './webhookPool';
 
 /**
@@ -121,10 +123,20 @@ const FAILURE_TEXT: Readonly<Record<PostFailure, string>> = {
 
 const cut = (text: string): string => text.slice(0, WEBHOOK_ERROR_CHARS);
 
+/** A batch's one request (D15): its payload is made, and it is sent for all the members. `delivery` stands for the route. */
+export interface BatchRequest {
+  /** `X-Webhook-Id`: the batch's id. */
+  readonly id: string;
+  /** The highest attempt among the members: `X-Webhook-Attempt`. */
+  readonly attempt: number;
+  readonly payload: Payload;
+}
+
 /** Never rejects: whatever goes wrong is a failed attempt with a reason. */
 export async function sendDelivery(
   delivery: ClaimedDelivery,
-  deps: SendDeps
+  deps: SendDeps,
+  batch?: BatchRequest
 ): Promise<AttemptOutcome> {
   const startedAt = deps.now();
   const clock = performance.now();
@@ -172,27 +184,19 @@ export async function sendDelivery(
       return refuse('destination not allowed: the name resolves to a non-public address');
     }
 
-    // The delivery writer shapes a body once and stores it: every attempt sends and signs those bytes.
-    if (delivery.body === '') return refuse('shaped body was too large to make');
-    const body =
-      delivery.body ??
-      deliveryBody({
-        id: delivery.deliveryId,
-        event: delivery.event,
-        occurredAt: delivery.occurredAt,
-        queue: delivery.queue,
-        jobId: delivery.jobId,
-        state: delivery.state,
-        error: delivery.error,
-        progress: delivery.progress,
-      });
+    const made =
+      batch === undefined
+        ? deliveryPayload(delivery)
+        : { ok: true as const, payload: batch.payload };
+    if (!made.ok) return refuse(made.reason);
+    const { payload } = made;
     const timestamp = deps.now();
     const headers: Record<string, string> = {
-      [WEBHOOK_HEADERS.id]: delivery.deliveryId,
-      [WEBHOOK_HEADERS.event]: delivery.event,
+      [WEBHOOK_HEADERS.id]: batch?.id ?? delivery.deliveryId,
+      [WEBHOOK_HEADERS.event]: batch === undefined ? delivery.event : WEBHOOK_BATCH_EVENT,
       [WEBHOOK_HEADERS.timestamp]: String(timestamp),
-      [WEBHOOK_HEADERS.attempt]: String(delivery.attempt),
-      ...(delivery.body === null ? { [WEBHOOK_HEADERS.schema]: WEBHOOK_SCHEMA_VERSION } : {}),
+      [WEBHOOK_HEADERS.attempt]: String(batch?.attempt ?? delivery.attempt),
+      ...(payload.testDocument ? { [WEBHOOK_HEADERS.schema]: WEBHOOK_SCHEMA_VERSION } : {}),
     };
     if (delivery.secret !== null) {
       // During a rotation both secrets sign (comma-separated), so a receiver holding either verifies.
@@ -201,7 +205,7 @@ export async function sendDelivery(
         ...(delivery.previousSecret === null ? [] : [delivery.previousSecret]),
       ];
       headers[WEBHOOK_HEADERS.signature] = (
-        await Promise.all(secrets.map((secret) => signWebhook(secret, timestamp, body)))
+        await Promise.all(secrets.map((secret) => signWebhook(secret, timestamp, payload.signed)))
       ).join(',');
     }
     const { url } = verdict;
@@ -229,7 +233,9 @@ export async function sendDelivery(
           hostHeader: url.host,
           path: `${url.pathname}${url.search}`,
           headers,
-          body,
+          body: payload.text,
+          ...(payload.bytes === undefined ? {} : { bytes: payload.bytes }),
+          ...(payload.contentType === undefined ? {} : { contentType: payload.contentType }),
           timeoutMs: budget,
           ...(deps.ca === undefined ? {} : { ca: deps.ca }),
           ...(deps.captureBytes ? { captureBytes: deps.captureBytes } : {}),

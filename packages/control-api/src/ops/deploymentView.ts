@@ -65,11 +65,13 @@ async function build(ctx: OpsContext, fresh: boolean): Promise<DeploymentRespons
         })();
 
   const rows = read.scan === null ? null : [...read.scan.rows.values()];
-  const notRung = rows === null ? null : rows.reduce((sum, row) => sum + row.notRung, 0);
+  // A paused queue and one outside its run window are held on purpose: their unrung jobs are not the tick being behind.
+  const live = rows?.filter((row) => !row.paused && !row.windowClosed) ?? null;
+  const notRung = live === null ? null : live.reduce((sum, row) => sum + row.notRung, 0);
   const oldest =
-    rows === null
+    live === null
       ? null
-      : rows.reduce<number | null>(
+      : live.reduce<number | null>(
           (max, row) =>
             row.oldestNotRungAgeMs === null ? max : Math.max(max ?? 0, row.oldestNotRungAgeMs),
           null
@@ -109,6 +111,18 @@ async function build(ctx: OpsContext, fresh: boolean): Promise<DeploymentRespons
       partial,
     },
   };
+  const interval = deployment.tickIntervalMs;
+  const enabled = read.webhooks?.filter((route) => route.enabled) ?? null;
+  const timing = {
+    tickIntervalMs: interval,
+    scheduledRoutes: enabled?.filter((route) => route.schedule !== null).length ?? null,
+    shortDelayRoutes:
+      enabled === null || interval === null
+        ? null
+        : enabled.filter((route) => route.delayMs !== null && route.delayMs < interval).length,
+    // Only queues with pending jobs are read for their window, which is where it matters.
+    closedWindows: rows === null ? null : rows.filter((row) => row.windowClosed).length,
+  };
   return {
     ok: true,
     version: config.version,
@@ -121,6 +135,7 @@ async function build(ctx: OpsContext, fresh: boolean): Promise<DeploymentRespons
     },
     warnings: deploymentWarnings({
       ...parts,
+      timing,
       webhooks: webhookCounts(
         read.webhooks,
         new Set(read.ignored?.items.map((issue) => issue.webhookId))

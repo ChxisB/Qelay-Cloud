@@ -19,10 +19,10 @@ import {
 installTestHooks();
 
 const EVENTS = '/events-gateway/events';
-const openJob = (host: HTMLElement, job: string) =>
+const openRequest = (host: HTMLElement, request: string) =>
   act(() =>
     host
-      .querySelector<HTMLButtonElement>(`button[aria-label="Open event emails / ${job}"]`)!
+      .querySelector<HTMLButtonElement>(`button[aria-label="Open event Request ${request}"]`)!
       .click()
   );
 
@@ -30,7 +30,7 @@ describe('Events screen', () => {
   test('lists every event with its status, where it went and what each attempt got back', async () => {
     serveGateway(
       [route()],
-      [delivery(), delivery({ id: '1', jobId: 'job-8', status: 'delivered' })]
+      [delivery(), delivery({ id: '1', requestId: '8', status: 'delivered' })]
     );
     const view = at(EVENTS, createElement(Events));
     await settle(20);
@@ -47,11 +47,11 @@ describe('Events screen', () => {
     const view = at(EVENTS, createElement(Events));
     await settle(20);
     expect(view.host.querySelector('section[aria-label="Event details"]')).toBeNull();
-    openJob(view.host, 'job-9');
+    openRequest(view.host, '9');
     const detail = view.host.querySelector('section[aria-label="Event details"]')!;
     expect(detail.textContent).toContain('Attempts (2)');
     expect(detail.textContent).toContain('receiver answered 502');
-    expect(detail.textContent).toContain('Qelay jobs: emails');
+    expect(detail.textContent).toContain('Source: src_1');
     view.unmount();
   });
 
@@ -59,7 +59,7 @@ describe('Events screen', () => {
     const calls = serveGateway([route()], [delivery()]);
     const view = at(EVENTS, createElement(Events));
     await settle(20);
-    openJob(view.host, 'job-9');
+    openRequest(view.host, '9');
     const before = calls.feed.length;
     const retry = [
       ...view.host.querySelectorAll('section[aria-label="Event details"] button'),
@@ -81,7 +81,7 @@ describe('Events screen', () => {
     const view = at(EVENTS, createElement(Events));
     await settle(20);
     expect(view.host.textContent).toContain('On hold');
-    openJob(view.host, 'job-9');
+    openRequest(view.host, '9');
     const detail = view.host.querySelector('section[aria-label="Event details"]')!;
     expect([...detail.querySelectorAll('button')].some((b) => b.textContent === 'Retry')).toBe(
       false
@@ -126,7 +126,7 @@ describe('Events screen', () => {
         delivery(),
         delivery({
           id: '1',
-          jobId: 'job-8',
+          requestId: '8',
           lastError: null,
           history: [{ attempt: 1, at: 1, durationMs: 3, statusCode: 200, error: null }],
         }),
@@ -137,15 +137,15 @@ describe('Events screen', () => {
     const reads = calls.feed.length;
     setInput(view.host.querySelector<HTMLInputElement>('input[aria-label="HTTP code"]')!, '5');
     await settle(5);
-    expect(view.host.textContent).toContain('job-9');
-    expect(view.host.textContent).not.toContain('job-8');
+    expect(view.host.textContent).toContain('Request 9');
+    expect(view.host.textContent).not.toContain('Request 8');
     setInput(view.host.querySelector<HTMLInputElement>('input[aria-label="HTTP code"]')!, '');
     setInput(
       view.host.querySelector<HTMLInputElement>('input[aria-label="Search this page"]')!,
-      'JOB-8'
+      '8'
     );
     await settle(5);
-    expect(view.host.textContent).not.toContain('job-9');
+    expect(view.host.textContent).not.toContain('Request 9');
     expect(calls.feed.length).toBe(reads);
     view.unmount();
   });
@@ -188,7 +188,7 @@ describe('Events screen', () => {
     view.unmount();
   });
 
-  test('a queue route names the job it made', async () => {
+  test('a queue route names the job it made, and the request it came from', async () => {
     serveGateway(
       [route({ destination: 'queue', url: '', target: 'refunds' })],
       [delivery({ status: 'delivered', routedJobId: 'qcloud-route-2', history: [] })]
@@ -196,7 +196,7 @@ describe('Events screen', () => {
     const view = at(EVENTS, createElement(Events));
     await settle(20);
     expect(view.host.textContent).toContain('Queue: refunds');
-    openJob(view.host, 'job-9');
+    openRequest(view.host, '9');
     expect(view.host.querySelector('section[aria-label="Event details"]')?.textContent).toContain(
       'qcloud-route-2'
     );

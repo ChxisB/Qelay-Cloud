@@ -80,7 +80,7 @@ const secretsOf = (c: Container) => new Map(c.secrets.map((s) => [s.name, s.valu
 const TLS = ['QCLOUD_DATABASE_TLS', 'QCLOUD_DATABASE_TLS_CA', 'QCLOUD_DATABASE_TLS_CA_FILE'];
 
 /** The checks every container shares: no credential value, nothing secret-looking in the plain environment. */
-function checkHygiene(checks: Checks, who: string, c: Container): void {
+export function checkHygiene(checks: Checks, who: string, c: Container): void {
   const env = envOf(c);
   const secrets = secretsOf(c);
   const leaked = [...env].filter(([, value]) => /:\/\/[^/]*:[^/@]*@/.test(value)).map(([n]) => n);

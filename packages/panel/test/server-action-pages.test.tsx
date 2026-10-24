@@ -1,4 +1,5 @@
 import {
+  clickSameTick,
   createElement,
   DlqPro,
   dashboardQueue,
@@ -12,7 +13,6 @@ import {
   render,
   settle,
   test,
-  useToastStore,
 } from './server-action-pages.helpers';
 
 installTestHooks({ yesToQuestions: true });
@@ -87,7 +87,7 @@ describe('guarded job and entity actions', () => {
     view.unmount();
   });
 
-  test('DlqPro draws no row retry and cannot issue its POST', async () => {
+  test('DlqPro locks a row retry synchronously, so two clicks in one tick send one POST', async () => {
     let retryCalls = 0;
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -125,9 +125,9 @@ describe('guarded job and entity actions', () => {
           })
         );
       }
-      if (url.endsWith('/queues/orders/dlq/retry') && method === 'POST') {
+      if (url.endsWith('/queues/orders/dlq/dead-1/retry') && method === 'POST') {
         retryCalls += 1;
-        return Promise.resolve(json({ ok: true, count: 1 }));
+        return Promise.resolve(json({ ok: true }));
       }
       return Promise.resolve(json({ ok: false, error: `Unexpected ${method} ${url}` }, 500));
     }) as typeof fetch;
@@ -136,13 +136,13 @@ describe('guarded job and entity actions', () => {
       createElement(MemoryRouter, { initialEntries: ['/dlq?queue=orders'] }, createElement(DlqPro))
     );
     await settle(35);
-    const retry = view.host.querySelector<HTMLButtonElement>('button[aria-label="Retry job"]');
-    expect(retry).toBeNull();
-    // A control for an action the transport lacks is not drawn; the note says why.
-    expect(view.host.querySelector('button[aria-label="Retry unavailable"]')).toBeNull();
-    expect(view.host.querySelector('tbody button[aria-label]')).toBeNull();
-    expect(retryCalls).toBe(0);
-    expect(useToastStore.getState().toasts).toEqual([]);
+    const retry = view.host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Retry job dead-1"]'
+    );
+    expect(retry).not.toBeNull();
+    clickSameTick(retry as HTMLButtonElement);
+    await settle(20);
+    expect(retryCalls).toBe(1);
     view.unmount();
   });
 });

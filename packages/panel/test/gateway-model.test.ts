@@ -26,9 +26,9 @@ describe("a connection's name", () => {
   test('is what it is called, and without one the address it sends to', () => {
     expect(routeName(wire())).toBe('https://receiver.test/hook');
     expect(routeName(wire({ name: 'Orders to billing' }))).toBe('Orders to billing');
-    expect(routeLine(wire())).toBe('Qelay jobs: emails → https://receiver.test/hook');
+    expect(routeLine(wire())).toBe('Source: src_1 → https://receiver.test/hook');
     expect(routeLine(wire({ name: 'Orders to billing' }))).toBe(
-      'Orders to billing: Qelay jobs: emails → https://receiver.test/hook'
+      'Orders to billing: Source: src_1 → https://receiver.test/hook'
     );
   });
 
@@ -44,7 +44,7 @@ describe("a connection's name", () => {
 describe('filterRoutes', () => {
   const routes = [
     wire({ id: 'a' }),
-    wire({ id: 'b', destination: 'queue', url: '', target: 'refunds', queue: 'orders' }),
+    wire({ id: 'b', destination: 'queue', url: '', target: 'refunds', source: 'orders' }),
     wire({
       id: 'c',
       enabled: false,
@@ -72,7 +72,7 @@ describe('filterRoutes', () => {
     ]);
   });
 
-  test('text matches the id, the queues and the shown destination, ignoring case and spaces', () => {
+  test('text matches the id, the source and the shown destination, ignoring case and spaces', () => {
     expect(ids(filterRoutes(routes, { text: ' REFUNDS ', state: 'all' }))).toEqual(['b']);
     expect(ids(filterRoutes(routes, { text: 'orders', state: 'all' }))).toEqual(['b']);
     expect(ids(filterRoutes(routes, { text: 'other.test', state: 'all' }))).toEqual(['c']);

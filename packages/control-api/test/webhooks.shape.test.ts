@@ -1,15 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { describeDb } from '../../../test/support/db';
-import { KEY, SECRET } from '../../store-postgres/test/webhookHelpers';
+import { hookSource, KEY, SECRET } from '../../store-postgres/test/webhookHelpers';
 import type { JobsApi, JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
 
-const ENDPOINT = {
-  url: 'https://hooks.example.com/in',
-  events: ['job.completed', 'job.failed'],
-  secret: SECRET,
+const URL_ = 'https://hooks.example.com/in';
+const REQUEST = {
+  method: 'POST',
+  headers: { 'x-kind': 'invoice' },
+  body: { id: 500, name: 'chris' },
 };
-const PREVIEW = { event: { event: 'job.failed', queue: 'emails', jobId: 'j-1', error: 'boom' } };
 
 describeDb('webhook filters, shapes and preview', () => {
   let f: JobsFixture;
@@ -23,44 +23,36 @@ describeDb('webhook filters, shapes and preview', () => {
     api = f.api();
   });
 
-  const create = (body: Record<string, unknown> = ENDPOINT) => api.call('POST', '/webhooks', body);
+  const create = async (extra: Record<string, unknown> = {}) =>
+    api.call('POST', '/webhooks', {
+      url: URL_,
+      secret: SECRET,
+      source: await hookSource(f),
+      ...extra,
+    });
 
   describe('filter and shape', () => {
     const SHAPED = {
-      ...ENDPOINT,
-      filter: { queue: { $startsWith: 'em' }, error: { $exist: true } },
-      shape: { text: { $: 'error' }, where: { $: 'queue' } },
+      filter: { 'body.name': { $startsWith: 'ch' }, 'headers.x-kind': { $exist: true } },
+      shape: { who: { $: 'body.name' }, kind: { $: 'headers.x-kind' } },
     };
 
-    test('need the delivery writer on: without it, 400 for "writer" and nothing is saved', async () => {
-      const answer = await create(SHAPED);
-      expect(answer.status).toBe(400);
-      expect(answer.body.error.code).toBe('unsupported_option');
-      expect(JSON.stringify(answer.body.error)).toContain('writer');
-      expect((await api.call('GET', '/webhooks')).body.data.stats.total).toBe(0);
-    });
-
-    test('with the writer on they are saved and read back as the objects they were', async () => {
-      await f.store.webhooks.startWriter();
+    test('are saved and read back as the objects they were', async () => {
       const answer = await create(SHAPED);
       expect(answer.status).toBe(201);
-      expect(answer.body.data.webhook).toMatchObject({
-        filter: SHAPED.filter,
-        shape: SHAPED.shape,
-      });
-      const plain = (await create(ENDPOINT)).body.data.webhook;
+      expect(answer.body.data.webhook).toMatchObject(SHAPED);
+      const plain = (await create()).body.data.webhook;
       expect(plain).toMatchObject({ filter: null, shape: null });
     });
 
     test('a filter or shape outside the grammar is refused by name with the first fault', async () => {
-      await f.store.webhooks.startWriter();
       for (const [option, bad] of [
         ['filter', { filter: { jobData: 1 } }],
-        ['filter', { filter: { progress: { $gt: 'x' } } }],
+        ['filter', { filter: { 'body.n': { $gt: 'x' } } }],
         ['shape', { shape: { a: { $: 'data' } } }],
         ['shape', { shape: {} }],
       ] as const) {
-        const answer = await create({ ...ENDPOINT, ...bad });
+        const answer = await create(bad);
         expect(answer.status, JSON.stringify(bad)).toBe(400);
         expect(answer.body.error.code).toBe('unsupported_option');
         expect(JSON.stringify(answer.body.error)).toContain(option);
@@ -71,36 +63,35 @@ describeDb('webhook filters, shapes and preview', () => {
   describe('preview', () => {
     const preview = (body: Record<string, unknown>) => api.call('POST', '/webhooks/preview', body);
 
-    test('answers whether the filter lets the event through and the body a shape makes', async () => {
-      const shape = { text: { $: 'error' }, at: { $: 'queue' } };
-      const hit = await preview({ ...PREVIEW, filter: { state: { $exist: false } }, shape });
+    test('answers whether the filter lets the request through and the body a shape makes', async () => {
+      const shape = { who: { $: 'body.name' }, id: { $: 'body.id' } };
+      const hit = await preview({
+        request: REQUEST,
+        filter: { 'headers.x-kind': 'invoice' },
+        shape,
+      });
       expect(hit.status).toBe(200);
       expect(hit.body.data.preview).toEqual({
         matches: true,
-        body: JSON.stringify({ at: 'emails', text: 'boom' }),
+        body: JSON.stringify({ id: 500, who: 'chris' }),
         error: null,
       });
-      const miss = await preview({ ...PREVIEW, filter: { queue: 'billing' } });
+      const miss = await preview({ request: REQUEST, filter: { 'headers.x-kind': 'refund' } });
       expect(miss.body.data.preview).toEqual({ matches: false, body: null, error: null });
     });
 
-    test('without a shape it shows the default body; a bad filter or shape is 400 by name', async () => {
-      const plain = await preview(PREVIEW);
-      expect(JSON.parse(plain.body.data.preview.body)).toMatchObject({
-        event: 'job.failed',
-        queue: 'emails',
-        jobId: 'j-1',
-        error: 'boom',
-      });
-      const bad = await preview({ ...PREVIEW, filter: { nope: 1 } });
+    test('without a shape it shows the body as sent; a bad filter or shape is 400 by name', async () => {
+      const plain = await preview({ request: REQUEST });
+      expect(JSON.parse(plain.body.data.preview.body)).toEqual({ id: 500, name: 'chris' });
+      const bad = await preview({ request: REQUEST, filter: { nope: 1 } });
       expect(bad.status).toBe(400);
       expect(JSON.stringify(bad.body.error)).toContain('filter');
-      expect((await preview({ ...PREVIEW, shape: { x: { $: 'data' } } })).status).toBe(400);
-      expect((await preview({ filter: { queue: 'a' } })).status).toBe(400);
+      expect((await preview({ request: REQUEST, shape: { x: { $: 'data' } } })).status).toBe(400);
+      expect((await preview({ filter: { method: 'POST' } })).status).toBe(400);
     });
 
     test('saves and sends nothing', async () => {
-      await preview({ ...PREVIEW, shape: { x: 1 } });
+      await preview({ request: REQUEST, shape: { x: 1 } });
       const [{ n }] = await f.t.fresh.sql`SELECT count(*)::int AS n FROM qcloud_deliveries`;
       expect(n).toBe(0);
       expect((await api.call('GET', '/webhooks')).body.data.stats.total).toBe(0);

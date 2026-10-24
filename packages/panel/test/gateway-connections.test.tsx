@@ -20,20 +20,17 @@ describe('Connections screen', () => {
     serveGateway([
       route({ id: 'a' }),
       route({ id: 'b', url: 'https://receiver.test/other' }),
-      route({ id: 'c', queue: null, url: 'https://receiver.test/all' }),
+      route({ id: 'c', source: null, url: 'https://receiver.test/all' }),
     ]);
     const view = at(HOME, createElement(Connections));
     await settle(20);
     const sources = [...view.host.querySelectorAll('section[aria-label]')].map((el) =>
       el.getAttribute('aria-label')
     );
-    expect(sources).toEqual(['Qelay jobs: emails', 'Qelay jobs: all queues']);
+    expect(sources).toEqual(['Source: src_1', 'No source']);
     // The page title is the h1, so a source is level 2: a level 3 straight after it skips a heading level.
     const headings = [...view.host.querySelectorAll('[role="heading"][aria-level="2"]')];
-    expect(headings.map((h) => h.textContent)).toEqual([
-      'Qelay jobs: emailsSource',
-      'Qelay jobs: all queuesSource',
-    ]);
+    expect(headings.map((h) => h.textContent)).toEqual(['Source: src_1Source', 'No sourceSource']);
     view.unmount();
   });
 

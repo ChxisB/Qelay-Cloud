@@ -95,7 +95,9 @@ interface CandidateRow {
  * Never-rung jobs come first: they have no bell at all. The queues are listed by hopping through
  * the index one queue at a time, so a table with many queues and few candidates costs a probe per
  * queue, and each queue's scan stops at its cap. A paused queue is skipped: its bells would be
- * spent on empty claims, and `resume` clears them so the tick rings the backlog afterwards.
+ * spent on empty claims, and `resume` clears them so the tick rings the backlog afterwards. So is a queue
+ * outside its run window (DESIGN.md D17), for the same reason; the bells its jobs got are old when the window
+ * opens, so the re-ring finds them on the first tick after.
  */
 export async function dueForRing(ctx: StoreContext, query?: RingQuery): Promise<Ring[]> {
   const { reRingAfterMs, graceMs, perQueueCap, staleCap, windowMs } = resolveRingQuery(ctx, query);
@@ -127,7 +129,9 @@ export async function dueForRing(ctx: StoreContext, query?: RingQuery): Promise<
       ) candidate
       WHERE queues.queue IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM qcloud_queue_state state
-                        WHERE state.namespace = ${ns} AND state.queue = queues.queue AND state.paused)`;
+                        WHERE state.namespace = ${ns} AND state.queue = queues.queue
+                          AND (state.paused OR state.window_from IS NOT NULL
+                               AND NOT (state.window_from <= ${now} AND ${now} < state.window_until)))`;
     const stale = await sql<CandidateRow[]>`
       WITH RECURSIVE queues(queue) AS (
         (SELECT queue FROM qcloud_jobs
@@ -153,7 +157,9 @@ export async function dueForRing(ctx: StoreContext, query?: RingQuery): Promise<
       ) candidate
       WHERE queues.queue IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM qcloud_queue_state state
-                        WHERE state.namespace = ${ns} AND state.queue = queues.queue AND state.paused)`;
+                        WHERE state.namespace = ${ns} AND state.queue = queues.queue
+                          AND (state.paused OR state.window_from IS NOT NULL
+                               AND NOT (state.window_from <= ${now} AND ${now} < state.window_until)))`;
     const taken = new Map<string, number>();
     const rings: Ring[] = [];
     for (const row of [...never, ...stale]) {

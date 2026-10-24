@@ -1,4 +1,4 @@
-import type { WebhookDedupeFull } from './gatewayTypes';
+import type { WebhookBatchFull, WebhookDedupeFull, WebhookScheduleFull } from './gatewayTypes';
 export interface DbFilter {
   column: string;
   op: 'contains' | 'eq' | 'ne';
@@ -120,15 +120,14 @@ export interface CreateCronBody {
 
 export type WebhookDestination = 'http' | 'queue';
 
-/** A route: `http` needs a `url`; `queue` needs a source `queue` and a `target` queue, and no `url`. */
+/** A route: `http` needs a `url`; `queue` needs a `target` queue and no `url`. Every route reads from one inbound `source`. */
 export interface AddWebhookBody {
   destination?: WebhookDestination;
   url?: string;
   target?: string;
   /** Takes the kind and address from a saved destination: no `destination`, `url` or `target` with it. */
   destinationId?: string;
-  events: string[];
-  queue?: string;
+  source: string;
   secret?: string;
   enabled?: boolean;
   filter?: Record<string, unknown>;
@@ -137,6 +136,8 @@ export interface AddWebhookBody {
   description?: string;
   delayMs?: number;
   dedupe?: WebhookDedupeFull;
+  schedule?: WebhookScheduleFull;
+  batch?: WebhookBatchFull;
 }
 
 export type WebhookDeliveryStatus = 'pending' | 'sending' | 'delivered' | 'failed';
@@ -155,8 +156,8 @@ export interface WebhookDeliveryFull {
   id: string;
   webhookId: string;
   event: string;
-  queue: string;
-  jobId: string;
+  /** The request the delivery was made from; null for a test delivery. */
+  requestId?: string | null;
   /** The job a delivered queue route made in its target queue; null for http and until it is delivered. */
   routedJobId?: string | null;
   occurredAt: number;
@@ -215,11 +216,3 @@ export interface WebhookStatsFull {
   latency: { avgMs: number; p95Ms: number; maxMs: number } | null;
   buckets: WebhookStatsBucketFull[];
 }
-
-export const WEBHOOK_EVENTS = [
-  'job.pushed',
-  'job.started',
-  'job.completed',
-  'job.failed',
-  'job.progress',
-] as const;

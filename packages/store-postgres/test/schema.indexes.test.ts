@@ -59,18 +59,35 @@ describeDb('schema indexes', () => {
       FROM generate_series(1, 60) f, generate_series(0, 23) n`);
     // Webhooks (migration 8): 40 of them with 8,000 deliveries between them, in every status.
     await fresh.sql.unsafe(`
-      INSERT INTO qcloud_webhooks (namespace, id, url, events, created_by, created_at)
-      SELECT 'ns', 'w' || g, 'https://hooks.example.com/' || g, ARRAY['job.pushed'], 'op', g
+      INSERT INTO qcloud_webhooks (namespace, id, url, created_by, created_at)
+      SELECT 'ns', 'w' || g, 'https://hooks.example.com/' || g, 'op', g
       FROM generate_series(0, 39) g`);
     await fresh.sql.unsafe(`
       INSERT INTO qcloud_deliveries (namespace, webhook_id, event_id, event_name, queue, job_id,
                                              occurred_at, status, attempts, next_attempt_at, created_at,
                                              finished_at)
-      SELECT 'ns', 'w' || (g % 40), g, 'job.pushed', 'q', 'j' || g, g * 1000, st, 1, g * 1000, g * 1000,
+      SELECT 'ns', 'w' || (g % 40), g, 'request.received', 'q', 'j' || g, g * 1000, st, 1, g * 1000, g * 1000,
              CASE WHEN st IN ('delivered', 'failed') THEN g * 1000 END
       FROM (SELECT g, (ARRAY['pending', 'pending', 'sending', 'delivered', 'delivered', 'delivered',
                              'failed', 'pending'])[1 + g % 8] AS st
             FROM generate_series(1, 8000) g) s`);
+    // Inbound sources (migration 20): 5 of them with 10 routes and 3,000 requests between them, interleaved with
+    // another namespace's 30,000 and one quiet source, which is what makes the listings need their own indexes.
+    await fresh.sql.unsafe(`
+      INSERT INTO qcloud_sources (namespace, id, name, token_hash, created_by, created_at, updated_at)
+      SELECT 'ns', 's' || g, 'Source ' || g, 'h' || g, 'op', g, g FROM generate_series(1, 5) g`);
+    await fresh.sql.unsafe(`
+      INSERT INTO qcloud_sources (namespace, id, name, token_hash, created_by, created_at, updated_at)
+      VALUES ('other', 's1', 'Other', 'h1', 'op', 1, 1)`);
+    await fresh.sql.unsafe(`
+      INSERT INTO qcloud_webhooks (namespace, id, url, source_id, created_by, created_at)
+      SELECT 'ns', 'sr' || g, 'https://hooks.example.com/s' || g, 's' || (1 + g % 5), 'op', g
+      FROM generate_series(1, 10) g`);
+    await fresh.sql.unsafe(`
+      INSERT INTO qcloud_requests (namespace, source_id, received_at, method, status)
+      SELECT CASE WHEN g % 11 = 0 THEN 'ns' ELSE 'other' END, CASE WHEN g % 11 > 0 THEN 's1' WHEN g % 330 = 0 THEN 's5' ELSE 's' || (1 + g % 4) END,
+             g * 1000, 'POST', CASE WHEN g % 10 = 0 THEN 'rejected' ELSE 'accepted' END
+      FROM generate_series(1, 33000) g`);
     // Workflow executions (migration 9): 12,000 runs of three workflows in every state, some of them
     // children, the waiting ones with deadlines; and 3,000 archived.
     await fresh.sql.unsafe(`
@@ -105,6 +122,8 @@ describeDb('schema indexes', () => {
       'qcloud_completions',
       'qcloud_webhooks',
       'qcloud_deliveries',
+      'qcloud_sources',
+      'qcloud_requests',
       'qcloud_workflow_executions',
       'qcloud_workflow_executions_archive',
       'qcloud_workflow_definitions',

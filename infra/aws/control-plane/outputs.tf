@@ -33,7 +33,13 @@ output "role_arns" {
     api_execution     = aws_iam_role.execution["api"].arn
     panel_execution   = aws_iam_role.execution["panel"].arn
     migrate_execution = aws_iam_role.execution["migrate"].arn
+    ingest_execution  = local.ingest ? aws_iam_role.execution["ingest"].arn : null
   }
+}
+
+output "ingest_url" {
+  description = "Where senders post (a source's address is this plus /s/<token>). Null without an ingest. Point ingest.hostname at the load balancer (alb_dns_name) and have the certificate cover it."
+  value       = local.ingest ? "https://${var.ingest.hostname}" : null
 }
 
 output "migrate" {
@@ -49,8 +55,9 @@ output "migrate" {
 
 output "services" {
   value = {
-    api   = aws_ecs_service.api.name
-    panel = aws_ecs_service.panel.name
+    api    = aws_ecs_service.api.name
+    panel  = aws_ecs_service.panel.name
+    ingest = local.ingest ? aws_ecs_service.ingest[0].name : null
   }
 }
 
@@ -74,6 +81,7 @@ output "connection_budget" {
   description = "What the control plane holds, against what the data plane counted."
   value = {
     api_connections        = var.api_instances * var.api_pool_size
+    ingest_connections     = local.ingest ? var.ingest.instances * var.ingest.pool_size : 0
     budgeted_processes     = var.budgeted_control_processes
     budgeted_pool_per_each = var.budgeted_control_pool_size
   }

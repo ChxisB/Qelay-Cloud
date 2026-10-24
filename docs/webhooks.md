@@ -1,14 +1,16 @@
 # Webhooks
 
-An operator registers a URL and the job events it wants. Qelay-Cloud POSTs each matching event to it, **at least once**.
-Written for two readers: the operator who sets webhooks up, and the engineer who writes the receiver.
+Whatever is posted to an [inbound source](event-gateway.md#sources) is stored, and each route of the source can send it on to
+a URL, **at least once**. Post `{ "id": 500, "name": "chris" }` and, with no rules on the route, the receiver gets
+`{ "id": 500, "name": "chris" }` with the content type it was posted with. Written for two readers: the operator who sets
+routes up, and the engineer who writes the receiver.
 
 A webhook is the `http` destination of an [event gateway](event-gateway.md) route. This page is the reference for that
-destination: the request, the signature, retries and where a URL may point. A route can instead add a job to another
-queue (`destination: "queue"`), which has no URL, no secret and none of the checks below.
+destination: the request, the signature, retries and where a URL may point. A route can instead add a job to a queue
+(`destination: "queue"`), which has no URL, no secret and none of the checks below.
 
-What a webhook is not: a way to move job data (the body has none), an ordered stream (see
-[What is not promised](#what-is-not-promised)) or a fan-out service (see [Volume](#volume)).
+What a webhook is not: an ordered stream (see [What is not promised](#what-is-not-promised)) or a fan-out service (see
+[Volume](#volume)).
 
 ## Registering one
 
@@ -17,14 +19,13 @@ webhook leaves one audit row naming `webhook=<id>` and nothing else (no URL, no 
 
 | Field | Meaning |
 | --- | --- |
+| `source` | The id of the [inbound source](event-gateway.md#sources) whose requests the route sends. Required: a route with no source cannot be turned on |
 | `url` | `https:` only (see [Where a webhook may point](#where-a-webhook-may-point)), at most 2,048 characters, no credentials in it |
-| `events` | One or more of `job.pushed`, `job.started`, `job.completed`, `job.failed`, `job.progress` |
-| `queue` | One queue name, or none for every queue. A list of queues is not offered: register one webhook per queue |
 | `secret` | Optional, 16 to 256 characters. **Every delivery is signed** when the deployment has `QCLOUD_WEBHOOK_KEY`: with no `secret`, the service generates one (see [Rotating the secret](#rotating-the-secret)). Without the key a webhook has no secret and is sent unsigned (`signed: false`) |
-| `filter` | Optional. Only events it lets through are sent. Needs the delivery writer on (see [Filters and shapes](#filters-and-shapes)) |
-| `shape` | Optional. A template for the body. Needs the delivery writer on, as above |
-| `delayMs` | Optional, 1,000 to 3,600,000 (1 second to 1 hour). Each delivery is due this long after its event. Needs the delivery writer on (see [Delay and de-duplication](#delay-and-de-duplication)) |
-| `dedupe` | Optional. `{ windowMs, fields }`: drop repeats of an event inside a window. Needs the delivery writer on, as above |
+| `filter` | Optional. Only requests it lets through are sent (see [Filters and shapes](#filters-and-shapes)) |
+| `shape` | Optional. A template for the body. Without one the request body goes through unchanged |
+| `delayMs` | Optional, 1,000 to 3,600,000 (1 second to 1 hour). Each delivery is due this long after its request (see [Delay and de-duplication](#delay-and-de-duplication)) |
+| `dedupe` | Optional. `{ windowMs, fields }`: drop repeats of a request inside a window |
 | `name`, `description` | Optional, at most 80 and 500 characters. What the operator calls the webhook; they change nothing about delivery |
 | `destinationId` | Optional. Takes the address from a [saved destination](event-gateway.md#saved-destinations) instead of `url`; it cannot be combined with `url` |
 
@@ -35,8 +36,6 @@ shows it once; a panel form left empty gets a generated secret that the panel do
 to get one you can read). The list says only `signed` or `unsigned`. A viewer sees a webhook's address cut down to its origin (`https://host/`, `urlRedacted: true`):
 a path often carries a token.
 
-`job.progress` fires on every progress update. Subscribe to it only on a queue where updates are rare.
-
 ## What a delivery looks like
 
 ```http
@@ -45,137 +44,170 @@ Host: receiver.example
 Content-Type: application/json
 User-Agent: qelay-cloud-webhooks/1
 X-Webhook-Id: 1842
-X-Webhook-Event: job.failed
+X-Webhook-Event: request.received
 X-Webhook-Timestamp: 1789468800123
 X-Webhook-Attempt: 1
 X-Webhook-Signature: v1=5c1d...e0
 
-{"id":"1842","event":"job.failed","timestamp":1789468799950,"queue":"emails","jobId":"01J...","state":"failed","error":"smtp 550"}
+{"id":500,"name":"chris"}
 ```
 
 | Header | Meaning |
 | --- | --- |
 | `X-Webhook-Id` | The delivery's id. **The same on every attempt**: deduplicate on it |
-| `X-Webhook-Event` | The event name. `webhook.test` for "Send test event" |
+| `X-Webhook-Event` | `request.received` for a request. `webhook.test` for "Send test event". `webhook.batch` for a [batch](#schedule-and-batch), whose `X-Webhook-Id` is the batch's id |
 | `X-Webhook-Timestamp` | When this attempt was made, epoch milliseconds. Part of the signed text |
 | `X-Webhook-Attempt` | 1 for the first attempt, then 2, 3 and so on. Keeps rising across a manual retry |
 | `X-Webhook-Signature` | `v1=<hex>`, only when the webhook has a secret |
-| `X-Webhook-Schema` | `1`, on a delivery with the default body described below. Absent when the webhook has a `shape`: the body is then the webhook's own and has no schema to number |
+| `X-Webhook-Schema` | `1`, on a test event only (Qelay's own small document). A request's body is the sender's own or the route's `shape`, and has no schema to number |
 
-The body is JSON: `id`, `event`, `timestamp` (when the event happened), `queue`, `jobId`, and, when the journal still has
-them, `state`, `error` (the failure text) and `progress`. **It carries no job data and no return value**: a receiver
-that needs them asks the Control API with the job id.
-
-A webhook with a `shape` gets the body its template makes instead (next section).
+**The body is what was posted**, byte for byte, with the request's `Content-Type` (`application/octet-stream` when it had none
+or one that is not printable ASCII). Nothing is added and nothing is removed, and the signature covers exactly those bytes.
+A route with a `shape` sends the JSON its template makes instead (next section). The headers and query string of the
+request are not forwarded; a `shape` can copy the ones a receiver needs.
 
 A test event (`POST /webhooks/{id}/test`, answered 202) is a delivery like any other, with the event `webhook.test` and
-`queue` and `jobId` both `webhook-test`. It goes to that webhook whatever events it listens for, and it follows the
-same retry schedule.
+the body `{"id":"...","event":"webhook.test","timestamp":...}`. It goes to that route whatever its source holds, and it
+follows the same retry schedule.
 
 ## Filters and shapes
 
-A webhook can send **fewer events** (a `filter`) and **a body of its own** (a `shape`). Both are plain JSON data that the
-service evaluates itself: no code runs, no address is fetched, and **neither can read a job's `data` or result**, which
-the event journal does not carry. A field a filter or shape names is one of the event's seven:
-`event`, `queue`, `jobId`, `state`, `error`, `progress`, `occurredAt`.
+A webhook can send **fewer requests** (a `filter`) and **a body of its own** (a `shape`). Both are plain JSON data that the
+service evaluates itself: no code runs and no address is fetched. They see the request as a **document**,
+`{ method, headers, query, body }`, and name a value by a dotted **path**:
 
-**They need the delivery writer.** By default a trigger in the job's transaction makes the deliveries and cannot apply
-either. Switch the namespace to the writer, which makes them from the event journal a moment after the commit:
+| Path | Holds |
+| --- | --- |
+| `method` | `POST`, `PUT`, `PATCH` or `DELETE` |
+| `headers.<name>` | A request header, its name in lower case (`headers.x-github-event`). The credential headers (`authorization`, `cookie`, `proxy-authorization`, `set-cookie` and the source's own verification header) read `[redacted]` |
+| `query.<name>` | A query-string parameter |
+| `body.<path>` | A field of the JSON body (`body.customer.id`, and `body.items.0.sku` for an array). `body` exists only when the request was JSON: any other body is not addressable and passes through whole |
 
-```bash
-qcloud-tick webhook-writer on      # from the journal's end now; events before it are not delivered
-qcloud-tick webhook-writer status  # {"mode":"writer"|"trigger"|"stopping","commitSeq":...,"eventId":...}
-qcloud-tick webhook-writer off     # back to the trigger; refused while a webhook has a filter, shape, delay or dedupe
-```
+A path has at most 8 segments of letters, digits, `-` and `_`, up to 64 characters each. A key with a dot or a space
+cannot be named.
 
-All three are safe to repeat and **lose no event in either direction**: on, the trigger stops for that namespace and the
-writer starts at the journal's end (an overlap is deduplicated by the delivery's unique key); off, the trigger resumes
-first, the writer catches up, and the last step waits for every job transaction that skipped its deliveries to commit
-before it removes the writer's cursor. The tick's sender step and `qcloud-tick send` both do the writing (one pass per beat; a second writer finds
-the cursor taken and does nothing), so with `QCLOUD_WEBHOOK_BATCH=0` and no `send` process nothing is written. Creating or changing a webhook to have a filter, shape, delay or de-duplication while the writer is off is refused: `400 unsupported_option` for
-`writer`.
-
-What the writer changes for a receiver: deliveries are made **a few seconds after** the job's commit, not in it; a job
-and its deliveries are no longer atomic. The writer keeps its cursor in the same transaction as the rows it makes, so a
-crash repeats a pass and duplicates nothing.
+Every request meets a route's rules at the moment it is stored, in this order: **pause mode, filter, de-duplication,
+shape, delay**, then the sender's rate limit and retries. A request a rule drops makes no delivery for that route.
 
 ### Filter
 
 An object whose terms must **all** hold:
 
 ```json
-{ "queue": { "$startsWith": "billing" }, "error": { "$exist": true }, "progress": { "$gte": 50 } }
+{ "headers.x-event": { "$startsWith": "invoice" }, "body.email": { "$exist": true }, "body.amount": { "$gte": 50 } }
 ```
 
 | Term | Meaning |
 | --- | --- |
-| `"<field>": "x"` or `5` | equals (same as `$eq`) |
-| `"<field>": { ... }` | operators: `$eq`, `$in` (a list), `$exist` (true or false), `$startsWith` (text fields), `$gt`, `$gte`, `$lt`, `$lte` (numbers: `progress`, `occurredAt`) |
+| `"<path>": "x"` or `5` | equals (same as `$eq`) |
+| `"<path>": { ... }` | operators: `$eq`, `$in` (a list), `$exist` (true or false), `$startsWith` (text), `$gt`, `$gte`, `$lt`, `$lte` (numbers) |
 | `$and`, `$or` | a list of filters |
 | `$not` | one filter |
 
-A field the event has no value for (an `error` on a pushed event) matches only `$exist: false`. At most 50 terms, 4
-levels deep, 20 values per list, 256 characters per text. A filter is a refinement of `events` and `queue`, never a
-widening of them.
+A path the request has no value for matches only `$exist: false`, and a value of another type than the term's does not
+match. At most 50 terms, 4 levels deep, 20 values per list, 256 characters per text.
 
 ### Shape
 
-An object that becomes the body. `{ "$": "<field>" }` is replaced by the event's field, with `"default": <value>` for
-when it has none (without one the key is dropped, and an array entry becomes `null`); everything else is copied:
+An object that becomes the body. `{ "$": "<path>" }` is replaced by the request's value at that path, with
+`"default": <value>` for when it has none (without one the key is dropped, and an array entry becomes `null`);
+everything else is copied:
 
 ```json
-{ "text": "Job failed", "job": { "queue": { "$": "queue" }, "id": { "$": "jobId" } }, "why": { "$": "error", "default": "unknown" } }
+{ "text": "New order", "order": { "id": { "$": "body.id" }, "kind": { "$": "headers.x-event" } }, "who": { "$": "body.name", "default": "unknown" } }
 ```
 
 - Keys that start with `$` are reserved. At most 100 values, 6 levels deep, 8 KiB for the template.
-- A text taken from the event is cut to 512 characters.
+- **A shape means JSON.** The body it makes is JSON, sent as `application/json`, whatever the request was.
 - **Keys come out shortest first, then alphabetically**, whatever order the template had them in (the order Postgres
   `jsonb` keeps). Receivers should not depend on key order.
-- The body is **made once, when the delivery is written, and stored**: every attempt sends and signs the same bytes. A
+- The body is **made once, when the request is stored, and kept**: every attempt sends and signs the same bytes. A
   body past 64 KiB is not sent: the delivery is recorded as `failed` with `shaped body is larger than 65536 bytes`, so it
   shows in the history, and a retry of it is refused again.
 - The delivery's id is not a field (the row does not exist yet): it is in the `X-Webhook-Id` header, as always.
 
 ### Delay and de-duplication
 
-Two more rules of the writer, with the same needs and the same limits as a filter and a shape. An event meets a webhook's
-rules in this order: **filter, de-duplication, shape, delay**, then the sender's rate limit and retries.
-
-- **`delayMs`** makes each delivery as usual, but not due until `delayMs` after the event (1 second to 1 hour). A delayed
+- **`delayMs`** makes each delivery as usual, but not due until `delayMs` after the request (1 second to 1 hour). A delayed
   delivery is waiting like any other: it expires after 24 hours of being due and is not sent while the webhook is off.
-- **`dedupe`** is `{ windowMs, fields }`. `windowMs` is 1 second to 24 hours; `fields` is at least one of `event`, `queue`,
-  `jobId`, `state` and `error`. Of the events the webhook accepts, the **first** with a given value of those fields is
-  sent, and later ones with the same values inside the window are **dropped, not recorded** (there is no delivery row to
-  retry). The window starts at the first event and a repeat does not extend it. The writer keeps a hash of the values
-  (never the values) in `qcloud_webhook_dedupe`, in its own transaction, and the tick prunes it once a window has ended.
-  This does not make a receiver idempotent: a retry of one delivery is still the same delivery, and a receiver dedupes on
-  `X-Webhook-Id` as before.
+- **`dedupe`** is `{ windowMs, fields }`. `windowMs` is 1 second to 24 hours; `fields` is one to five paths of the
+  document (`body.id`). Of the requests the route accepts, the **first** with a given value of those paths is sent, and
+  later ones with the same values inside the window are **dropped, not recorded** (there is no delivery row to retry).
+  The window starts at the first request and a repeat does not extend it. The store keeps a hash of the values (never
+  the values) in `qcloud_webhook_dedupe`, and the tick prunes it once a window has ended. The window is opened by one
+  atomic upsert, so requests that arrive together on several ingest processes still send once. This does not make a
+  receiver idempotent: a retry of one delivery is still the same delivery, and a receiver dedupes on `X-Webhook-Id` as
+  before.
+
+### Schedule and batch
+
+Two settings on a route (`POST /webhooks`, `PATCH /webhooks/{id}`), both off by default and both checked when the route is saved.
+
+- **`schedule`** is `{ cron, timezone }`: a cron expression of five or six fields (or a shortcut such as `@daily`) and an IANA
+  zone (`UTC` when left out). Events are **held until the next fire**, then sent. A delivery's due time is the first fire at or
+  after the request plus the route's `delayMs`, so a night's events wait for midnight and go together. A schedule that does not
+  parse, never fires, or fires less often than every 31 days is refused (`400 unsupported_option` naming `schedule`). A read of
+  the route returns `nextSendAt`, the next fire in epoch milliseconds. Held events are stored like any other delivery, so a
+  route that holds a day's worth holds a day's worth of rows; they count against [retention](#configuration) and against the
+  24-hour expiry below.
+- **`batch`** is `{ maxEvents, maxBytes }` (1 to 500 events, 1,024 to 1,048,576 bytes; 100 and 262,144 when you leave them out):
+  the due events of the route go out as **one signed request**. It is for `http` routes only. Without `batch` every event is its
+  own request, as before.
+
+A batch is a JSON envelope. The events keep the order they were taken in; a JSON body is nested as JSON, other text as a string,
+bytes that are not UTF-8 as `{ "base64": "..." }`, and a request with no body as `null`.
+
+```json
+{
+  "batchId": "9f2c...e1",
+  "count": 2,
+  "events": [
+    { "id": "1842", "receivedAt": 1789468800123, "body": { "id": 500, "name": "chris" } },
+    { "id": "1843", "receivedAt": 1789468800456, "body": "plain text" }
+  ]
+}
+```
+
+The request is signed like any other, over the envelope, with `X-Webhook-Event: webhook.batch`. `X-Webhook-Id` is the
+**`batchId`**, a hash of the members' ids, so the same members give the same id on a retry and a receiver can drop a repeat;
+`X-Webhook-Attempt` is the highest attempt any member has used. Each `id` in `events` is that event's own delivery id.
+
+- **All or nothing.** A `2xx` marks every event of the batch delivered; anything else fails them all, and they retry **together**
+  at one time on the route's normal schedule. A receiver that wants to accept some must still answer `2xx` and keep the rest.
+- **The limit is per request, not per event.** A batch stops at `maxEvents` or at `maxBytes`, whichever comes first, and the
+  first event always goes, so an event larger than `maxBytes` is sent alone. Events past the limit stay due and go in the next
+  batch.
+- **One batch per route per pass.** The sender claims one batch for each batch route in a pass, and counts it as **one**
+  attempt toward the pass limit and the route's 60 a minute. A backlog of 250 events at `maxEvents` 100 therefore takes three
+  passes. On a scheduler-only deployment that is three minutes; `qcloud-tick send` as its own process drains it in seconds
+  ([where the work happens](#where-the-work-happens), [production settings](production.md#scheduled-and-batched-sends)).
+- **A shaped body that cannot be made fails alone** and is left out of the envelope; the others go.
+- The history of each event names its `batchId`, and a delivery sent alone has none. Streak counting and auto-pause still count
+  each event, so a receiver that refuses a batch of 100 adds 100 to the failure streak.
 
 ### Changing one
 
-`PATCH /webhooks/{id}` (operator) changes the `name`, `description`, `events`, `filter`, `shape`, `delayMs` and `dedupe`.
-A key that is absent is left alone and `null` clears a name, description, filter, shape, delay or de-duplication; `events`
-cannot be empty, and an empty body is `400`. The same checks as at creation apply (a rule needs the writer on:
-`400 unsupported_option`). A change applies to events **from then on**: deliveries already made keep the body they were made
-with. The source queue, the address and the secret are not editable here: add a new webhook and delete the old one, edit
-the saved destination it came from, or [rotate the secret](#rotating-the-secret). The audit row holds the webhook's id and
-no value. The panel's Settings tab is this call.
+`PATCH /webhooks/{id}` (operator) changes the `name`, `description`, `source`, `filter`, `shape`, `delayMs`, `dedupe`, `schedule` and `batch`.
+A key that is absent is left alone and `null` clears a name, description, filter, shape, delay, de-duplication, schedule or batch; `source`
+cannot be cleared, and an empty body is `400`. The same checks as at creation apply. A change applies to requests **from
+then on**: deliveries already made keep the body they were made with. The address and the secret are not editable here:
+add a new webhook and delete the old one, edit the saved destination it came from, or [rotate the
+secret](#rotating-the-secret). The audit row holds the webhook's id and no value. The panel's Settings tab is this call.
 
 ### Trying one before saving it
 
-`POST /webhooks/preview` (operator) takes `{ filter?, shape?, event: { event, queue, jobId, occurredAt?, state?, error?,
-progress? } }` and answers `{ matches, body, error }`: whether the filter lets that event through, and the bytes the
-shape would send. Nothing is saved or sent. A filter or shape outside the grammar is `400 unsupported_option` naming
-which, and the first fault.
+`POST /webhooks/preview` (operator) takes `{ filter?, shape?, request: { method?, headers?, query?, body? } }` and answers
+`{ preview: { matches, body, error } }`: whether the filter lets that request through, and the bytes the shape would send.
+Nothing is saved or sent. A filter or shape outside the grammar is `400 unsupported_option` naming which, and the first
+fault.
 
 ### What a filter and shape do not do
 
-- **A gap loses events.** If the journal's retention (see [limits.md](limits.md)) removes events before the writer reads
-  them, those events make no deliveries; the writer reports it as the gauge `webhooks.writer_gaps` (1). Run a sender
-  process so the writer is never hours behind.
-- **A webhook sees only events after it was enabled.** Enabling a webhook that was disabled does not replay what happened
-  while it was off; a webhook that was **paused** (held) does send what it collected ([below](#pausing-a-webhook-hold-or-ignore)).
-- **Job data is not available** to a filter or shape, today.
+- **They cannot read a form body.** A request that is not JSON is stored whole and sent whole when the route has no shape;
+  there is no `body.<path>` for it.
+- **A route sees only requests that arrive while it is on.** Turning on a route that was disabled does not replay what was
+  posted while it was off; a route that was **paused** (held) does send what it collected
+  ([below](#pausing-a-webhook-hold-or-ignore)). A stored request can be replayed to its source's routes (`POST /requests/{id}/replay`).
 
 ## Verifying a signature
 
@@ -290,15 +322,13 @@ can be changed without a failed delivery; rotating again within the day drops th
 
 ## What is not promised
 
-- **No ordering.** Events are delivered in the order they became due, best effort. Two events of one job can arrive
-  swapped (the first was retried), and attempts of different webhooks are interleaved. The body's `timestamp` says when
-  each happened; `state` is the job's state after that event, not now.
-- **No delivery for a webhook that did not exist yet.** A webhook sees events committed after it was registered.
-- **No job data**, as above.
+- **No ordering.** Requests are delivered in the order they became due, best effort. Two requests can arrive swapped (the
+  first was retried), and attempts of different webhooks are interleaved.
+- **No delivery for a route that did not exist yet.** A route sees requests stored after it was registered.
 - **A late outcome after a lease lapse is dropped**, so a delivery can be sent twice (above) but is never recorded as
   both delivered and failed.
 - **Failures are not paged.** A webhook whose receiver is down accrues failed deliveries and, after 20 in a row, is paused
-  (below). Nothing is sent to you: the webhook's `alertLevel` and `disabledReason`, the `webhook_failing` and
+  ([above](#when-a-receiver-keeps-failing)). Nothing is sent to you: the webhook's `alertLevel` and `disabledReason`, the `webhook_failing` and
   `webhook_paused` warnings on `GET /deployment` and the `webhooks.paused` gauge are where to look, and the panel shows
   the failure count and, in the delivery history, the last error and the first bytes of the receiver's answer.
 
@@ -361,13 +391,10 @@ variable and never repeating its value.
 
 ## Where the work happens
 
-- **The database.** A trigger on the job-event journal inserts one delivery row per enabled webhook that matches the
-  event, **in the same transaction** as the job's own change, so a job and its deliveries are committed together or not
-  at all (unless the namespace has the [delivery writer](#filters-and-shapes) on, which makes the rows from the journal a
-  moment later instead). A webhook that did not exist yet gets nothing. The trigger costs the job path about **1.1x** on claim and
-  complete and **1.6x** on enqueue with nine delivery rows per job, 8 claimers and 2,000 jobs
-  (`packages/store-postgres/test/webhook.cost.test.ts`, PostgreSQL 18.6, one machine). A queue no webhook watches pays
-  for the trigger's lookup only and inserts nothing.
+- **The database.** The request is stored and **its deliveries are made in the same transaction**: one row per enabled
+  route of the source that the filter, the de-duplication and the pause mode let through. A request that is stored has
+  all its deliveries or none. A route that did not exist yet gets nothing, and the ingest never calls a receiver: the
+  sender below does. There is no journal to read and no cursor to keep, so nothing falls behind.
 - **The tick.** After the store's own work and ringing, the tick runs a **sender step**: it claims due deliveries
   (`FOR NO KEY UPDATE SKIP LOCKED` on the webhook rows, so any number of ticks can run at once and **never send the same
   attempt twice**), sends them, and records each outcome. The claim is round-robin across webhooks, so a webhook with a
@@ -393,17 +420,17 @@ variable and never repeating its value.
 
 ## Volume
 
-The sender is a tick step sized for **operator-scale** volume: tens of events a minute across a handful of webhooks. On
+The sender is a tick step sized for **operator-scale** volume: tens of requests a minute across a handful of webhooks. On
 a scheduler-only deployment the tick runs once a minute, so a delivery is sent up to a minute late (see
 [limits.md](limits.md) section 1); an always-on worker with the in-process tick sends within its interval.
 
-- A sustained event rate above what the sender sends (50 a pass by default, 60 a minute per webhook) grows the backlog
-  until the 24-hour expiry fails it. Raise `QCLOUD_WEBHOOK_BATCH` and `_RATE_PER_MINUTE`, or narrow the subscription.
+- A sustained request rate above what the sender sends (50 a pass by default, 60 a minute per webhook) grows the backlog
+  until the 24-hour expiry fails it. Raise `QCLOUD_WEBHOOK_BATCH` and `_RATE_PER_MINUTE`, or add a `filter` to the route.
 - **`qcloud-tick send` raises the ceiling, not the per-webhook rate.** Deliveries are no longer sent in chunks inside a
   pass, so with `QCLOUD_WEBHOOK_CONCURRENCY` raised and `_RATE_PER_MINUTE` raised to match, thousands a minute across many
   webhooks is the design point. The rate limit is still per webhook (60 a minute by default): one webhook with a deep
   backlog is slow on purpose. Run more than one sender for availability, not for the rate. These are design figures; no
   receiver at that rate has been measured.
-- **Fan-out or volume belongs in a delivery queue of your own**: a worker that consumes a job's completion and calls the
-  receiver, on the SDK, with its own retry, concurrency and scaling. A webhook is the right tool for "tell the chat
-  channel a job failed", not for "notify ten thousand customers".
+- **Fan-out or volume belongs in a delivery queue of your own**: a `queue` route that adds a job per request, and a worker
+  that calls the receivers, on the SDK, with its own retry, concurrency and scaling. A webhook is the right tool for "tell
+  the chat channel a payment arrived", not for "notify ten thousand customers".

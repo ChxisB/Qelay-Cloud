@@ -20,7 +20,7 @@ Control API and the panel in front of them, and run the [`orders` example](../ex
 - A GCP project with billing, and permission to create networks, Cloud SQL, Pub/Sub, Cloud Run, Cloud Scheduler, Secret
   Manager, service accounts and alert policies.
 - Terraform 1.5 or later and `gcloud`, signed in (`gcloud auth application-default login`).
-- Docker, to build the two images this repository ships (the Control API and the panel). The worker image is yours:
+- Docker, to build the images this repository ships (the Control API and the panel, and the ingest if you want inbound sources). The worker image is yours:
   it is your processor code and nothing in this repository builds it.
 - A bucket for Terraform state, and an OpenID Connect identity provider that publishes a JWKS and issues JWT access
   tokens (RS256 or ES256), for the panel's sign-in. The panel is a public client (authorization code with PKCE).
@@ -147,5 +147,6 @@ terraform -chdir=infra/gcp/control-plane destroy -var-file=my.tfvars
 ## Where to go next
 
 - [Operations](operations.md): connection budget, the tick, upgrades, rolling back.
+- [Production settings](production.md): the tick, retries, run windows, batches and retention to start with.
 - [Deployment runbook](runbooks/deploy-gcp.md): environment variables, timeouts, rotating the database secret.
 - [Quickstart: AWS](quickstart-aws.md): the same thing on SQS.

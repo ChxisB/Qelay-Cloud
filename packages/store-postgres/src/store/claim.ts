@@ -7,7 +7,7 @@ import { commitGroupClaims, ensureGroupStates, refreshGroupRateWindows } from '.
 import { claimLeaseUntil, requestedLeaseMs } from './leaseRules';
 import { identifier } from './prepare';
 import type { Envelope } from './prepare';
-import { countActive, lockQueueState, refreshRateWindow } from './queueState';
+import { countActive, lockQueueState, refreshRateWindow, windowClosed } from './queueState';
 import { runTransaction } from './retry';
 
 /** Most jobs one claim takes. A larger request is clamped: a claim may always return fewer than `n`. */
@@ -70,6 +70,8 @@ async function attempt(
   const { queue, count, group } = input;
   const now = await ctx.db.time.now(tx);
   let state = await lockQueueState(tx, namespace, queue, exclusive);
+  // Outside the queue's run window nothing starts (DESIGN.md D17): two integers compared, and the jobs keep waiting.
+  if (windowClosed(state, now)) return EMPTY;
   if (!exclusive && (state.rateLimit !== null || state.concurrencyLimit !== null)) {
     return RETRY_EXCLUSIVE;
   }

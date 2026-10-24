@@ -7,6 +7,8 @@ const RULE_ICON: Record<string, string> = {
   Shape:
     'M8 3c-2 0-3 1-3 3v3c0 1-1 3-3 3 2 0 3 2 3 3v3c0 2 1 3 3 3M16 3c2 0 3 1 3 3v3c0 1 1 3 3 3-2 0-3 2-3 3v3c0 2-1 3-3 3',
   Delay: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
+  Schedule: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
+  Batch: 'M12 3l9 4-9 4-9-4zM3 12l9 4 9-4M3 17l9 4 9-4',
   Retry: 'M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6',
   'Rate limit': 'M4 17a8 8 0 1 1 16 0M12 17l4-5',
   'Auto-pause': 'M10 9v6M14 9v6M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',

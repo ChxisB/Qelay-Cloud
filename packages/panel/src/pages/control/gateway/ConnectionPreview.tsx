@@ -3,15 +3,17 @@ import type { WebhookDestination } from '@/lib/bq';
 import { displayWebhookUrl } from '../webhooks/model';
 import { type ChainEnd, ConnectionChain } from './ConnectionChain';
 import type { EditFields } from './connectionPatch';
+import { SEND_NOW } from './sendRules';
 
-/** The rules the form can set, in the order an event meets them, with the box that turns each one on. */
-const SETTABLE: ReadonlyArray<[name: string, box: 'filter' | 'dedupeWindow' | 'shape' | 'delay']> =
-  [
-    ['Filter', 'filter'],
-    ['Deduplicate', 'dedupeWindow'],
-    ['Shape', 'shape'],
-    ['Delay', 'delay'],
-  ];
+/** The rules the form can set, in the order a request meets them, with what turns each one on. */
+const SETTABLE: ReadonlyArray<[name: string, on: (rules: EditFields) => boolean]> = [
+  ['Filter', (rules) => rules.filter.trim() !== ''],
+  ['Deduplicate', (rules) => rules.dedupeWindow.trim() !== ''],
+  ['Shape', (rules) => rules.shape.trim() !== ''],
+  ['Delay', (rules) => rules.delay.trim() !== ''],
+  ['Schedule', (rules) => rules.sendMode !== SEND_NOW],
+  ['Batch', (rules) => rules.batchOn],
+];
 
 /**
  * The new-connection form's side panel: the line the connection will draw, built from what is typed so far and
@@ -20,14 +22,14 @@ const SETTABLE: ReadonlyArray<[name: string, box: 'filter' | 'dedupeWindow' | 's
  * valid or not: the form says whether it is valid.
  */
 export function ConnectionPreview({
-  queue,
+  source: sourceId,
   destination,
   address,
   signed,
   rules,
 }: {
-  /** The source queue as typed; empty means every queue. */
-  queue: string;
+  /** The chosen source's name; empty before one is chosen. */
+  source: string;
   /** Null until a saved destination is picked. */
   destination: WebhookDestination | null;
   /** The address or the target queue, typed or taken from the saved destination. */
@@ -36,17 +38,12 @@ export function ConnectionPreview({
   rules: EditFields;
 }) {
   const toQueue = destination === 'queue';
-  const from = queue.trim();
+  const from = sourceId.trim();
   const to = address.trim();
-  const source: ChainEnd =
-    toQueue && from === ''
-      ? { kind: 'source', icon: ICON.queues, name: 'Choose the source queue', missing: true }
-      : {
-          kind: 'source',
-          icon: ICON.queues,
-          name: `Qelay jobs: ${from === '' ? 'all queues' : from}`,
-          sub: 'Source',
-        };
+  const start: ChainEnd =
+    from === ''
+      ? { kind: 'source', icon: ICON.queues, name: 'Choose the source', missing: true }
+      : { kind: 'source', icon: ICON.queues, name: `Source: ${from}`, sub: 'Source' };
   const end: ChainEnd =
     destination === null || to === ''
       ? {
@@ -77,13 +74,15 @@ export function ConnectionPreview({
       <p className="m-0 mt-0.5 mb-4 text-[13px] text-muted">Drawn from the form. Not saved.</p>
       <ConnectionChain
         stacked
-        source={source}
+        source={start}
         destination={end}
-        stations={SETTABLE.filter(([, box]) => rules[box].trim() !== '').map(([name]) => ({
-          name,
-          word: 'On',
-        }))}
-        state={source.missing || end.missing ? 'off' : 'active'}
+        stations={SETTABLE.filter(([name, on]) => on(rules) && !(toQueue && name === 'Batch')).map(
+          ([name]) => ({
+            name,
+            word: 'On',
+          })
+        )}
+        state={start.missing || end.missing ? 'off' : 'active'}
       />
     </aside>
   );

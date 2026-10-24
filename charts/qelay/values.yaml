@@ -76,6 +76,20 @@ panel:
   resources: {}
   env: {}
 
+# The public listener for inbound sources: a sender posts to https://<ingress.ingest.host>/s/<token>. Off by default, because it is
+# the one component meant to be reachable from the internet. It reads and writes the database only: it has its own service account
+# with no annotations (so no cloud role) and no token, and it never calls a destination. A source that verifies a signature needs
+# webhooks.keySecret. Rate limits are per pod (docs/limits.md); put a per-address limit on the ingress.
+ingest:
+  enabled: false
+  image:
+    repository: ghcr.io/chxisb/qelay-ingest
+    tag: ""
+  replicas: 2
+  poolSize: 4
+  resources: {}
+  env: {} # extra QCLOUD_INGEST_* variables
+
 ingress:
   enabled: false
   className: ""
@@ -87,6 +101,9 @@ ingress:
   api:
     host: ""
   panel:
+    host: ""
+  # The public address senders post to (ingest.enabled). Its own host, so it can sit behind a different edge (a per-address limit) than the API.
+  ingest:
     host: ""
 
 tick:

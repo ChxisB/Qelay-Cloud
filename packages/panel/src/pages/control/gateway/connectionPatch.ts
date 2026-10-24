@@ -1,11 +1,6 @@
-import {
-  type AddWebhookBody,
-  BqError,
-  WEBHOOK_DEDUPE_FIELDS,
-  WEBHOOK_EVENTS,
-  type WebhookPatchBody,
-} from '@/lib/bq';
+import { type AddWebhookBody, BqError, type WebhookPatchBody } from '@/lib/bq';
 import type { WebhookFull } from '@/lib/bqTypes';
+import { localZone, type SendField, type SendFields, sendFieldsOf, sendPatchOf } from './sendRules';
 
 // The limits of docs/webhooks.md. The server checks them too; the form says so before the round trip.
 export const NAME_MAX = 80;
@@ -14,20 +9,23 @@ export const DELAY_MAX_SECONDS = 3_600;
 export const DEDUPE_MAX_SECONDS = 86_400;
 
 /** What the edit form holds: every field as the person typed it, so a refusal can keep it. */
-export interface EditFields {
+export interface EditFields extends SendFields {
   name: string;
   description: string;
-  events: string[];
   filter: string;
   shape: string;
   /** Seconds; empty is no delay. */
   delay: string;
   /** Seconds; empty is no deduplication. */
   dedupeWindow: string;
-  dedupeFields: string[];
+  /** Document paths separated by commas, like `body.id, headers.x-event`. */
+  dedupeFields: string;
 }
 
 export type EditField = keyof EditFields;
+
+/** The fields the form draws as text boxes; the send fields have their own controls. */
+export type TextField = Exclude<EditField, SendField>;
 
 export type EditResult =
   | { ok: true; patch: WebhookPatchBody }
@@ -36,10 +34,10 @@ export type EditResult =
 /** The part of a connection the rules form reads and writes. */
 type Rules = Pick<
   WebhookFull,
-  'name' | 'description' | 'events' | 'filter' | 'shape' | 'delayMs' | 'dedupe'
+  'name' | 'description' | 'filter' | 'shape' | 'delayMs' | 'dedupe' | 'schedule' | 'batch'
 >;
 
-const DEFAULT_DEDUPE_FIELDS = ['event', 'jobId'];
+const DEFAULT_DEDUPE_FIELDS = 'body.id';
 const rule = (value: Record<string, unknown> | null) =>
   value === null ? '' : JSON.stringify(value, null, 2);
 const seconds = (ms: number | null) => (ms === null ? '' : String(ms / 1_000));
@@ -48,12 +46,12 @@ export function fieldsOf(route: Rules): EditFields {
   return {
     name: route.name ?? '',
     description: route.description ?? '',
-    events: [...route.events],
     filter: rule(route.filter),
     shape: rule(route.shape),
     delay: seconds(route.delayMs),
     dedupeWindow: seconds(route.dedupe?.windowMs ?? null),
-    dedupeFields: route.dedupe ? [...route.dedupe.fields] : DEFAULT_DEDUPE_FIELDS,
+    dedupeFields: route.dedupe ? route.dedupe.fields.join(', ') : DEFAULT_DEDUPE_FIELDS,
+    ...sendFieldsOf(route),
   };
 }
 
@@ -71,7 +69,7 @@ function objectOf(text: string): Record<string, unknown> | null | string {
   }
   return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
     ? (parsed as Record<string, unknown>)
-    : 'This must be a JSON object, like { "queue": "orders" }.';
+    : 'This must be a JSON object, like { "body.status": "failed" }.';
 }
 
 /** Seconds typed in a box, as milliseconds; null for an empty box. */
@@ -104,11 +102,6 @@ export function patchOf(route: Rules, fields: EditFields): EditResult {
   }
   if (description !== was.description) patch.description = description === '' ? null : description;
 
-  if (!sameSet(fields.events, was.events)) {
-    if (fields.events.length === 0) return refuse('events', 'Send at least one event.');
-    patch.events = WEBHOOK_EVENTS.filter((event) => fields.events.includes(event));
-  }
-
   for (const key of ['filter', 'shape'] as const) {
     if (fields[key].trim() === was[key].trim()) continue;
     const parsed = objectOf(fields[key]);
@@ -125,16 +118,23 @@ export function patchOf(route: Rules, fields: EditFields): EditResult {
   if (window === null) {
     if (route.dedupe !== null) patch.dedupe = null;
   } else {
-    if (fields.dedupeFields.length === 0) {
-      return refuse('dedupeFields', 'Pick at least one field to compare.');
-    }
-    const kept = WEBHOOK_DEDUPE_FIELDS.filter((field) => fields.dedupeFields.includes(field));
+    const kept = [
+      ...new Set(
+        fields.dedupeFields
+          .split(',')
+          .map((field) => field.trim())
+          .filter(Boolean)
+      ),
+    ];
+    if (kept.length === 0) return refuse('dedupeFields', 'Name at least one field to compare.');
     const dedupe = route.dedupe;
     if (!dedupe || dedupe.windowMs !== window || !sameSet(dedupe.fields, kept)) {
       patch.dedupe = { windowMs: window, fields: kept };
     }
   }
-  return { ok: true, patch };
+  const send = sendPatchOf(route, fields);
+  if (!send.ok) return send;
+  return { ok: true, patch: { ...patch, ...send.patch } };
 }
 
 /** The request the Save button would send, as text. Empty when there is nothing to save. */
@@ -145,24 +145,19 @@ export const previewOf = (id: string, patch: WebhookPatchBody): string =>
 const BLANK: Rules = {
   name: null,
   description: null,
-  events: [],
   filter: null,
   shape: null,
   delayMs: null,
   dedupe: null,
+  schedule: null,
+  batch: null,
 };
-export const blankFields = (): EditFields => ({
-  ...fieldsOf(BLANK),
-  events: ['job.completed', 'job.failed'],
-});
+export const blankFields = (): EditFields => ({ ...fieldsOf(BLANK), sendZone: localZone() });
 
 /** The keys of a new connection that the form fields set; only those typed are present. */
 export function rulesOf(
   fields: EditFields
 ): { ok: true; rules: Partial<AddWebhookBody> } | { ok: false; field: EditField; msg: string } {
-  // Against a blank connection the events never differ when none are chosen, so patchOf cannot refuse it.
-  if (fields.events.length === 0)
-    return { ok: false, field: 'events', msg: 'Send at least one event.' };
   const built = patchOf(BLANK, fields);
   if (!built.ok) return built;
   // Against a blank connection a patch holds only what was typed, never a null.
@@ -173,11 +168,12 @@ export function rulesOf(
 const FIELD_OF_OPTION: Record<string, EditField> = {
   name: 'name',
   description: 'description',
-  events: 'events',
   filter: 'filter',
   shape: 'shape',
   delayMs: 'delay',
   dedupe: 'dedupeWindow',
+  schedule: 'sendCron',
+  batch: 'batchEvents',
 };
 
 /** The field a refusal is about, or null when it names none. */

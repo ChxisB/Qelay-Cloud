@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { describeDb } from '../../../test/support/db';
-import { KEY, SECRET } from '../../store-postgres/test/webhookHelpers';
+import { hookSource, KEY, SECRET } from '../../store-postgres/test/webhookHelpers';
 import type { JobsApi, JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
 
-const ENDPOINT = { url: 'https://hooks.example.com/in', events: ['job.completed'] };
+const HOOK_URL = 'https://hooks.example.com/in';
 const MADE = /^whsec_[0-9a-f]{64}$/;
 
 describeDb('webhook routes: generated and rotated secrets', () => {
@@ -19,8 +19,10 @@ describeDb('webhook routes: generated and rotated secrets', () => {
     api = f.api();
   });
 
+  const endpoint = async () => ({ url: HOOK_URL, source: await hookSource(f) });
+
   test('a webhook made without a secret gets one, shown once, and is signed', async () => {
-    const made = await api.call('POST', '/webhooks', ENDPOINT);
+    const made = await api.call('POST', '/webhooks', await endpoint());
     expect(made.status).toBe(201);
     expect(made.body.data.secret).toMatch(MADE);
     expect(made.body.data.webhook).toMatchObject({
@@ -35,14 +37,14 @@ describeDb('webhook routes: generated and rotated secrets', () => {
     const read = await api.call('GET', `/webhooks/${made.body.data.webhook.id}`);
     expect(JSON.stringify(read.body)).not.toContain(made.body.data.secret);
     // A secret the caller gave is never echoed.
-    const given = await api.call('POST', '/webhooks', { ...ENDPOINT, secret: SECRET });
+    const given = await api.call('POST', '/webhooks', { ...(await endpoint()), secret: SECRET });
     expect(given.body.data).not.toHaveProperty('secret');
     expect(JSON.stringify(given.body)).not.toContain(SECRET);
   });
 
   test('rotating generates one, or takes the one given, and the old one signs on for a while', async () => {
-    const { id } = (await api.call('POST', '/webhooks', { ...ENDPOINT, secret: SECRET })).body.data
-      .webhook;
+    const { id } = (await api.call('POST', '/webhooks', { ...(await endpoint()), secret: SECRET }))
+      .body.data.webhook;
     const generated = await api.call('POST', `/webhooks/${id}/rotate-secret`);
     expect(generated.status).toBe(200);
     expect(generated.body.data.secret).toMatch(MADE);
@@ -56,7 +58,7 @@ describeDb('webhook routes: generated and rotated secrets', () => {
   });
 
   test('a missing webhook is 404, a short secret 400, and a viewer may not rotate', async () => {
-    const { id } = (await api.call('POST', '/webhooks', ENDPOINT)).body.data.webhook;
+    const { id } = (await api.call('POST', '/webhooks', await endpoint())).body.data.webhook;
     expect((await api.call('POST', '/webhooks/nope/rotate-secret')).status).toBe(404);
     const short = await api.call('POST', `/webhooks/${id}/rotate-secret`, { secret: 'short' });
     expect(short.status).toBe(400);

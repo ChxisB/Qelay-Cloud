@@ -113,19 +113,3 @@ export async function lockQueueExclusive(
   const name = advisoryLockName('queue-lifecycle', namespace, queue);
   await tx`SELECT pg_advisory_xact_lock(hashtextextended(${name}, 0))`;
 }
-
-/** Registers each queue once there is a job in it. Idempotent. */
-export async function registerQueues(
-  tx: TransactionSQL,
-  namespace: string,
-  queues: readonly string[]
-): Promise<void> {
-  const names = [...new Set(queues)].sort();
-  if (names.length === 0) return;
-  await tx`
-    INSERT INTO qcloud_queue_state (namespace, queue)
-    SELECT ${namespace}, queue
-    FROM unnest(${tx.array(names, 'TEXT')}) AS admitted(queue)
-    ON CONFLICT (namespace, queue) DO NOTHING
-  `;
-}

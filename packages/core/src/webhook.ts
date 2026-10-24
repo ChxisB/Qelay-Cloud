@@ -1,44 +1,17 @@
 import { UnsupportedOptionError } from './errors';
+import type { WEBHOOK_REQUEST_EVENT } from './inboundSource';
 
 /**
- * Webhooks: an operator registers a URL and the events it wants, and the service POSTs each matching
- * job event to it, at least once. This file is the part that needs no I/O: the names, the retry
- * schedule and the body. Signing is `webhookCrypto.ts`, the address rules `webhookUrl.ts`, the
- * tables `store.webhooks`, the sending `@qelay-cloud/maintenance`.
+ * Webhooks: an operator points a route at a destination, and the service delivers each request its source took
+ * to it, at least once (DESIGN.md D14). This file is the part that needs no I/O: the names, the retry schedule and
+ * the test body. Signing is `webhookCrypto.ts`, the address rules `webhookUrl.ts`, the tables `store.webhooks`,
+ * the sending `@qelay-cloud/maintenance`.
  */
 
-/** The events a webhook can subscribe to, named as the panel names them. */
-export const WEBHOOK_EVENTS = [
-  'job.pushed',
-  'job.started',
-  'job.completed',
-  'job.failed',
-  'job.progress',
-] as const;
-
-export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
-
-/** What "send test event" delivers. Not subscribable: a test goes to one webhook whatever it listens for. */
+/** What "send test event" delivers. A test goes to one webhook whatever its source. */
 export const WEBHOOK_TEST_EVENT = 'webhook.test';
 
-export type DeliveredEvent = WebhookEvent | typeof WEBHOOK_TEST_EVENT;
-
-/**
- * Which journal event (`qcloud_events.event_type`) is which webhook event. The other journal events
- * (retried, stalled, removed, promoted and the rest) have no webhook name and are not delivered.
- * Migration 8's trigger carries the same table as a `VALUES` list; a test keeps the two equal.
- */
-export const JOURNAL_TO_WEBHOOK: Readonly<Record<string, WebhookEvent>> = {
-  pushed: 'job.pushed',
-  pulled: 'job.started',
-  completed: 'job.completed',
-  failed: 'job.failed',
-  progress: 'job.progress',
-};
-
-export function isWebhookEvent(name: unknown): name is WebhookEvent {
-  return typeof name === 'string' && (WEBHOOK_EVENTS as readonly string[]).includes(name);
-}
+export type DeliveredEvent = typeof WEBHOOK_TEST_EVENT | typeof WEBHOOK_REQUEST_EVENT;
 
 /** How a delivery is retried. */
 export interface DeliveryPolicy {
@@ -114,34 +87,18 @@ export function webhookRetryDelayMs(
   return Math.round(delay * (0.8 + (high - 0.8) * random()));
 }
 
-/** What a delivery carries. It holds no job data (neither `data` nor a return value), only where and what. */
+/** What a test delivery carries: where and when only. A request's delivery sends the request, not this. */
 export interface DeliveryBodyInput {
   /** The delivery's id: the same on every attempt, so a receiver deduplicates on it. */
   readonly id: string;
   readonly event: DeliveredEvent;
   /** When the event happened, epoch milliseconds. */
   readonly occurredAt: number;
-  readonly queue: string;
-  readonly jobId: string;
-  /** The job's state after the event, when the journal still has the event. */
-  readonly state?: string | null;
-  readonly error?: string | null;
-  readonly progress?: number | null;
 }
 
-/** The JSON text that is POSTed and signed. Fields with no value are left out. */
+/** The JSON text that is POSTed and signed for a test event. */
 export function deliveryBody(input: DeliveryBodyInput): string {
-  const body: Record<string, unknown> = {
-    id: input.id,
-    event: input.event,
-    timestamp: input.occurredAt,
-    queue: input.queue,
-    jobId: input.jobId,
-  };
-  if (input.state != null) body.state = input.state;
-  if (input.error != null) body.error = input.error;
-  if (input.progress != null) body.progress = input.progress;
-  return JSON.stringify(body);
+  return JSON.stringify({ id: input.id, event: input.event, timestamp: input.occurredAt });
 }
 
 /** One attempt, as the delivery history records it. */
@@ -159,6 +116,8 @@ export interface AttemptRecord {
    * (`WEBHOOK_RESPONSE_CHARS` at most). Absent for a success and when capture is off.
    */
   readonly response?: string | null;
+  /** The batch request this attempt went out in (D15); absent for a delivery sent alone. */
+  readonly batchId?: string;
 }
 
 export type DeliveryStatus = 'pending' | 'sending' | 'delivered' | 'failed';
@@ -183,7 +142,7 @@ export const WEBHOOK_HEADERS = {
   schema: 'X-Webhook-Schema',
 } as const;
 
-/** The layout of the default body (`deliveryBody`). */
+/** The layout of the test body (`deliveryBody`). */
 export const WEBHOOK_SCHEMA_VERSION = '1';
 
 /** Webhooks one namespace can register. */

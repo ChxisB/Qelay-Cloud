@@ -4,6 +4,9 @@ Qelay {{ .Chart.AppVersion }} is installed as "{{ .Release.Name }}".
 {{- if .Values.panel.enabled }}
   Panel: {{ include "qelay.fullname" . }}-panel (kubectl port-forward svc/{{ include "qelay.fullname" . }}-panel 8081:80)
 {{- end }}
+{{- if .Values.ingest.enabled }}
+  Ingest: {{ include "qelay.fullname" . }}-ingest (senders post to /s/<token>; create a source in the panel for the token)
+{{- end }}
 {{- if .Values.ingress.enabled }}
   URLs:  {{ .Values.ingress.scheme }}://{{ .Values.ingress.api.host }}{{ if .Values.panel.enabled }} and {{ .Values.ingress.scheme }}://{{ .Values.ingress.panel.host }}{{ end }}
 {{- end }}

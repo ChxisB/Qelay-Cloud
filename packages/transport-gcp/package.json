@@ -10,6 +10,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "qcloud-import-pubsub": "./src/importBin.ts"
+  },
   "files": [
     "src",
     "LICENSE"
@@ -19,6 +22,7 @@
   },
   "dependencies": {
     "@google-cloud/pubsub": "6.1.0",
-    "@qelay-cloud/core": "workspace:*"
+    "@qelay-cloud/core": "workspace:*",
+    "qelay-cloud": "workspace:*"
   }
 }

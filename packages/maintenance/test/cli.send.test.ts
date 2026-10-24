@@ -15,13 +15,6 @@ describe('qcloud-tick send', () => {
     let claims = 0;
     const store = {
       webhooks: {
-        writeDeliveries: async () => ({
-          active: false,
-          events: 0,
-          written: 0,
-          more: false,
-          gap: false,
-        }),
         claimDue: async () => {
           claims += 1;
           return [];
@@ -47,43 +40,5 @@ describe('qcloud-tick send', () => {
     const { io, err } = capture();
     expect(await main(['send'], { ...ENV, QCLOUD_WEBHOOK_BATCH: '0' }, io)).toBe(2);
     expect(err.join('\n')).toContain('QCLOUD_WEBHOOK_BATCH');
-  });
-});
-
-describe('qcloud-tick webhook-writer', () => {
-  const stateStore = (calls: string[]) =>
-    ({
-      webhooks: {
-        startWriter: async () => (calls.push('on'), { mode: 'writer', commitSeq: 3, eventId: 1 }),
-        stopWriter: async () => (
-          calls.push('off'),
-          { mode: 'trigger', commitSeq: null, eventId: null }
-        ),
-        writerState: async () => (
-          calls.push('status'),
-          { mode: 'trigger', commitSeq: null, eventId: null }
-        ),
-      },
-      close: async () => {},
-    }) as unknown as PostgresStore;
-
-  test.each(['on', 'off', 'status'])(
-    '%s calls the store and prints the state as JSON',
-    async (action) => {
-      const calls: string[] = [];
-      const out: string[] = [];
-      const io = { out: (line: string) => void out.push(line), err: () => {} };
-      expect(
-        await main(['webhook-writer', action], ENV, io, { openStore: () => stateStore(calls) })
-      ).toBe(0);
-      expect(calls).toEqual([action]);
-      expect(JSON.parse(out.join(''))).toHaveProperty('mode');
-    }
-  );
-
-  test('a missing or unknown action is a usage error', async () => {
-    const { io } = capture();
-    expect(await main(['webhook-writer'], ENV, io)).toBe(2);
-    expect(await main(['webhook-writer', 'bogus'], ENV, io)).toBe(2);
   });
 });

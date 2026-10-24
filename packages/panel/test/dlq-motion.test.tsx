@@ -3,6 +3,8 @@ import { act, createElement, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { useConnectionStore } from '../src/components/dashboard/stores/connectionStore';
+import { useCapabilitiesStore } from '../src/lib/capabilities/store';
+import { FAIL_CLOSED } from '../src/lib/capabilities/types';
 import { BulkAddJobs } from '../src/pages/control/BulkAddJobs';
 import { DlqPro } from '../src/pages/control/DlqPro';
 import { answerConfirms } from './confirmSupport';
@@ -127,14 +129,14 @@ describe('DLQ board', () => {
     ).toEqual(['false', 'true']);
   });
 
-  test('draws no retry or purge button; the note and its "Why?" stay', async () => {
+  test('before the server has said what may be done, draws no retry or purge button', async () => {
+    useCapabilitiesStore.setState({ status: 'loading', caps: FAIL_CLOSED, error: null, key: null });
     const host = mount(createElement(DlqPro));
     await settle(80);
     const labels = [...host.querySelectorAll('button')].map((b) =>
       `${b.textContent} ${b.getAttribute('aria-label') ?? ''}`.trim()
     );
     expect(labels.filter((label) => /Retry|Purge/.test(label))).toEqual([]);
-    expect(host.textContent).toContain('Why?');
   });
 });
 

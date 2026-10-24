@@ -1,6 +1,11 @@
 import { ApiError } from '../errors';
 import type { Route } from '../http/router';
-import { dlqConfigBody, stallConfigBody } from '../jobs/actionSchemas';
+import {
+  dlqConfigBody,
+  queuePolicyBody,
+  runWindowBody,
+  stallConfigBody,
+} from '../jobs/actionSchemas';
 import type { JobsContext } from '../jobs/context';
 import { toDlqConfigWire, toStallConfigWire } from '../jobs/dlqModel';
 
@@ -19,9 +24,16 @@ const fixed = (setting: string, value: unknown, shown: unknown): ApiError =>
  * lease (always on, the store's lease length, no grace), so a save that sends them back as read is
  * accepted and one that changes them is 400 `unsupported_option`.
  *
- * DLQ: retention and auto-retry are shown and closed, as the panel treats them. A value equal to the
- * current one is a no-op (the form sends the whole object), a different `maxAge` or `maxEntries` is
- * 501 `dlq-retention` and `autoRetry: true` is 501 `dlq-auto-retry`.
+ * DLQ: `maxAge` and `maxEntries` are the retention and are saved. A value equal to the current one is
+ * a no-op (the form sends the whole object). Lowering `maxEntries` deletes the oldest entries at once,
+ * in the same transaction, as the tick would; the entry a live flow parent waits on is kept. Auto-retry
+ * is closed: `autoRetry: true` is 501 `dlq-auto-retry`, and the interval and count of it are fixed.
+ *
+ * Policy: the attempts, backoff and timeout a job gets when it sets none of its own, applied when the job is
+ * added (DESIGN.md D17). `PUT` replaces the whole policy and `{}` removes it.
+ *
+ * Run window: when the queue may start jobs, as a cron, a duration and a zone (D17). `PUT` replaces it and `DELETE`
+ * removes it. The answer says whether it is open now and when it next opens or closes.
  */
 export function queueConfigRoutes(ctx: JobsContext): Route[] {
   const { store } = ctx;
@@ -81,19 +93,7 @@ export function queueConfigRoutes(ctx: JobsContext): Route[] {
         if (body.autoRetry === true) {
           throw ApiError.notSupported(
             'dlq-auto-retry',
-            'DLQ entries are not retried by the service, automatically or by hand'
-          );
-        }
-        if (body.maxAge !== undefined && body.maxAge !== current.maxAge) {
-          throw ApiError.notSupported(
-            'dlq-retention',
-            'DLQ retention is not changed through the API: it can delete flow jobs without a dependency check'
-          );
-        }
-        if (body.maxEntries !== undefined && body.maxEntries !== current.maxEntries) {
-          throw ApiError.notSupported(
-            'dlq-retention',
-            'DLQ retention is not changed through the API: it can delete flow jobs without a dependency check'
+            'DLQ entries are not retried by the service on their own: retry them with POST /queues/:queue/dlq/retry'
           );
         }
         if (
@@ -105,7 +105,66 @@ export function queueConfigRoutes(ctx: JobsContext): Route[] {
         if (body.maxAutoRetries !== undefined && body.maxAutoRetries !== current.maxAutoRetries) {
           throw fixed('maxAutoRetries', body.maxAutoRetries, current.maxAutoRetries);
         }
-        return { ok: true, config: current };
+        // A value equal to the current one is left out, so a form that sends the whole object saves nothing it did not change.
+        const patch: { maxAge?: number | null; maxEntries?: number } = {};
+        if (body.maxAge !== undefined && body.maxAge !== current.maxAge) patch.maxAge = body.maxAge;
+        if (body.maxEntries !== undefined && body.maxEntries !== current.maxEntries) {
+          patch.maxEntries = body.maxEntries;
+        }
+        if (Object.keys(patch).length === 0) return { ok: true, config: current };
+        context.audit(`dlqConfig ${Object.keys(patch).join(',')}`);
+        return { ok: true, config: toDlqConfigWire(await store.queues.setDlqConfig(queue, patch)) };
+      },
+    },
+    {
+      method: 'GET',
+      path: '/queues/:queue/policy',
+      access: 'read',
+      async handle(context) {
+        return { ok: true, policy: await store.queues.policy(context.params.queue!) };
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/queues/:queue/policy',
+      access: 'write',
+      async handle(context) {
+        const queue = context.params.queue!;
+        const body = await context.json(queuePolicyBody);
+        const policy = await store.queues.setPolicy(queue, body);
+        context.audit(
+          policy === null ? 'policy removed' : `policy ${Object.keys(policy).join(',')}`
+        );
+        return { ok: true, policy };
+      },
+    },
+    {
+      method: 'GET',
+      path: '/queues/:queue/run-window',
+      access: 'read',
+      async handle(context) {
+        return { ok: true, runWindow: await store.queues.runWindow(context.params.queue!) };
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/queues/:queue/run-window',
+      access: 'write',
+      async handle(context) {
+        const body = await context.json(runWindowBody);
+        const runWindow = await store.queues.setRunWindow(context.params.queue!, body);
+        context.audit(`runWindow ${runWindow?.cron ?? ''} for ${runWindow?.durationMs ?? 0}ms`);
+        return { ok: true, runWindow };
+      },
+    },
+    {
+      method: 'DELETE',
+      path: '/queues/:queue/run-window',
+      access: 'write',
+      async handle(context) {
+        await store.queues.setRunWindow(context.params.queue!, null);
+        context.audit('runWindow removed');
+        return { ok: true, runWindow: null };
       },
     },
   ];

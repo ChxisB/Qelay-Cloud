@@ -92,7 +92,7 @@ export function Connections() {
         <EmptyState
           picture={<WebhookDrawing />}
           title="No connections yet"
-          hint="A connection sends a queue's job events to an address of yours, or adds a job to another queue."
+          hint="A connection sends the requests of an inbound source to an address of yours, or adds a job to a queue."
           action={newConnection}
         />
       ) : (

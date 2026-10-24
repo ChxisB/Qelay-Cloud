@@ -1,12 +1,12 @@
-import type { AttemptOutcome, PostgresStore } from '@qelay-cloud/store-postgres';
+import type { AttemptOutcome, ClaimedDelivery, PostgresStore } from '@qelay-cloud/store-postgres';
 import type { Telemetry } from './telemetry';
+import { sendUnit, unitsOf } from './webhookBatchSend';
 import type { WebhookSenderConfig } from './webhookConfig';
 import { Destinations } from './webhookDestinations';
 import { createSocketPool } from './webhookPool';
-import { cachedResolver, sendDelivery, systemResolver } from './webhookSend';
+import { cachedResolver, systemResolver } from './webhookSend';
 import type { WebhookSending } from './webhookSender';
 import { sendDepsOf } from './webhookSender';
-import { writeOnce } from './webhookWrite';
 
 /**
  * The webhook sender as a process of its own (`qcloud-tick send`). The tick's step claims a chunk,
@@ -68,8 +68,6 @@ export async function runWebhookLoop(
   let claimed = 0;
   // Not before this time does the loop ask the store again, after it found nothing (more) due.
   let nextLook = 0;
-  // The same for the delivery writer, which has its own errors (they do not stop the sending).
-  let nextWrite = 0;
   let wake: (() => void) | null = null;
 
   const pause = (ms: number): Promise<void> =>
@@ -86,10 +84,11 @@ export async function runWebhookLoop(
       wake = finish;
     });
 
-  const start = (delivery: Parameters<typeof sendDelivery>[0]): void => {
-    // `sendDelivery` never rejects.
-    const send: Promise<void> = sendDelivery(delivery, deps).then((outcome) => {
-      done.push(outcome);
+  // One send is one request: a batch route's deliveries are a unit (D15).
+  const start = (unit: readonly ClaimedDelivery[]): void => {
+    // `sendUnit` never rejects.
+    const send: Promise<void> = sendUnit(unit, deps).then((outcomes) => {
+      done.push(...outcomes);
       sends.delete(send);
       wake?.();
     });
@@ -120,11 +119,6 @@ export async function runWebhookLoop(
     try {
       if (done.length > 0) await flush();
       if (signal.aborted) break;
-      if (performance.now() >= nextWrite) {
-        const pass = await writeOnce(store, telemetry);
-        nextWrite = pass.more ? 0 : performance.now() + config.idleMs;
-        if (pass.written > 0) nextLook = 0;
-      }
       if (sends.size < config.concurrency && performance.now() >= nextLook) {
         const free = config.concurrency - sends.size;
         const batch = await store.webhooks.claimDue({
@@ -133,14 +127,14 @@ export async function runWebhookLoop(
           ratePerMinute: config.ratePerMinute,
         });
         claimed += batch.length;
-        for (const delivery of batch) start(delivery);
-        nextLook = batch.length < free ? performance.now() + config.idleMs : 0;
+        const units = unitsOf(batch);
+        for (const unit of units) start(unit);
+        nextLook = units.length < free ? performance.now() + config.idleMs : 0;
       }
       if (done.length === 0) {
         const full = sends.size >= config.concurrency;
-        const next = Math.min(nextLook, nextWrite);
-        if (full || next > performance.now()) {
-          await pause(full ? config.idleMs : next - performance.now());
+        if (full || nextLook > performance.now()) {
+          await pause(full ? config.idleMs : nextLook - performance.now());
         }
       }
     } catch (error) {

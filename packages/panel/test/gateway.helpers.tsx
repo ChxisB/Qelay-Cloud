@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { useConfirmStore } from '../src/components/dashboard/stores/confirmStore';
 import { useCapabilitiesStore } from '../src/lib/capabilities/store';
 import { DEMO_CAPABILITIES } from '../src/lib/capabilities/types';
+import { answerSources, source } from './gateway-sources.helpers';
 import { act, json, render } from './server-action-pages.helpers';
 
 export const route = (over: Record<string, unknown> = {}) => ({
@@ -11,8 +12,7 @@ export const route = (over: Record<string, unknown> = {}) => ({
   url: 'https://receiver.test/hook',
   target: null,
   urlRedacted: false,
-  events: ['job.failed'],
-  queue: 'emails',
+  source: 'src_1',
   signed: true,
   enabled: true,
   createdAt: 1_000,
@@ -27,15 +27,17 @@ export const route = (over: Record<string, unknown> = {}) => ({
   shape: null,
   delayMs: null,
   dedupe: null,
+  schedule: null,
+  nextSendAt: null,
+  batch: null,
   ...over,
 });
 
 export const delivery = (over: Record<string, unknown> = {}) => ({
   id: '2',
   webhookId: 'hook-1',
-  event: 'job.failed',
-  queue: 'emails',
-  jobId: 'job-9',
+  event: 'request.received',
+  requestId: '9',
   routedJobId: null,
   occurredAt: 1_000,
   status: 'failed',
@@ -141,7 +143,11 @@ export function serveGateway(
   /** The issues, changed in place by a status change; left out, the server answers as one that predates them (404). */
   issues?: Array<Record<string, unknown>>,
   /** The saved destinations, changed in place by an add, an edit or a remove; left out, the server predates them (404). */
-  destinations?: Array<Record<string, unknown>>
+  destinations?: Array<Record<string, unknown>>,
+  /** The inbound sources, changed in place; left out, one source (`src_1`). */
+  sources: Array<Record<string, unknown>> = [source()],
+  /** The stored requests; left out, none. */
+  requests: Array<Record<string, unknown>> = []
 ): Calls {
   const calls: Calls = { seen: [], bodies: [], feed: [] };
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -150,6 +156,8 @@ export function serveGateway(
     calls.seen.push(`${method} ${url.pathname}${url.search}`);
     if (init?.body !== undefined) calls.bodies.push(JSON.parse(String(init.body)));
     const path = url.pathname;
+    const inbound = answerSources(method, url, init, sources, requests);
+    if (inbound) return Promise.resolve(inbound);
     if (method === 'GET' && path === '/webhooks') {
       return Promise.resolve(json({ ok: true, data: { webhooks: routes } }));
     }

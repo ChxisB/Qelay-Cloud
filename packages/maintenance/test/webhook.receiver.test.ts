@@ -1,12 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { verifyWebhookSignature, WEBHOOK_HEADERS } from '@qelay-cloud/core';
 import { describeDb } from '../../../test/support/db';
-import { createMsgpackCodec } from '../../store-postgres/src/codec';
-import { journalRecorder } from '../../store-postgres/src/store/journal';
-import { claimOne, resetTables } from '../../store-postgres/test/finishHelpers';
+import { resetTables } from '../../store-postgres/test/finishHelpers';
 import type { TestStore } from '../../store-postgres/test/storeHelpers';
 import { openTestStore } from '../../store-postgres/test/storeHelpers';
-import { addHook, KEY, SECRET } from '../../store-postgres/test/webhookHelpers';
+import { addHook, KEY, SECRET, send } from '../../store-postgres/test/webhookHelpers';
 import type { WebhookSenderOptions } from '../src/webhookConfig';
 import { resolveWebhookConfig } from '../src/webhookConfig';
 import { RecordingTransport, ticker } from './support';
@@ -18,8 +16,8 @@ interface Received {
   readonly body: string;
 }
 
-/** Real jobs, the real trigger, the real HTTP client and a real receiver on loopback (development mode). */
-describeDb('webhooks end to end: a job to a receiver', () => {
+/** A real source, the real HTTP client and a real receiver on loopback (development mode). */
+describeDb('webhooks end to end: a request to a receiver', () => {
   let t: TestStore;
   let transport: RecordingTransport;
   let received: Received[];
@@ -32,7 +30,6 @@ describeDb('webhooks end to end: a job to a receiver', () => {
       random: () => 0.5,
       ringWindowMs: 3_600_000,
       poolSize: 6,
-      recorder: journalRecorder({ namespace: 'test', codec: createMsgpackCodec() }),
     });
     receiver = Bun.serve({
       hostname: '127.0.0.1',
@@ -68,43 +65,44 @@ describeDb('webhooks end to end: a job to a receiver', () => {
     });
   const url = (host = '127.0.0.1') => `http://${host}:${receiver.port}/hooks/in?src=qcloud`;
 
-  test('a completed job reaches the receiver, signed, with ids and no job data', async () => {
-    await addHook(t, { url: url(), events: ['job.pushed', 'job.completed'], secret: SECRET });
-    const job = await claimOne(t, { removeOnComplete: false }, 'q');
-    await t.store.complete(job.lease, 'result-that-must-not-leave');
+  test('a request reaches the receiver as it was sent, signed, with its own content type', async () => {
+    const body = '{"id":500,"name":"chris"}';
+    await addHook(t, { url: url(), secret: SECRET });
+    await send(t, body);
     const report = await tick().run();
     expect(report.ok).toBe(true);
-    // pushed and completed are subscribed; pulled is not.
-    expect(report.webhooks).toMatchObject({ claimed: 2, delivered: 2 });
-    expect(received).toHaveLength(2);
+    expect(report.webhooks).toMatchObject({ claimed: 1, delivered: 1 });
+    expect(received).toHaveLength(1);
 
-    const completed = received.find((entry) => JSON.parse(entry.body).event === 'job.completed')!;
-    expect(completed.headers.get('content-type')).toBe('application/json');
-    expect(completed.headers.get(WEBHOOK_HEADERS.attempt)).toBe('1');
-    expect(completed.headers.get(WEBHOOK_HEADERS.id)).toBe(JSON.parse(completed.body).id);
+    const [entry] = received;
+    expect(entry!.body).toBe(body);
+    expect(entry!.headers.get('content-type')).toBe('application/json');
+    expect(entry!.headers.get(WEBHOOK_HEADERS.attempt)).toBe('1');
+    expect(entry!.headers.get(WEBHOOK_HEADERS.id)).toMatch(/^\d+$/);
     expect(
       await verifyWebhookSignature({
         secret: SECRET,
-        timestamp: completed.headers.get(WEBHOOK_HEADERS.timestamp)!,
-        body: completed.body,
-        signature: completed.headers.get(WEBHOOK_HEADERS.signature)!,
+        timestamp: entry!.headers.get(WEBHOOK_HEADERS.timestamp)!,
+        body: entry!.body,
+        signature: entry!.headers.get(WEBHOOK_HEADERS.signature)!,
         now: t.clock.now(),
       })
     ).toBe(true);
-    expect(JSON.parse(completed.body)).toMatchObject({
-      event: 'job.completed',
-      queue: 'q',
-      jobId: job.id,
-    });
-    for (const entry of received) {
-      expect(entry.body).not.toContain('result-that-must-not-leave');
-      expect(entry.body).not.toContain(SECRET);
-    }
+    expect(entry!.body).not.toContain(SECRET);
+  });
+
+  test('a route with a shape sends the shaped JSON instead of the request', async () => {
+    await addHook(t, { url: url(), shape: { who: { $: 'body.name' }, id: { $: 'body.id' } } });
+    await send(t, { id: 500, name: 'chris', private: 'left behind' });
+    await tick().run();
+    expect(received).toHaveLength(1);
+    expect(received[0]!.body).toBe('{"id":500,"who":"chris"}');
+    expect(received[0]!.headers.get('content-type')).toBe('application/json');
   });
 
   test('a body altered in transit or a replayed timestamp fails verification at the receiver', async () => {
-    await addHook(t, { url: url(), events: ['job.pushed'], secret: SECRET });
-    await claimOne(t, {}, 'q');
+    await addHook(t, { url: url(), secret: SECRET });
+    await send(t, { id: 500, name: 'chris' });
     await tick().run();
     const [entry] = received;
     const check = (overrides: { body?: string; now?: number }) =>
@@ -116,13 +114,13 @@ describeDb('webhooks end to end: a job to a receiver', () => {
         now: overrides.now ?? t.clock.now(),
       });
     expect(await check({})).toBe(true);
-    expect(await check({ body: entry!.body.replace('"q"', '"x"') })).toBe(false);
+    expect(await check({ body: entry!.body.replace('chris', 'mallory') })).toBe(false);
     expect(await check({ now: t.clock.now() + 300_001 })).toBe(false);
   });
 
   test('a webhook given no secret is signed with the one generated for it', async () => {
-    const hook = await addHook(t, { url: url(), events: ['job.pushed'] });
-    await claimOne(t, {}, 'q');
+    const hook = await addHook(t, { url: url() });
+    await send(t);
     await tick().run();
     const [entry] = received;
     expect(
@@ -137,8 +135,8 @@ describeDb('webhooks end to end: a job to a receiver', () => {
   });
 
   test('a receiver that fails twice and then answers gets one delivery, retried with the same id', async () => {
-    const hook = await addHook(t, { url: url(), events: ['job.pushed'], secret: SECRET });
-    await claimOne(t, {}, 'q');
+    const hook = await addHook(t, { url: url(), secret: SECRET });
+    await send(t);
     respond = (call) => new Response('try later', { status: call < 3 ? 503 : 200 });
     const run = tick();
     await run.run();
@@ -160,8 +158,8 @@ describeDb('webhooks end to end: a job to a receiver', () => {
   });
 
   test('a receiver that redirects is a failed attempt, and the Location is never requested', async () => {
-    const hook = await addHook(t, { url: url(), events: ['job.pushed'] });
-    await claimOne(t, {}, 'q');
+    const hook = await addHook(t, { url: url() });
+    await send(t);
     let elsewhere = 0;
     const target = Bun.serve({
       hostname: '127.0.0.1',
@@ -191,8 +189,8 @@ describeDb('webhooks end to end: a job to a receiver', () => {
   });
 
   test('a receiver slower than the timeout fails the attempt in fixed words and the tick goes on', async () => {
-    const hook = await addHook(t, { url: url(), events: ['job.pushed'] });
-    await claimOne(t, {}, 'q');
+    const hook = await addHook(t, { url: url() });
+    await send(t);
     respond = async () => {
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       return new Response('late');
@@ -210,8 +208,8 @@ describeDb('webhooks end to end: a job to a receiver', () => {
   });
 
   test('localhost resolves through the system resolver and falls back across address families', async () => {
-    await addHook(t, { url: url('localhost'), events: ['job.pushed'] });
-    await claimOne(t, {}, 'q');
+    await addHook(t, { url: url('localhost') });
+    await send(t);
     const report = await tick().run();
     expect(report.webhooks.delivered).toBe(1);
     expect(received).toHaveLength(1);
@@ -219,8 +217,8 @@ describeDb('webhooks end to end: a job to a receiver', () => {
   });
 
   test('under the strict policy the same loopback webhook is never sent', async () => {
-    const hook = await addHook(t, { url: url(), events: ['job.pushed'] });
-    await claimOne(t, {}, 'q');
+    const hook = await addHook(t, { url: url() });
+    await send(t);
     const strict = ticker(t.store, transport, { intervalMs: 5_000 }, undefined, {
       config: resolveWebhookConfig(
         { baseDelayMs: 1_000 },

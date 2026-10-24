@@ -172,3 +172,4 @@ docker compose -f examples/orders/docker-compose.yml down -v
 - [Quickstart: GCP](quickstart-gcp.md) or [AWS](quickstart-aws.md): the same example on Pub/Sub or SQS.
 - [Concepts](concepts.md): why Postgres holds the state and the cloud queue only rings a bell.
 - [Operations](operations.md): connection budgets, the tick, upgrades.
+- [Production settings](production.md): the tick, retries, run windows, batches and retention to start with.

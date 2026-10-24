@@ -55,7 +55,7 @@ describe('Connection page', () => {
     const view = page(`${BASE}/hook-1`);
     await settle(20);
     const text = view.host.textContent ?? '';
-    for (const word of ['Active', 'Qelay jobs: emails', 'receiver.test', 'Signed', 'hook-1']) {
+    for (const word of ['Active', 'Source: src_1', 'receiver.test', 'Signed', 'hook-1']) {
       expect(text).toContain(word);
     }
     // The numbers are this connection's own 24 hours.

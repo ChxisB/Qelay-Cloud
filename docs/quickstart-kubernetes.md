@@ -83,4 +83,5 @@ older build runs against the newer schema ([operations](operations.md#rolling-ba
 ## Next
 
 - [Operations](operations.md): connection budget, upgrading, backups.
+- [Production settings](production.md): the tick, retries, run windows, batches and retention to start with.
 - [Quickstart: GCP](quickstart-gcp.md) or [AWS](quickstart-aws.md): Terraform in place of Kubernetes.

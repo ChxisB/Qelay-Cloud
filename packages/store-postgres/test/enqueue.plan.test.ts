@@ -24,6 +24,8 @@ const job = (index: number, extra: Partial<PreparedJob> = {}): PreparedJob => ({
   dedupReplace: false,
   groupId: null,
   groupMaxSize: null,
+  envelope: { v: 1, name: 'default', data: null, backoff: { type: 'fixed', delay: 1000 } },
+  own: { attempts: false, backoff: false, timeout: false },
   ...extra,
 });
 

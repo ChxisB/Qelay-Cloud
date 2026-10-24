@@ -1,0 +1,27 @@
+{
+  "name": "@qelay-cloud/ingest",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "qcloud-ingest": "./src/bin.ts"
+  },
+  "files": [
+    "src",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@qelay-cloud/core": "workspace:*",
+    "@qelay-cloud/store-postgres": "workspace:*"
+  }
+}

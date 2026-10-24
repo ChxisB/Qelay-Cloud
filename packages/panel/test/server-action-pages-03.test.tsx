@@ -21,12 +21,11 @@ describe('webhook mutation intent', () => {
     url: 'https://example.test/hook',
     urlRedacted: false,
     signed: false,
-    events: ['job.completed'],
+    source: 'src_1',
     enabled,
     successCount: 0,
     failureCount: 0,
     lastTriggered: null,
-    queue: null,
     createdAt: 1_000,
   });
 

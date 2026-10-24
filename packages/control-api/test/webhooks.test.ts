@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { describeDb } from '../../../test/support/db';
-import { addHook, KEY, SECRET } from '../../store-postgres/test/webhookHelpers';
+import { addHook, hookSource, KEY, SECRET } from '../../store-postgres/test/webhookHelpers';
 import type { JobsApi, JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
 
 const URL_WITH_TOKEN =
   'https://hooks.example.com/services/T000/B000/xoxb-private-path-token?k=query-token';
-const ENDPOINT = { url: URL_WITH_TOKEN, events: ['job.completed', 'job.failed'], secret: SECRET };
+const ENDPOINT = { url: URL_WITH_TOKEN, secret: SECRET };
 
-const PREVIEW = { event: { event: 'job.failed', queue: 'emails', jobId: 'j-1', error: 'boom' } };
+const PREVIEW = { request: { method: 'POST', body: { id: 500, name: 'chris' } } };
 
 describeDb('webhook routes', () => {
   let f: JobsFixture;
@@ -22,7 +22,9 @@ describeDb('webhook routes', () => {
     api = f.api();
   });
 
-  const create = (body: Record<string, unknown> = ENDPOINT) => api.call('POST', '/webhooks', body);
+  /** A route of the hooks source unless the body names another. */
+  const create = async (body: Record<string, unknown> = ENDPOINT) =>
+    api.call('POST', '/webhooks', { source: await hookSource(f), ...body });
 
   test('registering answers 201 with the webhook, signed, and not a trace of the secret', async () => {
     const answer = await create();
@@ -33,8 +35,7 @@ describeDb('webhook routes', () => {
         webhook: {
           url: URL_WITH_TOKEN,
           urlRedacted: false,
-          events: ['job.completed', 'job.failed'],
-          queue: null,
+          source: await hookSource(f),
           signed: true,
           enabled: true,
           lastTriggered: null,
@@ -50,7 +51,7 @@ describeDb('webhook routes', () => {
   });
 
   test('no read of a webhook, a test or a history ever carries the secret', async () => {
-    const { id } = (await create({ ...ENDPOINT, queue: 'emails' })).body.data.webhook;
+    const { id } = (await create()).body.data.webhook;
     const bodies = [
       await api.call('GET', '/webhooks'),
       await api.call('GET', `/webhooks/${id}`),
@@ -72,7 +73,7 @@ describeDb('webhook routes', () => {
 
   test('the list is the panel shape: webhooks and their count, oldest first', async () => {
     await create();
-    await create({ url: 'https://other.example.com/in', events: ['job.pushed'], enabled: false });
+    await create({ url: 'https://other.example.com/in', enabled: false });
     const answer = await api.call('GET', '/webhooks');
     expect(answer.status).toBe(200);
     expect(answer.body.ok).toBe(true);
@@ -124,7 +125,7 @@ describeDb('webhook routes', () => {
 
   describe('the address', () => {
     const refused = async (url: string) => {
-      const answer = await create({ url, events: ['job.pushed'] });
+      const answer = await create({ url });
       expect(answer.status, url).toBe(400);
       return answer.body.error;
     };
@@ -163,13 +164,13 @@ describeDb('webhook routes', () => {
       const dev = f.api(undefined, { webhookUrlPolicy: { allowHttp: true, allowPrivate: true } });
       const answer = await dev.call('POST', '/webhooks', {
         url: 'http://127.0.0.1:8080/hook',
-        events: ['job.pushed'],
+        source: await hookSource(f),
       });
       expect(answer.status).toBe(201);
       // Credentials in the URL are never allowed, development or not.
       const credentials = await dev.call('POST', '/webhooks', {
         url: 'http://u:p@127.0.0.1/',
-        events: ['job.pushed'],
+        source: await hookSource(f),
       });
       expect(credentials.status).toBe(400);
     });
@@ -181,31 +182,23 @@ describeDb('webhook routes', () => {
       expect(answer.status, JSON.stringify(Object.keys(body))).toBe(400);
       return answer.body.error;
     };
-    const base = { url: 'https://hooks.example.com/in', events: ['job.pushed'] };
+    const base = { url: 'https://hooks.example.com/in' };
 
-    test('needs a known event and nothing it does not know', async () => {
-      await bad({ ...base, events: [] });
-      await bad({ ...base, events: ['job.exploded'] });
-      await bad({ ...base, events: ['webhook.test'] });
-      await bad({ url: base.url });
+    test('needs a known source, an address and nothing it does not know', async () => {
+      await bad({ ...base, source: 'nope' });
+      await bad({ ...base, source: null });
+      await bad({ ...base, events: ['request.received'] });
+      await bad({ ...base, queue: 'q' });
+      await bad({});
       await bad({ ...base, extra: 1 });
       await bad({ ...base, enabled: 'yes' });
     });
 
-    test('a short secret or an unusable queue name is refused by name, without repeating it', async () => {
+    test('a short secret is refused by name, without repeating it', async () => {
       const short = await bad({ ...base, secret: 'too-short' });
       expect(short.code).toBe('unsupported_option');
       expect(JSON.stringify(short)).toContain('secret');
       expect(JSON.stringify(short)).not.toContain('too-short');
-      // A queue name is whatever the store takes anywhere else: non-empty and bounded.
-      await bad({ ...base, queue: '' });
-      await bad({ ...base, queue: 'q'.repeat(300) });
-    });
-
-    test('a duplicate event is merged', async () => {
-      const answer = await create({ ...base, events: ['job.pushed', 'job.pushed'] });
-      expect(answer.status).toBe(201);
-      expect(answer.body.data.webhook.events).toEqual(['job.pushed']);
     });
   });
 
@@ -213,11 +206,16 @@ describeDb('webhook routes', () => {
     const keyless = await openJobsFixture();
     try {
       const keyed = keyless.api();
-      const refused = await keyed.call('POST', '/webhooks', ENDPOINT);
+      const source = await hookSource(keyless);
+      const refused = await keyed.call('POST', '/webhooks', { ...ENDPOINT, source });
       expect(refused.status).toBe(409);
       expect(refused.body.error.code).toBe('webhook_key_missing');
       expect(JSON.stringify(refused.body)).not.toContain(SECRET);
-      const unsigned = await keyed.call('POST', '/webhooks', { ...ENDPOINT, secret: undefined });
+      const unsigned = await keyed.call('POST', '/webhooks', {
+        ...ENDPOINT,
+        source,
+        secret: undefined,
+      });
       expect(unsigned.status).toBe(201);
       expect(unsigned.body.data.webhook.signed).toBe(false);
     } finally {

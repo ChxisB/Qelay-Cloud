@@ -41,42 +41,30 @@ export const QUEUE_NAME_MSG = 'must be at most 256 characters using letters, num
 export const validQueue = (name: string): boolean => name.length <= 256 && QUEUE_NAME.test(name);
 
 /**
- * What the Add connection form sends. An `http` route needs a deliverable address; a `queue` route
- * needs the queue whose events it hears and the queue it adds jobs to, and has no address or secret.
+ * What the Add connection form sends. Every route reads from one inbound `source`. An `http` route needs a
+ * deliverable address; a `queue` route needs the queue it adds jobs to, and has no address or secret.
  */
 export function buildWebhookBody(
   url: string,
-  events: string[],
-  queue: string,
+  source: string,
   secret: string,
   route: { destination: WebhookDestination; target: string } = { destination: 'http', target: '' }
 ): { ok: true; body: AddWebhookBody } | { ok: false; msg: string } {
-  const normalizedQueue = queue.trim();
+  const normalizedSource = source.trim();
+  if (!normalizedSource) return { ok: false, msg: 'A source is required' };
   if (route.destination === 'queue') {
     const target = route.target.trim();
-    if (!normalizedQueue || !target || events.length === 0) {
-      return {
-        ok: false,
-        msg: 'A source queue, a target queue and at least one event are required',
-      };
-    }
-    if (!validQueue(normalizedQueue) || !validQueue(target)) {
-      return { ok: false, msg: `Queue names ${QUEUE_NAME_MSG}` };
-    }
-    return { ok: true, body: { destination: 'queue', queue: normalizedQueue, target, events } };
+    if (!target) return { ok: false, msg: 'A target queue is required' };
+    if (!validQueue(target)) return { ok: false, msg: `Queue name ${QUEUE_NAME_MSG}` };
+    return { ok: true, body: { destination: 'queue', source: normalizedSource, target } };
   }
   const normalizedUrl = url.trim();
-  if (!normalizedUrl || events.length === 0) {
-    return { ok: false, msg: 'URL and at least one event are required' };
-  }
+  if (!normalizedUrl) return { ok: false, msg: 'A URL is required' };
   if (!isDeliverableUrl(normalizedUrl)) {
     return {
       ok: false,
       msg: 'URL must be a valid http:// or https:// address without embedded credentials',
     };
-  }
-  if (normalizedQueue && !validQueue(normalizedQueue)) {
-    return { ok: false, msg: `Queue ${QUEUE_NAME_MSG}` };
   }
   const normalizedSecret = secret.trim();
   if (
@@ -92,8 +80,7 @@ export function buildWebhookBody(
     ok: true,
     body: {
       url: normalizedUrl,
-      events,
-      queue: normalizedQueue || undefined,
+      source: normalizedSource,
       secret: normalizedSecret || undefined,
     },
   };

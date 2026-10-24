@@ -16,7 +16,7 @@ const realFetch = globalThis.fetch;
 const OPERATOR: Capabilities = {
   ...DEMO_CAPABILITIES,
   transport: { name: 'pubsub', maxDeliverDelayMs: null, ordering: 'none' },
-  unsupported: ['dlq-retry'],
+  unsupported: [],
 };
 const VIEWER: Capabilities = { ...OPERATOR, principal: { role: 'viewer' } };
 
@@ -191,32 +191,33 @@ describe('the job inspector actions for a viewer', () => {
 
 describe('the DLQ page draws no control it cannot run', () => {
   const buttons = (host: HTMLElement) => labels(host).map((label) => label.trim());
-  const bulk = (host: HTMLElement) =>
-    buttons(host).filter((label) => /^(Retry|Purge) (all|this)/.test(label));
+  const retry = (host: HTMLElement) =>
+    buttons(host).filter((label) => label.startsWith('Retry up to'));
 
-  test('an operator is offered no bulk retry or purge: the server has neither', async () => {
+  test('an operator is offered the bulk retry and never a purge: the server has no bulk purge', async () => {
     serveCaps(OPERATOR);
     const page = routed(createElement(DlqPro));
     await settle();
-    expect(bulk(page.host)).toEqual([]);
+    expect(retry(page.host)).toEqual(['Retry up to 500']);
+    expect(buttons(page.host).filter((label) => label.startsWith('Purge'))).toEqual([]);
     expect(buttons(page.host)).toContain('Export this page to CSV');
     page.unmount();
   });
 
-  test('a viewer is offered neither bulk action', async () => {
+  test('a viewer is offered neither', async () => {
     serveCaps(VIEWER);
     const page = routed(createElement(DlqPro));
     await settle();
-    expect(bulk(page.host)).toEqual([]);
+    expect(retry(page.host)).toEqual([]);
     expect(buttons(page.host)).toContain('Export this page to CSV');
     page.unmount();
   });
 
-  test('where the server could retry, the page still draws no bulk button', async () => {
-    serveCaps({ ...OPERATOR, unsupported: [] });
+  test('where the server lists dlq-retry as unsupported, the page draws no retry', async () => {
+    serveCaps({ ...OPERATOR, unsupported: ['dlq-retry'] });
     const page = routed(createElement(DlqPro));
     await settle();
-    expect(bulk(page.host)).toEqual([]);
+    expect(retry(page.host)).toEqual([]);
     page.unmount();
   });
 });

@@ -72,7 +72,7 @@ export interface DlqStatsWire {
   readonly total: number;
   readonly byReason: Readonly<Record<string, number>>;
   readonly byQueue: Readonly<Record<string, number>>;
-  /** Always 0: entries are not retried by the service. */
+  /** Always 0: entries are not retried by the service, only by a caller. */
   readonly pendingRetry: number;
   /** Always 0: an entry past its `maxAge` is deleted by the tick, not kept as expired. */
   readonly expired: number;
@@ -111,7 +111,7 @@ export const toStallConfigWire = (config: QueueConfig, leaseMs: number): StallCo
 const AUTO_RETRY_INTERVAL_MS = 3_600_000;
 const MAX_AUTO_RETRIES = 3;
 
-/** `DlqConfig`. `autoRetry` is always false: retrying a DLQ entry is closed (`dlq-retry`). */
+/** `DlqConfig`. `autoRetry` is always false: an entry is retried by a caller, never by the service (`dlq-auto-retry`). */
 export interface DlqConfigWire {
   readonly autoRetry: false;
   readonly autoRetryInterval: number;

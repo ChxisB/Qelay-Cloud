@@ -1,5 +1,6 @@
 import { UnsupportedOptionError } from '@qelay-cloud/core';
 import type { LogLevel } from '@qelay-cloud/store-postgres';
+import { MAX_CLAIM } from '@qelay-cloud/store-postgres';
 import type { FlowReads } from './flowOps';
 import { groupCommitSize } from './groupCommit';
 import type { QueueOptions } from './options';
@@ -51,6 +52,25 @@ export type Processor<T = unknown, R = unknown> = (
   context: ProcessorContext
 ) => Promise<R> | R;
 
+/**
+ * What a worker with `batch` runs: up to `size` jobs at once. Return nothing to complete every job, or an array with
+ * one entry per job, in order: an `Error` entry fails that job, anything else is its result. A throw, or any other
+ * return, fails every job. Each job keeps its own lease, attempts and backoff. `context.signal` aborts when the worker
+ * closes out of its grace or every job's lease is lost; a job whose lease is lost alone is dropped from the outcome and
+ * its entry is ignored.
+ */
+export type BatchProcessor<T = unknown, R = unknown> = (
+  jobs: WorkerJob<T>[],
+  context: ProcessorContext
+) => Promise<void | readonly (R | Error)[]> | void | readonly (R | Error)[];
+
+export interface WorkerBatchOptions {
+  /** Jobs per call of the processor, 1 to 1,000. */
+  readonly size: number;
+  /** How long a batch that is not full waits for more jobs, from its first job, in ms: 0 to 60,000. Default 1,000. */
+  readonly maxWaitMs?: number;
+}
+
 /** What a `Worker` is built from. The connection options are a `Queue`'s, without `defaultJobOptions`. */
 export interface WorkerOptions extends Omit<QueueOptions, 'defaultJobOptions'> {
   /** Jobs run at once by this worker, 1 to 10,000. Default 1. */
@@ -90,7 +110,19 @@ export interface WorkerOptions extends Omit<QueueOptions, 'defaultJobOptions'> {
    * wake a worker for a whole backlog (see `ringCoverMs`). With false only a bell starts a claim.
    */
   readonly claimAgain?: boolean;
+  /**
+   * Off by default. With `{ size }` the processor is a `BatchProcessor`: it runs with up to `size` jobs at once, after at
+   * most `maxWaitMs` for a short one. `concurrency` then counts batches at once, so the worker holds up to
+   * `concurrency × size` jobs. A claimed job is leased and heartbeated while its batch fills. The completes of a
+   * batch share one transaction unless `groupComplete: false`.
+   */
+  readonly batch?: WorkerBatchOptions;
 }
+
+/** The options of a worker that runs one job per call; `batch` is what tells the two constructors apart. */
+export type JobWorkerOptions = Omit<WorkerOptions, 'batch'> & { readonly batch?: undefined };
+/** The options of a worker that runs a `BatchProcessor`. */
+export type BatchWorkerOptions = WorkerOptions & { readonly batch: WorkerBatchOptions };
 
 export interface ResolvedWorkerOptions {
   readonly concurrency: number;
@@ -104,6 +136,7 @@ export interface ResolvedWorkerOptions {
   readonly claimAgain: boolean;
   /** Jobs per `completeMany`; undefined when `groupComplete` is off. */
   readonly groupComplete: number | undefined;
+  readonly batch: Required<WorkerBatchOptions> | undefined;
 }
 
 /** What a worker's runtime takes from the resolved options. */
@@ -116,6 +149,7 @@ export const MAX_WORKER_CONCURRENCY = 10_000;
 export const MIN_LOCK_DURATION_MS = 50;
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
 export const DEFAULT_DRAINED_AFTER_MS = 250;
+export const DEFAULT_BATCH_WAIT_MS = 1_000;
 
 const REFUSED: Readonly<Record<string, string>> = {
   batchSize: 'a bell claims as many jobs as the free slots allow',
@@ -126,7 +160,6 @@ const REFUSED: Readonly<Record<string, string>> = {
   skipStalledCheck: 'recovery is the tick’s; the stall limit is per queue: queue.setStallConfig',
   maxStalledCount: 'the stall limit is per queue: queue.setStallConfig({ maxStalls })',
   limiter: 'a rate limit is the queue’s and holds across workers: queue.setGlobalRateLimit',
-  batch: 'batch processing is not supported',
   removeOnComplete: 'give it to the job: JobOptions.removeOnComplete',
   removeOnFail: 'give it to the job: JobOptions.removeOnFail',
 };
@@ -137,6 +170,25 @@ function integer(name: string, value: unknown, fallback: number, min: number, ma
     throw new UnsupportedOptionError(name, `must be an integer from ${min} to ${max}`);
   }
   return value;
+}
+
+function resolveBatch(batch: WorkerOptions['batch']): ResolvedWorkerOptions['batch'] {
+  if (batch === undefined) return undefined;
+  if (typeof batch !== 'object' || batch?.size === undefined) {
+    throw new UnsupportedOptionError('batch', 'must be { size, maxWaitMs? }');
+  }
+  for (const key of Object.keys(batch)) {
+    if (key !== 'size' && key !== 'maxWaitMs') {
+      throw new UnsupportedOptionError(
+        `batch.${key}`,
+        'is not a batch option: use size, maxWaitMs'
+      );
+    }
+  }
+  return {
+    size: integer('batch.size', batch.size, 1, 1, MAX_CLAIM),
+    maxWaitMs: integer('batch.maxWaitMs', batch.maxWaitMs, DEFAULT_BATCH_WAIT_MS, 0, 60_000),
+  };
 }
 
 /** Validates the options before anything opens; an unsupported Qelay option throws here, by name. */
@@ -165,6 +217,7 @@ export function resolveWorkerOptions(options: WorkerOptions): ResolvedWorkerOpti
       integer('group.limit.duration', group.limit.duration, 1, 1, 86_400_000);
     }
   }
+  const batch = resolveBatch(options.batch);
   return {
     concurrency: integer('concurrency', options.concurrency, 1, 1, MAX_WORKER_CONCURRENCY),
     autorun: options.autorun ?? true,
@@ -190,10 +243,14 @@ export function resolveWorkerOptions(options: WorkerOptions): ResolvedWorkerOpti
       3_600_000
     ),
     closeTransport: options.closeTransport ?? false,
+    // A batch ends all at once, so its completes share a transaction unless `groupComplete: false` says not to.
     groupComplete:
-      options.groupComplete === undefined || options.groupComplete === false
+      options.groupComplete === false
         ? undefined
-        : groupCommitSize(options.groupComplete, 'groupComplete'),
+        : options.groupComplete === undefined
+          ? batch?.size
+          : groupCommitSize(options.groupComplete, 'groupComplete'),
+    batch,
   };
 }
 

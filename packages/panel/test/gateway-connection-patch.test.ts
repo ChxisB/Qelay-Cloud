@@ -34,7 +34,7 @@ describe('the patch an edit makes', () => {
       filter: { queue: 'emails' },
       shape: { id: { $: 'jobId' } },
       delayMs: 5_000,
-      dedupe: { windowMs: 60_000, fields: ['event', 'jobId'] },
+      dedupe: { windowMs: 60_000, fields: ['body.id', 'method'] },
     };
     expect(patch(rich, {})).toEqual({ ok: true, patch: {} });
   });
@@ -68,21 +68,6 @@ describe('the patch an edit makes', () => {
     });
   });
 
-  test('events cannot be emptied, and are sent in the order the server lists them', () => {
-    expect(patch({ events: ['job.failed'] }, { events: [] })).toMatchObject({
-      ok: false,
-      field: 'events',
-    });
-    expect(
-      patch(
-        { events: ['job.failed', 'job.completed'] },
-        { events: ['job.completed', 'job.failed'] }
-      )
-    ).toEqual({ ok: true, patch: {} });
-    const sent = patch({ events: ['job.failed'] }, { events: ['job.failed', 'job.completed'] });
-    expect(sent.ok && sent.patch.events).toEqual(['job.completed', 'job.failed']);
-  });
-
   test("a filter or shape must be a JSON object; its grammar is the server's to judge", () => {
     for (const bad of ['{', '[1]', '5', 'null', '"text"']) {
       expect(patch({}, { filter: bad }), bad).toMatchObject({ ok: false, field: 'filter' });
@@ -114,11 +99,13 @@ describe('the patch an edit makes', () => {
   });
 
   test('dedupe needs a window of 1 to 86400 seconds and at least one field', () => {
-    expect(patch({}, { dedupeWindow: '3600', dedupeFields: ['jobId', 'event'] })).toEqual({
+    expect(
+      patch({}, { dedupeWindow: '3600', dedupeFields: 'body.id, ,headers.x-id, body.id' })
+    ).toEqual({
       ok: true,
-      patch: { dedupe: { windowMs: 3_600_000, fields: ['event', 'jobId'] } },
+      patch: { dedupe: { windowMs: 3_600_000, fields: ['body.id', 'headers.x-id'] } },
     });
-    expect(patch({}, { dedupeWindow: '60', dedupeFields: [] })).toMatchObject({
+    expect(patch({}, { dedupeWindow: '60', dedupeFields: ' , ' })).toMatchObject({
       ok: false,
       field: 'dedupeFields',
     });
@@ -132,12 +119,12 @@ describe('the patch an edit makes', () => {
   });
 
   test('dedupe is cleared by an empty window, left alone when unchanged, and not cleared twice', () => {
-    const has = { dedupe: { windowMs: 60_000, fields: ['event', 'jobId'] } };
+    const has = { dedupe: { windowMs: 60_000, fields: ['body.id', 'method'] } };
     expect(patch(has, { dedupeWindow: '' })).toEqual({ ok: true, patch: { dedupe: null } });
-    expect(patch(has, { dedupeFields: ['jobId', 'event'] })).toEqual({ ok: true, patch: {} });
-    expect(patch(has, { dedupeFields: ['event'] })).toEqual({
+    expect(patch(has, { dedupeFields: 'method,body.id' })).toEqual({ ok: true, patch: {} });
+    expect(patch(has, { dedupeFields: 'method' })).toEqual({
       ok: true,
-      patch: { dedupe: { windowMs: 60_000, fields: ['event'] } },
+      patch: { dedupe: { windowMs: 60_000, fields: ['method'] } },
     });
     expect(patch({}, { dedupeWindow: '' })).toEqual({ ok: true, patch: {} });
   });
@@ -160,20 +147,15 @@ describe('the preview of a patch', () => {
 });
 
 describe('the rules a new connection sends', () => {
-  test('a form nobody touched sends only the events, which start as completed and failed', () => {
-    expect(blankFields().events).toEqual(['job.completed', 'job.failed']);
-    expect(rulesOf(blankFields())).toEqual({
-      ok: true,
-      rules: { events: ['job.completed', 'job.failed'] },
-    });
+  test('a form nobody touched sends no rules', () => {
+    expect(rulesOf(blankFields())).toEqual({ ok: true, rules: {} });
   });
 
   test('only what was typed is sent, with the same units and limits as an edit', () => {
     const typed = rulesOf({
       ...blankFields(),
       name: ' Billing ',
-      events: ['job.failed'],
-      filter: '{ "queue": "emails" }',
+      filter: '{ "body.kind": "invoice" }',
       delay: '90',
       dedupeWindow: '60',
     });
@@ -181,16 +163,14 @@ describe('the rules a new connection sends', () => {
       ok: true,
       rules: {
         name: 'Billing',
-        events: ['job.failed'],
-        filter: { queue: 'emails' },
+        filter: { 'body.kind': 'invoice' },
         delayMs: 90_000,
-        dedupe: { windowMs: 60_000, fields: ['event', 'jobId'] },
+        dedupe: { windowMs: 60_000, fields: ['body.id'] },
       },
     });
   });
 
   test('a rule typed wrongly is refused with its field', () => {
-    expect(rulesOf({ ...blankFields(), events: [] })).toMatchObject({ ok: false, field: 'events' });
     expect(rulesOf({ ...blankFields(), shape: '[1]' })).toMatchObject({
       ok: false,
       field: 'shape',

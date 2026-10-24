@@ -21,7 +21,7 @@ const CLOUD: Capabilities = {
   transport: { name: 'pubsub', maxDeliverDelayMs: null, ordering: 'none' },
   features: { dlq: true, cron: true, flows: false, workflows: false, webhooks: false },
   hidden: ['serverControl', 'sqliteDatabase', 's3Backup', 'fleet', 'queueOperations'],
-  unsupported: ['job-fail', 'job-discard', 'job-retry', 'job-move-to-delayed', 'dlq-retry'],
+  unsupported: ['job-fail', 'job-discard', 'job-retry', 'job-move-to-delayed', 'dlq-auto-retry'],
   principal: { role: 'operator' },
   version: '1.0.0',
 };
@@ -55,6 +55,8 @@ describe('page gating', () => {
       '/workflows',
       '/workflows/executions',
       '/events-gateway',
+      '/events-gateway/sources',
+      '/events-gateway/requests',
       '/events-gateway/events',
       '/events-gateway/destinations',
       '/events-gateway/connections/hook-1',
@@ -105,6 +107,8 @@ describe('page gating', () => {
     const gatewayViewer = { ...gatewayOn, principal: { role: 'viewer' as const } };
     for (const path of [
       '/events-gateway',
+      '/events-gateway/sources',
+      '/events-gateway/requests',
       '/events-gateway/events',
       '/events-gateway/issues',
       '/events-gateway/destinations',
@@ -170,7 +174,8 @@ describe('roles and unsupported actions', () => {
 
   test('an action the server closes is not supported; others are', () => {
     expect(isActionSupported(CLOUD, 'job-retry')).toBe(false);
-    expect(isActionSupported(CLOUD, 'dlq-retry')).toBe(false);
+    expect(isActionSupported(CLOUD, 'dlq-auto-retry')).toBe(false);
+    expect(isActionSupported(CLOUD, 'dlq-retry')).toBe(true);
     expect(isActionSupported(CLOUD, 'job-promote')).toBe(true);
   });
 

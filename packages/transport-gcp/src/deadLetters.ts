@@ -76,6 +76,7 @@ interface SubscriberStub {
         receivedMessages?: Array<{
           ackId?: string | null;
           message?: {
+            messageId?: string | null;
             data?: Uint8Array | string | null;
             attributes?: Record<string, string> | null;
             publishTime?: { seconds?: number | string | null; nanos?: number | null } | null;

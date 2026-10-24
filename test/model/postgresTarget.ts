@@ -61,6 +61,7 @@ export const POSTGRES_COMMANDS = [
   'promote',
   'changePriority',
   'cancel',
+  'retryDlq',
   'tick',
   'recover',
   'zombie',

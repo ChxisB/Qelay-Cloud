@@ -37,7 +37,7 @@ This is release **1.0.0, not yet published** (the package is `0.0.0` until the o
 | Run it on Kubernetes | [Quickstart: Kubernetes (Helm)](docs/quickstart-kubernetes.md) |
 | Understand how it works | [Concepts](docs/concepts.md), then [Architecture](docs/architecture.md) |
 | Move an app that uses Qelay | [Moving from Qelay](docs/migration.md), then [compat.md](docs/compat.md) |
-| Operate it | [Operations](docs/operations.md), [limits](docs/limits.md), [settings](docs/reference/configuration.md) |
+| Operate it | [Operations](docs/operations.md), [production settings](docs/production.md), [limits](docs/limits.md), [settings](docs/reference/configuration.md) |
 | Change it | [CONTRIBUTING.md](CONTRIBUTING.md) and [DESIGN.md](DESIGN.md) |
 
 ## What you get

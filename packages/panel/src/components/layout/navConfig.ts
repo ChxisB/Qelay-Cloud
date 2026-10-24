@@ -23,9 +23,11 @@ export const HEALTH_TABS = [
   { to: '/usage', label: 'Usage' },
 ] as const;
 
-/** The five screens of the Event gateway item: each is its own page, switched by `GatewayTabs`. */
+/** The seven screens of the Event gateway item: each is its own page, switched by `GatewayTabs`. */
 export const GATEWAY_TABS = [
   { to: '/events-gateway', label: 'Connections' },
+  { to: '/events-gateway/sources', label: 'Sources' },
+  { to: '/events-gateway/requests', label: 'Requests' },
   { to: '/events-gateway/events', label: 'Events' },
   { to: '/events-gateway/metrics', label: 'Metrics' },
   { to: '/events-gateway/issues', label: 'Issues' },
@@ -72,7 +74,7 @@ export const NAV: NavGroupDef[] = [
   {
     section: 'Automation',
     items: [
-      // Webhooks, workflows' triggers and queue-to-queue routes are one gateway: five screens on one item.
+      // Webhooks, workflows' triggers and queue-to-queue routes are one gateway: seven screens on one item.
       {
         to: GATEWAY_TABS[0].to,
         // A connection's own page (`/connections/:id` and its tabs) is part of the item too.

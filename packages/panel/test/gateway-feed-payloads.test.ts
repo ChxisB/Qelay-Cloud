@@ -197,8 +197,7 @@ describe('fields a gateway route adds to the webhook registry', () => {
     id: 'h',
     url: 'https://receiver.test/',
     urlRedacted: false,
-    events: ['job.completed'],
-    queue: 'orders',
+    source: 'src_1',
     signed: false,
     enabled: true,
     createdAt: 1,
@@ -238,14 +237,14 @@ describe('fields a gateway route adds to the webhook registry', () => {
         name: 'Orders to billing',
         description: 'Line one\nLine two',
         delayMs: 5_000,
-        dedupe: { windowMs: 60_000, fields: ['event', 'jobId'] },
+        dedupe: { windowMs: 60_000, fields: ['body.id', 'method'] },
         destinationId: 'd1',
       })
     ).toMatchObject({
       name: 'Orders to billing',
       description: 'Line one\nLine two',
       delayMs: 5_000,
-      dedupe: { windowMs: 60_000, fields: ['event', 'jobId'] },
+      dedupe: { windowMs: 60_000, fields: ['body.id', 'method'] },
       destinationId: 'd1',
     });
   });

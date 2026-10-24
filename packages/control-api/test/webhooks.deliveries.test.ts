@@ -3,12 +3,12 @@ import { describeDb } from '../../../test/support/db';
 import {
   addHook,
   CLAIM,
-  event,
-  journal,
+  hookSource,
   KEY,
   outcome,
   POLICY,
   SECRET,
+  send,
 } from '../../store-postgres/test/webhookHelpers';
 import type { JobsApi, JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
@@ -25,8 +25,7 @@ describeDb('webhook delivery routes', () => {
     api = f.api();
   });
 
-  const hook = (events: string[] = ['job.pushed']) =>
-    addHook(f, { events: events as never, secret: SECRET });
+  const hook = () => addHook(f, { secret: SECRET });
   const deliveries = (id: string, query = '') =>
     api.call('GET', `/webhooks/${id}/deliveries${query}`);
 
@@ -40,7 +39,7 @@ describeDb('webhook delivery routes', () => {
   }
 
   test('a test event is queued, answers 202 with the delivery, and is sent by the next tick', async () => {
-    const { id } = await hook(['job.completed']);
+    const { id } = await hook();
     const answer = await api.call('POST', `/webhooks/${id}/test`);
     expect(answer.status).toBe(202);
     expect(answer.body.data.delivery).toMatchObject({
@@ -52,7 +51,7 @@ describeDb('webhook delivery routes', () => {
       lastError: null,
       history: [],
     });
-    // The webhook listens only for completions; the test goes out anyway, and nothing else does.
+    // Only the test is waiting: no request was accepted.
     const claimed = await f.store.webhooks.claimDue(CLAIM);
     expect(claimed.map((c) => c.event)).toEqual(['webhook.test']);
   });
@@ -68,21 +67,18 @@ describeDb('webhook delivery routes', () => {
 
   test('the history is newest first, pages by a cursor, and filters by status', async () => {
     const { id } = await hook();
-    await journal(
-      f.t,
-      Array.from({ length: 5 }, (_, i) => event('pushed', 'q', `j${i}`))
-    );
+    const requests: string[] = [];
+    for (let i = 0; i < 5; i++) requests.push(await send(f.t, { i }));
+    const ids = (page: { body: any }) =>
+      page.body.data.deliveries.map((d: { requestId: string }) => d.requestId);
     const first = await deliveries(id, '?limit=2');
     expect(first.status).toBe(200);
-    expect(first.body.data.deliveries.map((d: { jobId: string }) => d.jobId)).toEqual(['j4', 'j3']);
+    expect(ids(first)).toEqual([requests[4], requests[3]]);
     expect(typeof first.body.data.next).toBe('string');
     const second = await deliveries(id, `?limit=2&before=${first.body.data.next}`);
-    expect(second.body.data.deliveries.map((d: { jobId: string }) => d.jobId)).toEqual([
-      'j2',
-      'j1',
-    ]);
+    expect(ids(second)).toEqual([requests[2], requests[1]]);
     const last = await deliveries(id, `?limit=2&before=${second.body.data.next}`);
-    expect(last.body.data.deliveries.map((d: { jobId: string }) => d.jobId)).toEqual(['j0']);
+    expect(ids(last)).toEqual([requests[0]]);
     expect(last.body.data.next).toBeNull();
     expect((await deliveries(id, '?status=failed')).body.data.deliveries).toEqual([]);
     expect((await deliveries(id, '?status=pending')).body.data.deliveries).toHaveLength(5);
@@ -105,7 +101,7 @@ describeDb('webhook delivery routes', () => {
 
   test('a delivery shows its attempts, status and last error, in the sender fixed words', async () => {
     const { id } = await hook();
-    await journal(f.t, [event('pushed', 'q', 'j1')]);
+    await send(f.t);
     await failAll();
     const [delivery] = (await deliveries(id)).body.data.deliveries;
     expect(delivery).toMatchObject({
@@ -124,7 +120,7 @@ describeDb('webhook delivery routes', () => {
 
   test('retrying a failed delivery puts it back with a fresh budget; anything else is refused', async () => {
     const { id } = await hook();
-    await journal(f.t, [event('pushed', 'q', 'j1')]);
+    await send(f.t);
     await failAll();
     const [failed] = (await deliveries(id)).body.data.deliveries;
 
@@ -149,7 +145,7 @@ describeDb('webhook delivery routes', () => {
   test('every mutation is audited by webhook id and never by address or secret', async () => {
     const created = await api.call('POST', '/webhooks', {
       url: 'https://hooks.example.com/services/private-path-token',
-      events: ['job.pushed'],
+      source: await hookSource(f),
       secret: SECRET,
     });
     const { id } = created.body.data.webhook;
@@ -159,7 +155,7 @@ describeDb('webhook delivery routes', () => {
     await api.call('DELETE', `/webhooks/${id}`);
     await api.call('POST', '/webhooks', {
       url: 'http://bad.example.com/',
-      events: ['job.pushed'],
+      source: await hookSource(f),
       secret: SECRET,
     });
     await api.asViewer('DELETE', `/webhooks/${id}`);

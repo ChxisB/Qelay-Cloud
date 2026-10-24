@@ -46,7 +46,7 @@ not copied. The Control API replaces the agent.
 - **Disable what cannot be done safely.** A control the panel cannot make safe is not offered with a warning: it is disabled or
   left off the page. An action is safe only when the server can refuse it if the job changed since the page read it (a state or
   version precondition) and when it cannot duplicate a side effect of a job a worker is running. That is why cancel, discard,
-  DLQ retry, completed requeue and every transition of an active job are off in `shared/flowOperationPolicy.ts`. Enabling one
+  completed requeue and every transition of an active job are off in `shared/flowOperationPolicy.ts`. Enabling one
   means giving the API the precondition first. The gate is the one place that changes, so the single-job and bulk surfaces
   cannot disagree. The panel explains the reason only for active jobs; the other gated controls are silent about why.
 
@@ -126,6 +126,12 @@ from the "Design" canvas (16 boards): <https://claude.ai/artifact/TMMbZ97jDRzvSp
 and move, not what they do. Its board-to-page map, every numbered deviation and the wording that still needs the owner's word
 are in `.claude/.planning/motion-redesign/DESIGN-MAP.md`.
 
+On 2026-10-23 the Event gateway gained inbound sources (D14): a Sources tab, a Requests tab, and a Source picker in place of
+"Events to send" on a connection. No Claude Design canvas was made for it: the pages reuse the Destinations list, the Events
+table and the connection form, with no new token, font or route outside the gateway. The plan is
+`.claude/.planning/inbound-sources/CURRENT.md`, and the checks that ran on the pages are in
+`.claude/completions/2026-10-23-inbound-sources.md`.
+
 - **Colour lives in one file.** `src/tokens.css` holds the tokens (`--primary`, `--link`, `--ring`, `--state-*` and the
   rest), dark by default and overridden under `[data-theme='light']`; `src/index.css` imports it and maps the roles into
   Tailwind. Change a value there and every utility built on it follows. `test/design-tokens.test.ts` computes WCAG contrast for each text and surface pair, so a token that is too
@@ -192,8 +198,8 @@ OIDC are covered by unit tests with a fake client, not by the browser specs.
   `queueOperations` under `hidden` and the card is left out; with an agent address set it still works.
 - Bare version numbers from the old wording (for example "v2.9.3") remain in some comments and two Add Job hints.
   They name no product, and no test depends on them being removed.
-- The DLQ page's Retry and Purge buttons stay disabled by the upstream flow-safety copy, though the Control API
-  can purge with `confirm`.
+- The DLQ page retries failed jobs (one with its version, or up to 500 by reason) but has no purge button, though the
+  Control API can purge with `confirm`. A failed job that belongs to a flow shows "In a flow" and is not retried.
 - `VITE_QELAY_URL` and `VITE_QELAY_AGENT_URL` are build-time names. `config.json` is the way a deployment
   names the API.
 - The footer and command palette link to the qelay-control-panel repository, not to a Qelay Cloud one.

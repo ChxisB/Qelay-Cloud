@@ -2,10 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   DEFAULT_DELIVERY_POLICY,
   deliveryBody,
-  isWebhookEvent,
-  JOURNAL_TO_WEBHOOK,
   resolveDeliveryPolicy,
-  WEBHOOK_EVENTS,
   webhookAlertLevel,
   webhookRetryDelayMs,
 } from './webhook';
@@ -52,54 +49,13 @@ describe('webhook retry schedule', () => {
   });
 });
 
-describe('webhook events', () => {
-  test('every journal event with a webhook name maps to a subscribable event', () => {
-    for (const name of Object.values(JOURNAL_TO_WEBHOOK)) expect(isWebhookEvent(name)).toBe(true);
-    expect(Object.keys(JOURNAL_TO_WEBHOOK).sort()).toEqual([
-      'completed',
-      'failed',
-      'progress',
-      'pulled',
-      'pushed',
-    ]);
-    expect(WEBHOOK_EVENTS).toHaveLength(5);
-    expect(isWebhookEvent('webhook.test')).toBe(false);
-    expect(isWebhookEvent(42)).toBe(false);
-  });
-});
-
 describe('delivery body', () => {
-  test('carries where and what, and leaves out what is not known', () => {
-    const body = deliveryBody({
-      id: '17',
-      event: 'job.failed',
-      occurredAt: 1_700_000_000_000,
-      queue: 'emails',
-      jobId: 'j1',
-      state: 'failed',
-      error: 'SMTP 550',
-    });
-    expect(JSON.parse(body)).toEqual({
-      id: '17',
-      event: 'job.failed',
-      timestamp: 1_700_000_000_000,
-      queue: 'emails',
-      jobId: 'j1',
-      state: 'failed',
-      error: 'SMTP 550',
-    });
-    const bare = JSON.parse(
-      deliveryBody({ id: '1', event: 'job.pushed', occurredAt: 1, queue: 'q', jobId: 'j' })
-    );
-    expect(Object.keys(bare)).toEqual(['id', 'event', 'timestamp', 'queue', 'jobId']);
-  });
-
-  test('is stable text: the same input signs to the same bytes', () => {
-    const input = { id: '1', event: 'job.pushed', occurredAt: 5, queue: 'q', jobId: 'j' } as const;
-    expect(deliveryBody(input)).toBe(deliveryBody(input));
+  test('a test event carries its id, name and time, as stable text the signature can cover', () => {
+    const input = { id: '17', event: 'webhook.test', occurredAt: 1_700_000_000_000 } as const;
     expect(deliveryBody(input)).toBe(
-      '{"id":"1","event":"job.pushed","timestamp":5,"queue":"q","jobId":"j"}'
+      '{"id":"17","event":"webhook.test","timestamp":1700000000000}'
     );
+    expect(deliveryBody(input)).toBe(deliveryBody(input));
   });
 });
 

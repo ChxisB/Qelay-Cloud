@@ -4,7 +4,7 @@ import { describeDb } from '../../../test/support/db';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore } from './storeHelpers';
-import { addHook, CLAIM, event, journal, KEY, outcome, POLICY } from './webhookHelpers';
+import { addHook, CLAIM, KEY, outcome, POLICY, send } from './webhookHelpers';
 
 describeDb('webhooks: recording attempts', () => {
   let t: TestStore;
@@ -26,7 +26,7 @@ describeDb('webhooks: recording attempts', () => {
 
   test('a 2xx finishes the delivery, with its attempt in the history and no error', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('completed', 'q', 'j1', { state: 'completed' })]);
+    await send(t, { id: 'j1' });
     const claimed = await claimOne();
     t.clock.advance(40);
     const summary = await t.store.webhooks.record(
@@ -49,7 +49,7 @@ describeDb('webhooks: recording attempts', () => {
 
   test('a failed attempt is retried after the backoff, and fails the delivery at the attempt limit', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
 
     const first = await claimOne();
     await t.store.webhooks.record([outcome(first, { ok: false, statusCode: 503 })], POLICY);
@@ -84,7 +84,7 @@ describeDb('webhooks: recording attempts', () => {
 
   test('a receiver that fails twice and then answers gets exactly one delivery, with all three attempts recorded', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     const answers = [
       { ok: false, statusCode: 500, error: 'receiver answered 500' },
       { ok: false, statusCode: null, error: 'timed out after 10000 ms' },
@@ -109,7 +109,7 @@ describeDb('webhooks: recording attempts', () => {
 
   test('an outcome counts once: a repeat of it, or one for a delivery nobody holds, is stale', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     const claimed = await claimOne();
     const done = outcome(claimed, { ok: true });
     expect(await t.store.webhooks.record([done, done], POLICY)).toEqual({
@@ -128,7 +128,7 @@ describeDb('webhooks: recording attempts', () => {
 
   test('an outcome for a webhook that was deleted meanwhile is stale', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     const claimed = await claimOne();
     expect(await t.store.webhooks.delete(hook.id)).toBe(true);
     expect(await t.store.webhooks.record([outcome(claimed, { ok: true })], POLICY)).toMatchObject({
@@ -139,7 +139,7 @@ describeDb('webhooks: recording attempts', () => {
 
   test('an error longer than the cap is cut, and the history keeps only the latest attempts', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     const long = { ok: false, error: 'x'.repeat(5_000) };
     const policy = { maxAttempts: WEBHOOK_HISTORY_ENTRIES + 5, baseDelayMs: 1, maxDelayMs: 1 };
     for (let i = 0; i < WEBHOOK_HISTORY_ENTRIES + 4; i++) {
@@ -158,7 +158,7 @@ describeDb('webhooks: recording attempts', () => {
 
   test('a failed answer keeps its first bytes in the history, cut and without NUL; a success keeps none', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     const first = await claimOne();
     await t.store.webhooks.record(
       [outcome(first, { ok: false, response: `bad\0 gateway ${'y'.repeat(3_000)}` })],
@@ -178,7 +178,7 @@ describeDb('webhooks: recording attempts', () => {
 
   test('a manual retry gives a failed delivery a full budget while attempt numbers keep rising', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     for (let i = 0; i < POLICY.maxAttempts; i++) {
       t.clock.advance(60_000);
       await t.store.webhooks.record([outcome(await claimOne(), { ok: false })], POLICY);
@@ -207,7 +207,7 @@ describeDb('webhooks: recording attempts', () => {
 
   test('retry refuses a delivery that is not failed, and one that is not there', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     const [pending] = (await t.store.webhooks.deliveries(hook.id))!.items;
     expect(await t.store.webhooks.retry(hook.id, pending!.id)).toEqual({
       outcome: 'not_failed',

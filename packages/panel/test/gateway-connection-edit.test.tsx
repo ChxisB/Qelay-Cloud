@@ -165,7 +165,7 @@ describe('Connection settings: editing a connection', () => {
     await act(async () => save(view.host).click());
     await settle(20);
     expect(calls.bodies.at(-1)).toEqual({
-      dedupe: { windowMs: 60_000, fields: ['event', 'jobId'] },
+      dedupe: { windowMs: 60_000, fields: ['body.id'] },
     });
     view.unmount();
   });

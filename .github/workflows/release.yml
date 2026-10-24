@@ -1,9 +1,10 @@
 name: Release
 
-# Push a tag `vX.Y.Z` (or `vX.Y.Z-rc.1`) from main. The full CI runs, then two multi-arch images and the Helm chart are
+# Push a tag `vX.Y.Z` (or `vX.Y.Z-rc.1`) from main. The full CI runs, then three multi-arch images and the Helm chart are
 # published to ghcr.io under the repository owner, and a GitHub Release is created:
 #
-#   ghcr.io/<owner>/qelay-api:X.Y.Z    ghcr.io/<owner>/qelay-panel:X.Y.Z    oci://ghcr.io/<owner>/charts/qelay (version X.Y.Z)
+#   ghcr.io/<owner>/qelay-api:X.Y.Z    ghcr.io/<owner>/qelay-panel:X.Y.Z    ghcr.io/<owner>/qelay-ingest:X.Y.Z
+#   oci://ghcr.io/<owner>/charts/qelay (version X.Y.Z)
 #
 # Only GITHUB_TOKEN is used. The first push of each package is private: set it to public once in the package settings.
 # The npm packages are not published here (docs/release-checklist.md).
@@ -50,6 +51,8 @@ jobs:
             dockerfile: packages/control-api/Dockerfile
           - name: panel
             dockerfile: packages/panel/Dockerfile
+          - name: ingest
+            dockerfile: packages/ingest/Dockerfile
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -130,4 +133,4 @@ jobs:
           case "$VERSION" in *-*) FLAGS+=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" "dist/qelay-$VERSION.tgz" "${FLAGS[@]}" \
             --title "$GITHUB_REF_NAME" --generate-notes \
-            --notes "Install: \`helm install qelay oci://ghcr.io/$OWNER/charts/qelay --version $VERSION -f values.yaml\` ([guide](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/quickstart-kubernetes.md)). Images: \`ghcr.io/$OWNER/qelay-api:$VERSION\`, \`ghcr.io/$OWNER/qelay-panel:$VERSION\`."
+            --notes "Install: \`helm install qelay oci://ghcr.io/$OWNER/charts/qelay --version $VERSION -f values.yaml\` ([guide](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/quickstart-kubernetes.md)). Images: \`ghcr.io/$OWNER/qelay-api:$VERSION\`, \`ghcr.io/$OWNER/qelay-panel:$VERSION\`, \`ghcr.io/$OWNER/qelay-ingest:$VERSION\`."

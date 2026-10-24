@@ -95,7 +95,7 @@ describe('Home issues', () => {
       ...none,
       routes: [route({ enabled: false, pausedBy: 'failures', disabledReason: 'x' }) as never],
     });
-    expect(one[0]?.headline).toContain('emails');
+    expect(one[0]?.headline).toContain('Source: src_1');
     const two = homeIssues({
       ...none,
       routes: [

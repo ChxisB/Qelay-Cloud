@@ -16,6 +16,7 @@ import { join, resolve } from 'node:path';
 import { checkAwsApiAlarm } from './terraform-control-plane-alerts';
 import { checkEdgeRateLimit, checkIngress } from './terraform-control-plane-aws-ingress';
 import { checkIdentities } from './terraform-control-plane-aws-iam';
+import { checkAwsIngestPlans } from './terraform-control-plane-aws-ingest';
 import type { Fixture, Variation } from './terraform-control-plane-aws-services';
 import { checkEcsServices, checkServices } from './terraform-control-plane-aws-services';
 import type { Plan } from './terraform-plan-model';
@@ -174,6 +175,7 @@ try {
   const edge = here('edge-rate-limit', 'edge_rate_limit_per_minute=1200');
   checks.ok('an edge rate limit plans', edge.plan !== null, edge.diagnostics);
   if (edge.plan !== null) checkEdgeRateLimit(edge.plan, checks, 1200);
+  checkAwsIngestPlans(here, checks, FIXTURE, KEY2, base.plan);
   checks.ok('no WAF unless asked for', base.plan !== null && ofType(base.plan, 'aws_wafv2_web_acl').length === 0);
   checks.ok('a rate limit under 10 is refused', here('edge-too-low', 'edge_rate_limit_per_minute=5').plan === null);
   variation(

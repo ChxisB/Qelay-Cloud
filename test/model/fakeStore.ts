@@ -4,6 +4,9 @@ import { claimOrder, countStates, toRecord } from './fakeRows';
 import type {
   ClaimedJob,
   DlqEntry,
+  DlqRetryManyOptions,
+  DlqRetryManyResult,
+  DlqRetryResult,
   EnqueuedJob,
   FailureInfo,
   JobRecord,
@@ -182,6 +185,32 @@ export class FakeStore extends FakeCore implements StateStore {
 
   async listDlq(queue: string): Promise<DlqEntry[]> {
     return [...this.dlq.values()].filter((entry) => entry.queue === queue);
+  }
+
+  async retryDlq(queue: string, jobId: string): Promise<DlqRetryResult> {
+    const row = this.rows.get(jobId);
+    if (row?.queue !== queue) return { ok: false, reason: 'not_found' };
+    if (row.status !== 'failed') return { ok: false, reason: 'not_failed' };
+    const now = this.now();
+    this.reopen(row, now);
+    return { ok: true, rings: this.ringIfReady(row, now) };
+  }
+
+  async retryDlqMany(queue: string, options: DlqRetryManyOptions): Promise<DlqRetryManyResult> {
+    const now = this.now();
+    const failed = [...this.dlq.values()]
+      .filter(
+        (entry) => entry.queue === queue && (!options.reason || entry.reason === options.reason)
+      )
+      .sort((a, b) => a.failedAt - b.failedAt || (a.jobId < b.jobId ? -1 : 1));
+    const picked = failed.slice(0, options.limit);
+    const rows = picked.map((entry) => this.rows.get(entry.jobId)!);
+    for (const row of rows) this.reopen(row, now);
+    return {
+      retried: picked.map((entry) => entry.jobId),
+      remaining: failed.length - picked.length,
+      rings: rows.flatMap((row) => this.ringIfReady(row, now)),
+    };
   }
 
   async listJobs(query: JobQuery): Promise<Page<JobRecord>> {

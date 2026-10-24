@@ -9,15 +9,24 @@ import {
 } from './webhookCrypto';
 
 const SECRET = 'whsec_test_secret';
-const BODY = '{"id":"1","event":"job.completed"}';
+const BODY = '{"id":"1","event":"request.received"}';
 const NOW = 1_700_000_000_000;
 // HMAC-SHA256 of `${NOW}.${BODY}`, computed with `openssl dgst -sha256 -hmac` and with Python's hmac.
-const VECTOR = 'v1=2ba3986e6f81c35cdb0d1be0da3712c2ee7b0a36c993383e0c4ee5bbfa79fa47';
+const VECTOR = 'v1=81c09440c6eca42f88dc944620906c031290e7869f9b5d85abdaf7122b39306c';
 
 describe('webhook signature', () => {
   test('matches the published test vector', async () => {
     expect(await signWebhook(SECRET, NOW, BODY)).toBe(VECTOR);
     expect(await signWebhook(SECRET, String(NOW), BODY)).toBe(VECTOR);
+  });
+
+  test('a body given as bytes is signed as it is: the same vector, and bytes that are not text', async () => {
+    expect(await signWebhook(SECRET, NOW, new TextEncoder().encode(BODY))).toBe(VECTOR);
+    const binary = Uint8Array.from([0xff, 0xfe, 0x00]);
+    const signature = await signWebhook(SECRET, NOW, binary);
+    expect(signature).toMatch(/^v1=[0-9a-f]{64}$/u);
+    // Re-encoding the bytes as text would change them, and the signature with them.
+    expect(signature).not.toBe(await signWebhook(SECRET, NOW, new TextDecoder().decode(binary)));
   });
 
   test('a receiver accepts it inside the window and refuses it outside', async () => {

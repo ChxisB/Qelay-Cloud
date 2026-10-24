@@ -121,7 +121,10 @@ describe('JobActionsPanel — numeric request validation', () => {
       );
       expect(container.textContent).not.toContain('Retry from DLQ');
       expect(container.textContent).not.toContain('Requeue');
-      expect(container.textContent).toContain('unavailable');
+      // A failed job is retried from the Dead letter queue page; a completed one cannot be requeued at all.
+      expect(container.textContent).toContain(
+        state === 'failed' ? 'Dead letter queue' : 'unavailable'
+      );
       unmount();
       container.remove();
     }

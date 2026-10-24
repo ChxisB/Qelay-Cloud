@@ -7,7 +7,7 @@ import type { FreshSchema } from './helpers';
 import { freshSchema } from './helpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore } from './storeHelpers';
-import { addHook, CLAIM, event, journal, KEY, outcome, POLICY } from './webhookHelpers';
+import { addHook, CLAIM, KEY, outcome, POLICY, send } from './webhookHelpers';
 
 const DAY = 86_400_000;
 const START = 1_800_000_000_000;
@@ -55,7 +55,7 @@ describeDb('webhook deliveries: day partitions', () => {
   /** One delivery of a webhook, finished or still pending. */
   async function delivery(finished: boolean): Promise<void> {
     await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     if (!finished) return;
     const claimed = await t.store.webhooks.claimDue(CLAIM);
     await t.store.webhooks.record([outcome(claimed[0]!, { ok: true })], POLICY);
@@ -111,14 +111,14 @@ describeDb('webhook deliveries: day partitions', () => {
     expect(await homes()).toEqual([]);
   });
 
-  test('an event is delivered to a webhook once', async () => {
+  test('a request is delivered to a route once', async () => {
     await ensure(START);
     await delivery(false);
     await expect(
       (async () => t.fresh.sql`
-        INSERT INTO qcloud_deliveries (namespace, webhook_id, event_id, event_name, queue, job_id, occurred_at,
+        INSERT INTO qcloud_deliveries (namespace, webhook_id, request_id, event_name, occurred_at,
                                        status, next_attempt_at, created_at)
-        SELECT namespace, webhook_id, event_id, event_name, queue, job_id, occurred_at, status, next_attempt_at, created_at
+        SELECT namespace, webhook_id, request_id, event_name, occurred_at, status, next_attempt_at, created_at
         FROM qcloud_deliveries`)()
     ).rejects.toThrow(/unique|duplicate/i);
   });
