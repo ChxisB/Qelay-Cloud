@@ -125,7 +125,7 @@ test('a page this deployment does not have says so at its address', async ({
   browserErrors,
 }) => {
   await unlockDashboard(page);
-  for (const path of ['/server', '/database', '/s3', '/fleet']) {
+  for (const path of ['/server', '/database', '/fleet']) {
     await goInApp(page, path);
     await expect(page.locator('#main').getByText('Not available in this deployment')).toBeVisible();
     await expect(page.locator(`#app-nav nav a[href="${E2E_BASE_PATH}${path}"]`)).toHaveCount(0);

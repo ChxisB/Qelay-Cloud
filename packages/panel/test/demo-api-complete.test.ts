@@ -36,6 +36,7 @@ describe('demo API dispatcher complete route surface', () => {
       'workflows',
       'flows',
       'backup',
+      'backup-policy',
       'gc',
       'heapstats',
       'transport',

@@ -59,6 +59,7 @@ const EXPECTED_PATHS = [
   '/mcp',
   '/usage',
   '/usage-classic',
+  '/backups',
   '/s3',
   '/s3-classic',
   '/settings',

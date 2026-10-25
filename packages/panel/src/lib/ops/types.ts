@@ -135,6 +135,30 @@ const deploymentSchema = z.object({
 });
 export type DeploymentView = z.infer<typeof deploymentSchema>;
 
+export const BACKUP_MECHANISMS = ['provider', 'external', 'none'] as const;
+export type BackupMechanism = (typeof BACKUP_MECHANISMS)[number];
+
+const backupPolicySchema = z.object({
+  mechanism: z.enum(BACKUP_MECHANISMS),
+  tool: z.string().nullable(),
+  location: z.string().nullable(),
+  updatedBy: z.string(),
+  updatedAt: z.number(),
+});
+export type BackupPolicy = z.infer<typeof backupPolicySchema>;
+
+/** `GET` and `PUT /backup-policy`: `policy` is null while nobody has said how the database is backed up. */
+const backupPolicyReplySchema = z.object({
+  data: z.object({ policy: backupPolicySchema.nullable() }),
+});
+
+/** What `PUT /backup-policy` takes. `tool` is for `external` only, and `location` is optional there. */
+export interface BackupPolicyInput {
+  mechanism: BackupMechanism;
+  tool?: string | null;
+  location?: string | null;
+}
+
 export class OpsParseError extends Error {
   constructor(what: string, path: string) {
     super(`The server's ${what} answer is not understood (at "${path || 'body'}").`);
@@ -157,3 +181,5 @@ export const parseDeadLetters = (value: unknown): DeadLettersView =>
   parse(deadLettersSchema, '/transport/dead-letters', value);
 export const parseDeployment = (value: unknown): DeploymentView =>
   parse(deploymentSchema, '/deployment', value);
+export const parseBackupPolicy = (value: unknown): BackupPolicy | null =>
+  parse(backupPolicyReplySchema, '/backup-policy', value).data.policy;

@@ -15,25 +15,31 @@ async function readings(ctx: OpsContext, fresh: boolean) {
   const store = ctx.jobs?.store;
   const deadline = READINESS_DEADLINE_MS;
   let latencyMs: number | null = null;
-  const [databaseOk, tick, schema, usage, workers, scan, webhooks, ignored] = await Promise.all([
-    settled(async () => {
-      const started = performance.now();
-      await readiness.database();
-      latencyMs = Math.round(performance.now() - started);
-      return true;
-    }, deadline),
-    settled(() => readiness.tick(), deadline),
-    store ? settled(() => store.deployment.schemaVersion(), deadline) : null,
-    store ? settled(() => store.deployment.connections(), deadline) : null,
-    store ? settled(() => store.workers.list(), deadline) : null,
-    store ? settled(() => scanDoorbells(ctx, fresh), deadline) : null,
-    store ? settled(() => store.webhooks.list(), deadline) : null,
-    // At most one live issue per route and 100 routes, so one page holds every ignored one.
-    store
-      ? settled(() => store.webhooks.issues({ status: 'ignored', limit: MAX_ISSUE_PAGE }), deadline)
-      : null,
-  ]);
-  return { databaseOk, latencyMs, tick, schema, usage, workers, scan, webhooks, ignored };
+  const [databaseOk, tick, schema, usage, workers, scan, webhooks, ignored, backup] =
+    await Promise.all([
+      settled(async () => {
+        const started = performance.now();
+        await readiness.database();
+        latencyMs = Math.round(performance.now() - started);
+        return true;
+      }, deadline),
+      settled(() => readiness.tick(), deadline),
+      store ? settled(() => store.deployment.schemaVersion(), deadline) : null,
+      store ? settled(() => store.deployment.connections(), deadline) : null,
+      store ? settled(() => store.workers.list(), deadline) : null,
+      store ? settled(() => scanDoorbells(ctx, fresh), deadline) : null,
+      store ? settled(() => store.webhooks.list(), deadline) : null,
+      // At most one live issue per route and 100 routes, so one page holds every ignored one.
+      store
+        ? settled(
+            () => store.webhooks.issues({ status: 'ignored', limit: MAX_ISSUE_PAGE }),
+            deadline
+          )
+        : null,
+      // Wrapped, because "nobody has declared one" is a null of its own and must not read as "could not be read".
+      store ? settled(async () => ({ policy: await store.backups.get() }), deadline) : null,
+    ]);
+  return { databaseOk, latencyMs, tick, schema, usage, workers, scan, webhooks, ignored, backup };
 }
 
 /** `GET /deployment`: version, schema, database, connections, tick, workers and the warnings from them. */
@@ -140,6 +146,7 @@ async function build(ctx: OpsContext, fresh: boolean): Promise<DeploymentRespons
         read.webhooks,
         new Set(read.ignored?.items.map((issue) => issue.webhookId))
       ),
+      backup: read.backup === null ? null : (read.backup.policy?.mechanism ?? 'undeclared'),
     }),
     timestamp: clock.now(),
   };

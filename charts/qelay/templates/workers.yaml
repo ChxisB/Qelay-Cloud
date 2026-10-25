@@ -4,8 +4,10 @@
   "root" $
   "component" (printf "worker-%s" (required "workers[].name is required" .name))
   "replicas" (.replicas | default 1)
+  "autoscaled" (.autoscaling | default dict).enabled
   "image" (required "workers[].image is required" .image)
   "args" .args
   "env" (print (include "qelay.env" (dict "root" $ "poolSize" (.poolSize | default 2))) (include "qelay.extraEnv" .env))
   "resources" .resources) }}
+{{ include "qelay.scaling" (dict "root" $ "component" (printf "worker-%s" .name) "values" .) }}
 {{- end }}

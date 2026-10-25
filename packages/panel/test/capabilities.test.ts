@@ -44,7 +44,7 @@ describe('parseCapabilities', () => {
 
 describe('page gating', () => {
   test('the hidden server concepts are closed, including everything beneath them', () => {
-    for (const path of ['/server', '/server/logs', '/database', '/s3', '/fleet']) {
+    for (const path of ['/server', '/server/logs', '/database', '/fleet']) {
       expect(isPageAvailable(path, CLOUD)).toBe(false);
     }
   });
@@ -155,7 +155,6 @@ describe('page gating', () => {
     for (const path of [
       '/server',
       '/database',
-      '/s3',
       '/fleet',
       '/flows',
       '/workflows',

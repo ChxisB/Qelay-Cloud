@@ -137,5 +137,10 @@ resource "aws_ecs_service" "api" {
     container_port   = 8080
   }
 
+  # autoscaling.tf owns the count after the first apply; without this every apply would put it back.
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+
   depends_on = [aws_lb_listener_rule.api, aws_vpc_security_group_ingress_rule.tasks_from_alb]
 }

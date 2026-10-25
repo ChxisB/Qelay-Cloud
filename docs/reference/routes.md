@@ -2,7 +2,7 @@
 
 > Generated from [openapi.yaml](../openapi.yaml) by `bun run docs:check --write`. Do not edit it by hand: change the source.
 
-132 operations. The schemas, parameters and every response are in [openapi.yaml](../openapi.yaml); a test
+134 operations. The schemas, parameters and every response are in [openapi.yaml](../openapi.yaml); a test
 fails when a served route is missing from it or the other way round. `GET /health` takes no token; every other route
 takes a bearer token, and a route that changes something needs the `operator` role.
 
@@ -200,6 +200,8 @@ takes a bearer token, and a route that changes something needs the `operator` ro
 | Method | Path | What it does |
 | --- | --- | --- |
 | GET | `/deployment` | What is deployed, and whether it is keeping up |
+| GET | `/backup-policy` | How the operator says this database is backed up |
+| PUT | `/backup-policy` | Declare how this database is backed up |
 
 ## unsupported
 

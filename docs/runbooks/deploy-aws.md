@@ -44,7 +44,7 @@ same variables. These are the differences.
 | Exposure | An ALB with HTTPS on a certificate you bring and two host names you point at it. `public` (default), `private`. Optional WAF rate limit: `edge_rate_limit_per_minute`. See the README. |
 | Tick | A one-shot task started by EventBridge Scheduler: no listener, no token to check. |
 | Migration | `aws ecs run-task` of `<name>-migrate`. |
-| Scaling | The API and the panel are a fixed count. The connection budget counts the API's tasks, so there is no autoscaling. |
+| Scaling | The API (and the ingest, when there is one) scale on average CPU between `api_instances` and `api_max_instances` (`ingest.instances` and `ingest.max_instances`); the maximum defaults to the minimum, so the count is fixed until you raise it. The connection budget counts the maximum, so raise the data plane's `control_processes` first. The panel is a fixed `panel_instances`. The first apply needs `iam:CreateServiceLinkedRole` for Application Auto Scaling, once. Planned and checked, never applied. |
 
 ## Timeouts and event streams
 

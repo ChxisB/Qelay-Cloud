@@ -323,6 +323,7 @@ A wrong value throws `UnsupportedOptionError` naming the variable and never repe
 | `QCLOUD_WEBHOOK_DISABLE_AFTER` | Failed deliveries in a row after which a webhook is paused (0 never) | 20 |
 | `QCLOUD_WEBHOOK_KEEPALIVE_MS`, `_DNS_TTL_MS`, `_PER_DESTINATION`, `_BREAKER_FAILURES`, `_BREAKER_COOLDOWN_MS`, `_IDLE_MS` | `qcloud-tick send` only: how long a connection to a receiver is kept (0 off), how long a name's addresses are kept (0 off), requests in flight to one host and port, failed attempts in a row that pause a destination (0 never), how long it stays paused, the wait when nothing is due | 15,000, 30,000, 4, 5, 30,000, 500 |
 | `QCLOUD_WEBHOOK_KEEP_MS` | How long a finished webhook delivery stays readable; the tick only. With several ticks the shortest decides | 172,800,000 |
+| `QCLOUD_COMPLETED_RETENTION_MS` | How long a completed job stays before the tick deletes it (oldest first, `QCLOUD_TICK_MAX_ITEMS` per pass; a job a live flow consumer needs stays). `0` keeps them. Failed jobs are not touched | 604,800,000 |
 | `QCLOUD_WORKFLOW_QUEUE` | The queue the workflow engine's node jobs travel on. Must be the name the `Engine` was given (`queueName`) | `__wf:steps` |
 | `QCLOUD_WORKFLOW_BATCH` | Workflow runs the tick looks at per pass, for due waits and for recovery each (**0 turns the step off**) | 100 |
 | `QCLOUD_WORKFLOW_IDLE_MS` | How long a `running`, `compensating` or `failed` run may show no write before the tick takes it over. Must exceed the longest gap between two writes of a live run (a running node writes every `heartbeatMs`, 10,000 by default) | 300,000 |
@@ -507,17 +508,53 @@ rate for more, and past operator scale use a delivery queue of your own (webhook
 the settings, not a load test. `qcloud-tick send` is not bound by the batch or the budget: it keeps
 `QCLOUD_WEBHOOK_CONCURRENCY` requests in flight and refills as they finish, so its ceiling is concurrency divided by the
 time of one request (8 in flight at 200 ms a request is about 40 a second), and the per-webhook rate still applies.
-That too is arithmetic.
+That too is arithmetic, and the next paragraph measures it.
 
-**A scheduled route holds its events as rows, and a batch route sends one request per claim** (D15, derived, not load-tested). A
+**Measured (scale review, 2026-10-24): what the sender sends.** `QCLOUD_REQUIRE_DB=1 bun scripts/sender-load.ts --events 20000
+--latency 20`: 20,000 requests are accepted into a fresh schema, then drained by sender loops against a scripted receiver that
+answers 200 after 20 ms. Local PostgreSQL 18.6, Bun 1.4.2, one machine, so the rates are a floor for separate hosts. The socket
+pool, the name lookup and `QCLOUD_WEBHOOK_PER_DESTINATION` (4 in flight to one host and port) are **not** in it, and the
+per-webhook rate limit is lifted.
+
+| Route and settings | Sender | Deliveries a second |
+| --- | --- | --- |
+| `http`, defaults (8 in flight) | the tick's pass | 263 |
+| `http`, defaults (8 in flight) | `qcloud-tick send` loop | 304 |
+| `http`, 32 in flight | one loop | 1,155 |
+| `http`, 32 in flight | four loops, one route | 2,700 |
+| `http`, 32 in flight, four routes (80,000 deliveries) | four loops | 2,882 |
+| `http` with a `batch` of 100 (200 requests) | the tick's pass | 3,083 |
+| `http` with a `batch` of 100 (200 requests) | one loop | 12,419 |
+| `queue`, defaults | the tick's pass | 1,065 |
+| `queue`, 32 in flight | four loops | 3,802 |
+
+- **Accepting is not the limit.** The store takes about 10,000 requests a second from 8 callers (about 9,000 when each makes
+  four deliveries); the sender is the slower side by an order of magnitude.
+- **A sender's rate is its requests in flight divided by the receiver's time plus about 10 ms of store work** (a claim and a
+  record for each chunk): 8 in flight against a 20 ms receiver is about 300 a second, 32 is about 1,150. A real receiver is
+  slower than 20 ms, and `QCLOUD_WEBHOOK_PER_DESTINATION` then caps one host at 4 in flight for each sender process.
+- **More senders raise one hot route's rate, but less than in proportion.** Four loops reached 2,700 a second, not 4,600: a
+  claim holds the route's row, so another sender's claim that finds it locked sees nothing due and waits
+  `QCLOUD_WEBHOOK_IDLE_MS` (500 ms). Spreading the traffic over several routes, or using a batch or a queue route, avoids it.
+- **A batch route is the cheapest way to move many events to one receiver**: one loop sent 20,000 events as 200 requests, at
+  12,400 events a second. A `queue` route sends no request: 1,065 a second in the tick's pass, 3,802 with four loops.
+- **The default per-webhook rate, 60 a minute, is the first ceiling a real route meets** (86,400 requests a day to one plain
+  route). It protects the receiver, and a batch of 100 raises it to 8,640,000 events a day. See
+  [production.md](production.md#volume-millions-of-requests-jobs-and-events).
+
+**A scheduled route holds its events as rows, and a batch route sends one request per claim** (D15). A
 route with a `schedule` stores every event it accepts as a delivery that is due at the next fire, so its rows grow with the
 events of the gap between two fires (up to 31 days) and are cleared by the retention that clears any finished delivery. A
 delivery still unsent 24 hours after its fire is failed with `expired`. A route with a `batch` sends at most `maxEvents` (500)
-or `maxBytes` (1 MiB) in a request, and the sender claims **one batch per route per claim**, which counts as one attempt toward
-the pass limit and the route's 60 a minute. Draining a backlog of N events therefore takes N / `maxEvents` claims: 250 events
-at the default 100 are three claims, three minutes on a scheduler-only deployment and a few seconds with `qcloud-tick send`.
-The three-batch drain is a test (`store-postgres/test/webhook.batch.test.ts`); the timings are arithmetic. The decision to
-fail all the events of a batch together when the receiver answers anything but 2xx is in [webhooks.md](webhooks.md#schedule-and-batch).
+or `maxBytes` (1 MiB) in a request, and a claim takes **one batch per route**, which counts as one attempt toward the pass limit
+and the route's 60 a minute. The sender claims again at once while a batch route may have more due (a pass stops at
+`QCLOUD_WEBHOOK_BATCH` requests, the loop when its slots are full), so a backlog of N events is N / `maxEvents` requests in one
+pass: 250 events at the default 100 are three requests. Before the scale review a claim shorter than the free slots ended the
+pass and put the sender process to sleep for `QCLOUD_WEBHOOK_IDLE_MS`, so a batch route drained one batch a beat or half a
+second: the sender process measured 195 events a second on a 20,000-event backlog and now 12,419. The three-batch drain is a
+test (`store-postgres/test/webhook.batch.test.ts`), and so is the sender process taking a backlog back to back
+(`maintenance/test/webhook.batch.db.test.ts`). The decision to fail all the events of a batch together when the receiver
+answers anything but 2xx is in [webhooks.md](webhooks.md#schedule-and-batch).
 
 **A `queue` route** (event gateway, [event-gateway.md](event-gateway.md)) sends no request: its attempt is one `enqueue` in the
 same database, so it costs a job insert and counts against the sender's batch like a request does. It is not measured
@@ -654,12 +691,32 @@ flood     real sender          5/s  sent   47  200:14 429:33
           random tokens     2000/s  sent 19000  404:5986 429:13014     p50 1.4 ms  p99 4.9 ms
 ```
 
-Read it as: the store keeps up with about 190 accepted posts a second on two connections, and every `200` is a stored
+Read it as: the store keeps up with the 200 posts a second this run offers (it is the script's offered rate, not the
+ceiling; the next paragraph raises it), and every `200` is a stored
 request (the script fails if the two differ, or if the connections held pass `budget()`); the per-source limit gives exactly
 600 in the minute; and **a flood of random tokens uses the process's global rate in about three seconds**, after which the
 real sender gets `429` for the rest of the minute (14 of 47 accepted). That is the known weakness
 ([known issues](known-issues.md), row 12): the cheap defence is the edge's per-address limit, then a larger global rate, then
 more instances.
+
+**Capacity (scale review, 2026-10-24).** With the limits lifted and 6,000 posts a second offered, one instance on its two
+connections stored about 5,200 a second; every `200` was a stored request. What the instance could not take it answered
+`503 {"error":"unavailable"}` with `Retry-After: 5`, which is the handler's answer when a store lookup or accept fails (a
+pool that is busy for too long), not a deliberate shed. So one instance does about 5,000 a second, 430 million a day, at the
+store, and the shipped limits (100 a second for all sources, 10 for one source, per process) are the throttle, not the code.
+Raise them with `QCLOUD_INGEST_RATE_PER_SOURCE` and `QCLOUD_INGEST_RATE_GLOBAL`, and add instances before raising
+`ingest.pool_size`. Client and server shared one event loop, so this is a floor. At a sustained 5,000 a second the 2-day
+retention holds about 860 million request rows; the tick deletes about 133,000 rows a second, so retention keeps up, but the table
+and its index are large: size the disk for `events a day × body size × 2` and watch autovacuum (see
+[production.md](production.md#volume-millions-of-requests-jobs-and-events)).
+
+**Completed-job retention (scale review, 2026-10-24).** With 1 million completed jobs older than the window in 20 queues, a tick
+pass at the default `QCLOUD_TICK_MAX_ITEMS` of 200 deleted 200 jobs in about 15 ms (about 13,000 a second) and at 5,000 in about
+60 ms (about 85,000 a second), each reading the oldest entries of `qcloud_jobs_completed_idx` and stopping at the cap. The
+loop repeats a pass at once while a step reports more, so a backlog drains within the beat, and a service that completes 10
+million jobs a day (116 a second) needs a fraction of one pass. Migration 24 built that index over the 1 million rows in 1.1 s on
+a local Postgres 18 and takes a lock that blocks writes to `qcloud_jobs` for that long; a table with hundreds of millions of rows
+takes minutes, so apply it in a quiet period. One machine, no concurrent claims.
 
 **Not run:** another host or CPU count; client and server in separate processes; a real load balancer, Cloud Armor or WAF in
 front; a slow-loris on the headers (the socket's idle timeout is the only defence, not measured); the real clouds (D9).

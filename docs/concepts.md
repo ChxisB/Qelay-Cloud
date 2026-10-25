@@ -91,7 +91,7 @@ Something must ring the jobs that are not ready when they are added, and repair 
   15 minutes), the tick rings it ahead of time and the broker delivers it on time.
 - **Re-ring.** Every claimable job whose last bell is older than `reRingAfterMs` is rung again, with a cap per queue per tick
   so a backlog does not become a bell storm, and a grace period for a bell still in flight.
-- **Expiry and retention.** Jobs past their TTL expire, and old completed jobs, events, completion records and group state are cleaned up by the rules of the queue.
+- **Expiry and retention.** Jobs past their TTL expire, and completed jobs (after 7 days by default, `QCLOUD_COMPLETED_RETENTION_MS`), events, completion records and group state are cleaned up by the tick.
 - **Workflows.** Waits that have ended are finished and runs whose engine died are taken over ([Flows and workflows](#flows-and-workflows)).
 
 Two things run it, and you choose:

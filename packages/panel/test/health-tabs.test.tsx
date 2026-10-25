@@ -26,7 +26,7 @@ function mount(path: string, element: ReturnType<typeof createElement>) {
   return host;
 }
 
-const PAGES = ['/deployment', '/diagnostics', '/transport', '/usage'] as const;
+const PAGES = ['/deployment', '/backups', '/diagnostics', '/transport', '/usage'] as const;
 
 beforeEach(() => {
   useCapabilitiesStore.setState({
@@ -47,7 +47,7 @@ afterEach(() => {
   localStorage.removeItem(NAV_GROUPS_STORAGE_KEY);
 });
 
-describe('Health: four reports, one sidebar item', () => {
+describe('Health: five reports, one sidebar item', () => {
   test('the tab bar links every report and marks the open one', () => {
     for (const open of PAGES) {
       const host = mount(open, createElement(HealthTabs, { current: open }));
@@ -58,7 +58,7 @@ describe('Health: four reports, one sidebar item', () => {
     }
   });
 
-  test('the sidebar has one Health link, and it is the current page on all four', () => {
+  test('the sidebar has one Health link, and it is the current page on all five', () => {
     for (const path of PAGES) {
       const host = mount(path, createElement(Sidebar));
       const links = [...host.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Primary"] a')];

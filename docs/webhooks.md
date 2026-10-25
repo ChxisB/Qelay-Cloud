@@ -177,10 +177,12 @@ The request is signed like any other, over the envelope, with `X-Webhook-Event: 
 - **The limit is per request, not per event.** A batch stops at `maxEvents` or at `maxBytes`, whichever comes first, and the
   first event always goes, so an event larger than `maxBytes` is sent alone. Events past the limit stay due and go in the next
   batch.
-- **One batch per route per pass.** The sender claims one batch for each batch route in a pass, and counts it as **one**
-  attempt toward the pass limit and the route's 60 a minute. A backlog of 250 events at `maxEvents` 100 therefore takes three
-  passes. On a scheduler-only deployment that is three minutes; `qcloud-tick send` as its own process drains it in seconds
-  ([where the work happens](#where-the-work-happens), [production settings](production.md#scheduled-and-batched-sends)).
+- **One batch per route per claim, and the sender claims again at once.** A claim takes one batch for each batch route and
+  counts it as **one** attempt toward the pass limit and the route's 60 a minute. While a batch route may have more due, the
+  pass (and the `qcloud-tick send` loop) claims again without waiting, so a backlog of 250 events at `maxEvents` 100 is three
+  requests in one pass. One sender process sent 20,000 events as 200 requests at 12,400 events a second
+  ([limits.md section 12](limits.md#12-webhooks-task-52), [where the work happens](#where-the-work-happens),
+  [production settings](production.md#scheduled-and-batched-sends)).
 - **A shaped body that cannot be made fails alone** and is left out of the envelope; the others go.
 - The history of each event names its `batchId`, and a delivery sent alone has none. Streak counting and auto-pause still count
   each event, so a receiver that refuses a batch of 100 adds 100 to the failure streak.
@@ -429,8 +431,13 @@ a scheduler-only deployment the tick runs once a minute, so a delivery is sent u
 - **`qcloud-tick send` raises the ceiling, not the per-webhook rate.** Deliveries are no longer sent in chunks inside a
   pass, so with `QCLOUD_WEBHOOK_CONCURRENCY` raised and `_RATE_PER_MINUTE` raised to match, thousands a minute across many
   webhooks is the design point. The rate limit is still per webhook (60 a minute by default): one webhook with a deep
-  backlog is slow on purpose. Run more than one sender for availability, not for the rate. These are design figures; no
-  receiver at that rate has been measured.
+  backlog is slow on purpose. Measured against a scripted receiver (20 ms), one loop with 32 in flight sends about 1,150
+  deliveries a second and four loops about 2,700 ([limits.md section 12](limits.md#12-webhooks-task-52)). More senders add rate
+  across **different routes**; on one hot route a second sender mostly adds availability, because a claim holds the route's
+  row and the other sender's claim waits `QCLOUD_WEBHOOK_IDLE_MS`. No real receiver, socket pool or name lookup is in that
+  figure.
+- **For the largest volumes use a batch route** (100 events in one request, 12,400 events a second from one process) **or a
+  queue route**, which sends nothing over the network (1,065 a second in the tick's pass, 3,802 with four loops).
 - **Fan-out or volume belongs in a delivery queue of your own**: a `queue` route that adds a job per request, and a worker
   that calls the receivers, on the SDK, with its own retry, concurrency and scaling. A webhook is the right tool for "tell
   the chat channel a payment arrived", not for "notify ten thousand customers".

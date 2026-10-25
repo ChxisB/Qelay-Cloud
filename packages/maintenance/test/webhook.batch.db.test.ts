@@ -10,7 +10,7 @@ import { noTelemetry } from '../src/telemetry';
 import { resolveWebhookConfig } from '../src/webhookConfig';
 import { pooledSending, runWebhookLoop } from '../src/webhookLoop';
 import { RecordingTransport } from './support';
-import { senderHarness, status } from './webhookSending';
+import { PUBLIC, senderHarness, status, STRICT } from './webhookSending';
 import { listener } from './webhookSockets';
 
 const BATCH = { maxEvents: 100, maxBytes: 262_144 };
@@ -160,5 +160,41 @@ describeDb('webhook sender: a batch route sends its due deliveries as one reques
     } finally {
       receiver.stop();
     }
+  });
+
+  test('the sender process takes a backlog of batches back to back, without an idle wait between them', async () => {
+    const source = await addSource(t);
+    await addRoute(t, source.id, { batch: BATCH });
+    for (let n = 1; n <= 250; n += 1) await t.store.sources.accept(source.id, post({ n }));
+    // A claim takes one batch of a route, so it is shorter than the free slots. idleMs is far longer than this test
+    // waits: a loop that took that for "nothing more due" would send the first 100 events and sit out the rest.
+    const config = resolveWebhookConfig(
+      { concurrency: 8, ratePerMinute: 100_000, idleMs: 30_000 },
+      STRICT
+    )!;
+    let requests = 0;
+    const stop = new AbortController();
+    const loop = runWebhookLoop(
+      t.store,
+      {
+        config,
+        resolve: async () => [PUBLIC],
+        post: async () => {
+          requests += 1;
+          return status(200);
+        },
+        now: () => t.clock.now(),
+      },
+      noTelemetry,
+      stop.signal
+    );
+    const deadline = Date.now() + 3_000;
+    while (requests < 3 && Date.now() < deadline) await Bun.sleep(10);
+    stop.abort();
+    await loop;
+
+    expect(requests).toBe(3);
+    const rows = await t.fresh.sql<Array<{ status: string }>>`SELECT status FROM qcloud_deliveries`;
+    expect(rows.map((row) => row.status)).toEqual(Array(250).fill('delivered'));
   });
 });

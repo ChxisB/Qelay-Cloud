@@ -36,6 +36,7 @@ export const API_ROOTS = new Set([
   'workflows',
   'flows',
   'backup',
+  'backup-policy',
   'gc',
   'heapstats',
   'transport',

@@ -15,9 +15,10 @@ export const navPaths = (item: NavItemDef): readonly string[] => [item.to, ...(i
 /** Whether `pathname` is a page the item stands for; `NavLink` cannot say it for `also`. */
 export const isNavCurrent = (item: NavItemDef, pathname: string): boolean =>
   navPaths(item).some((path) => matchPath({ path, end: item.end ?? false }, pathname));
-/** The four reports of the Health item: each is its own page, switched by `HealthTabs`. */
+/** The five reports of the Health item: each is its own page, switched by `HealthTabs`. */
 export const HEALTH_TABS = [
   { to: '/deployment', label: 'Deployment' },
+  { to: '/backups', label: 'Backups' },
   { to: '/diagnostics', label: 'Diagnostics' },
   { to: '/transport', label: 'Job delivery' },
   { to: '/usage', label: 'Usage' },
@@ -34,11 +35,10 @@ export const GATEWAY_TABS = [
   { to: '/events-gateway/destinations', label: 'Destinations' },
 ] as const;
 
-/** The six pages of the System item: each is its own page, switched by `SystemTabs`. */
+/** The five pages of the System item: each is its own page, switched by `SystemTabs`. */
 export const SYSTEM_TABS = [
   { to: '/server', label: 'Server' },
   { to: '/database', label: 'Database' },
-  { to: '/s3', label: 'Backups' },
   { to: '/mcp', label: 'MCP' },
   { to: '/benchmark', label: 'Benchmark' },
   { to: '/fleet', label: 'Fleet' },

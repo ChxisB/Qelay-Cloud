@@ -39,6 +39,12 @@ locals {
   ingest           = var.ingest != null
   ingest_instances = local.ingest ? var.ingest.instances : 0
 
+  # Autoscaling (autoscaling.tf) moves a service between its minimum (api_instances, ingest.instances) and these. The
+  # connection budget and the subnet room are counted at the maximum, because that is what can run.
+  api_max_instances    = coalesce(var.api_max_instances, var.api_instances)
+  ingest_max_instances = local.ingest ? coalesce(var.ingest.max_instances, var.ingest.instances) : 0
+  cluster_name         = element(split("/", var.cluster_arn), 1)
+
   log_groups = {
     api     = "/qcloud/${var.name}/api"
     panel   = "/qcloud/${var.name}/panel"
@@ -57,7 +63,7 @@ locals {
   # panel, the ingest when there is one, and one migration task). Derived from the counts, not measured on Fargate.
   subnet_prefix   = tonumber(split("/", var.vpc_cidr)[1]) + 4
   subnet_usable   = pow(2, 32 - local.subnet_prefix) - 5 # AWS reserves five addresses of every subnet
-  tasks_total     = var.data_plane_tasks + var.api_instances + local.ingest_instances + var.panel_instances + 1
+  tasks_total     = var.data_plane_tasks + local.api_max_instances + local.ingest_max_instances + var.panel_instances + 1
   subnet_required = 2 * local.tasks_total
 }
 
@@ -78,8 +84,12 @@ resource "terraform_data" "inputs" {
       error_message = "private_subnet_ids and availability_zones must list the same zones, in the same order."
     }
     precondition {
-      condition     = var.api_instances + local.ingest_instances + 2 <= var.budgeted_control_processes
-      error_message = "The connection budget counts ${var.budgeted_control_processes} control processes (two overlapping ticks, each API task and each ingest task): ${var.api_instances + local.ingest_instances + 2} would run. Raise the data plane's control_processes, or lower api_instances or ingest.instances."
+      condition     = local.api_max_instances + local.ingest_max_instances + 2 <= var.budgeted_control_processes
+      error_message = "The connection budget counts ${var.budgeted_control_processes} control processes (two overlapping ticks, each API task and each ingest task, at the most autoscaling can reach): ${local.api_max_instances + local.ingest_max_instances + 2} would run. Raise the data plane's control_processes, or lower api_max_instances, ingest.max_instances or the minimums."
+    }
+    precondition {
+      condition     = local.api_max_instances >= var.api_instances && local.ingest_max_instances >= local.ingest_instances
+      error_message = "api_max_instances must be at least api_instances, and ingest.max_instances at least ingest.instances."
     }
     precondition {
       condition     = var.api_pool_size <= var.budgeted_control_pool_size

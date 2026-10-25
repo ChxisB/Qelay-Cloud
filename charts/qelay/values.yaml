@@ -23,6 +23,9 @@ database:
   # Key of a second URL for the migration job, when the main one goes through a pooler (DDL needs a direct connection).
   directUrlKey: ""
   pooler: none # none | transaction
+  # The server's max_connections. When set (and no pooler), an install whose fleet at its largest needs more fails at render
+  # (the sum in docs/operations.md). 0: not checked.
+  maxConnections: 0
   # "unverified" (encrypted, not checked) or "off" (plaintext, only for a trusted private hop).
   # Unset, a non-loopback host is refused at start. Conflicts with tlsCa.
   tls: ""
@@ -58,6 +61,12 @@ api:
   # Exact origins; default: the panel's ingress host.
   corsOrigins: ""
   resources: {}
+  # Autoscaling and a disruption budget are the same block on the API, ingest, the webhook sender and each worker.
+  # CPU (needs resources.requests.cpu) unless `triggers` is given: then a KEDA ScaledObject on those triggers, which
+  # is how a worker follows a backlog (docs/quickstart-kubernetes.md). With it on, `replicas` is not set.
+  # maxReplicas x poolSize counts against database.maxConnections.
+  autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 6, targetCPU: 70, triggers: [] }
+  podDisruptionBudget: { enabled: false, maxUnavailable: 1 }
   env: {} # extra QCLOUD_API_* variables
 
 panel:
@@ -88,6 +97,8 @@ ingest:
   replicas: 2
   poolSize: 4
   resources: {}
+  autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 8, targetCPU: 70, triggers: [] }
+  podDisruptionBudget: { enabled: false, maxUnavailable: 1 }
   env: {} # extra QCLOUD_INGEST_* variables
 
 ingress:
@@ -131,6 +142,8 @@ webhooks:
     replicas: 2
     poolSize: 2
     resources: {}
+    autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 6, targetCPU: 70, triggers: [] }
+    podDisruptionBudget: { enabled: false, maxUnavailable: 1 }
     env: {}
 
 # Your worker images (the chart ships none). Each gets the database, namespace and transport
@@ -142,4 +155,6 @@ webhooks:
 #     args: []
 #     env: { LOG_LEVEL: info }
 #     resources: {}
+#     autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 20, triggers: [] }  # see api.autoscaling
+#     podDisruptionBudget: { enabled: true, maxUnavailable: 1 }
 workers: []

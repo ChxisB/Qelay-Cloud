@@ -2491,6 +2491,49 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '504': { $ref: '#/components/responses/Timeout' }
+  /backup-policy:
+    get:
+      tags: [deployment]
+      summary: How the operator says this database is backed up
+      description: |
+        Qelay takes no backups and runs no restore. This is the operator's declaration of who does: `provider` (the managed
+        database's own backups, for example Cloud SQL or RDS point-in-time recovery), `external` (their own tooling, named in
+        `tool`, with an optional `location`) or `none`. `policy` is `null` while nobody has said; `GET /deployment` warns for
+        that and for `none`. Qelay does not check the declaration against the database.
+      operationId: getBackupPolicy
+      responses:
+        '200':
+          description: The declaration, or `null`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupPolicyEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [deployment]
+      summary: Declare how this database is backed up
+      description: |
+        Replaces the declaration. `external` needs a `tool`; `provider` and `none` carry neither `tool` nor `location`
+        (400 `invalid_request` otherwise). Operator only, and audited.
+      operationId: setBackupPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackupPolicyInput' }
+      responses:
+        '200':
+          description: The declaration after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupPolicySetEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
   /ping:
     get:
       tags: [health]
@@ -4918,11 +4961,48 @@ components:
         reason: { type: string, nullable: true, enum: [not_supported, unreachable, null] }
         items: { type: array, items: { $ref: '#/components/schemas/DeadLetterItem' } }
         timestamp: { type: integer }
+    BackupPolicy:
+      type: object
+      required: [mechanism, tool, location, updatedBy, updatedAt]
+      properties:
+        mechanism: { type: string, enum: [provider, external, none] }
+        tool: { type: string, nullable: true, description: 'Set for `external` only.' }
+        location: { type: string, nullable: true, description: 'Where the copies land. `external` only, optional.' }
+        updatedBy: { type: string, description: 'The principal that last declared it.' }
+        updatedAt: { type: integer }
+    BackupPolicyInput:
+      type: object
+      required: [mechanism]
+      additionalProperties: false
+      properties:
+        mechanism: { type: string, enum: [provider, external, none] }
+        tool: { type: string, nullable: true, maxLength: 200, description: 'Required for `external` (not blank), refused otherwise.' }
+        location: { type: string, nullable: true, maxLength: 500, description: 'Optional for `external`, refused otherwise.' }
+    BackupPolicyEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [policy]
+          properties:
+            policy: { $ref: '#/components/schemas/BackupPolicy', nullable: true }
+    BackupPolicySetEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [policy]
+          properties:
+            policy: { $ref: '#/components/schemas/BackupPolicy' }
     DeploymentWarning:
       type: object
       required: [code, severity, message]
       properties:
-        code: { type: string, description: 'Stable: for example `tick_stale`, `tick_late`, `schema_ahead`, `doorbells_overdue`, `dev_token_enabled`.' }
+        code: { type: string, description: 'Stable: for example `tick_stale`, `tick_late`, `schema_ahead`, `doorbells_overdue`, `dev_token_enabled`, `backup_undeclared`, `backup_none`.' }
         severity: { type: string, enum: [warning, critical] }
         message: { type: string }
     DeploymentResponse:

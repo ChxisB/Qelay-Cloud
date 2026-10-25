@@ -405,13 +405,35 @@ variable "extra_cors_origins" {
 # --- capacity and timeouts -------------------------------------------------------------------------------------
 
 variable "api_instances" {
-  description = "API tasks, a fixed count: each holds api_pool_size database connections, which the data plane's connection budget counts, so this does not scale by itself. Two by default so a rollover keeps one running; with one, a rollover has a gap."
+  description = "API tasks to start with, and the fewest autoscaling keeps (api_max_instances). Each holds api_pool_size database connections, which the data plane's connection budget counts at the most the service can reach. Two by default so a rollover keeps one running; with one, a rollover has a gap."
   type        = number
   default     = 2
 
   validation {
     condition     = var.api_instances >= 1 && floor(var.api_instances) == var.api_instances
     error_message = "api_instances must be a whole number, 1 or more."
+  }
+}
+
+variable "api_max_instances" {
+  description = "The most API tasks autoscaling adds (it holds average CPU near autoscaling_cpu_target_percent). Null: api_instances, a fixed count. The data plane's budgeted_control_processes must count this many, not api_instances."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.api_max_instances == null ? true : var.api_max_instances >= 1 && floor(var.api_max_instances) == var.api_max_instances
+    error_message = "api_max_instances must be a whole number, 1 or more."
+  }
+}
+
+variable "autoscaling_cpu_target_percent" {
+  description = "The average CPU, in percent, that the API and the ingest are scaled to hold. It does nothing while api_max_instances and ingest.max_instances equal their minimums. Scale-out waits 60 s between steps and scale-in 300 s, so a burst is met quickly and a lull does not shed tasks (an event stream on a removed task resumes on another)."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = var.autoscaling_cpu_target_percent >= 20 && var.autoscaling_cpu_target_percent <= 90
+    error_message = "autoscaling_cpu_target_percent must be from 20 to 90."
   }
 }
 
@@ -515,6 +537,7 @@ variable "ingest" {
     The inbound listener (packages/ingest; docs/event-gateway.md): the public address a sender posts to. Null (the default):
     none is deployed, and a source's address cannot be reached. It is its own ECS service behind the same load balancer on
     its own host name (`hostname`: a third name your certificate must cover, pointed at the load balancer like the others),
+    `instances` to start with and `max_instances` (null: `instances`) as far as autoscaling goes,
     and the load balancer forwards only `/s/*` to it. Its execution role reads the database secrets; it has no task role,
     so it holds no AWS credential and no queue permission: it stores what it is sent and never calls a destination. Each
     task holds `pool_size` database connections, which the data plane's connection budget must count (see
@@ -526,6 +549,7 @@ variable "ingest" {
     image                 = string
     hostname              = string
     instances             = optional(number, 2)
+    max_instances         = optional(number)
     pool_size             = optional(number, 2)
     cpu                   = optional(number, 256)
     memory                = optional(number, 512)
@@ -541,6 +565,11 @@ variable "ingest" {
   validation {
     condition     = var.ingest == null ? true : var.ingest.instances >= 1 && floor(var.ingest.instances) == var.ingest.instances && var.ingest.pool_size >= 1 && floor(var.ingest.pool_size) == var.ingest.pool_size
     error_message = "ingest.instances and ingest.pool_size are whole numbers, 1 or more."
+  }
+
+  validation {
+    condition     = var.ingest == null ? true : var.ingest.max_instances == null ? true : var.ingest.max_instances >= 1 && floor(var.ingest.max_instances) == var.ingest.max_instances
+    error_message = "ingest.max_instances is a whole number, 1 or more."
   }
 
   validation {

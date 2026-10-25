@@ -22,6 +22,7 @@ for an explicit go-ahead (decision D9). What was and was not run is listed in [N
 | `api.tf` | The API's log group, task definition and ECS service. |
 | `panel.tf` | The panel's log group, task definition and ECS service. |
 | `ingest.tf` | With `ingest` set: the inbound listener's log group, task definition and ECS service. Nothing without it. |
+| `autoscaling.tf` | Application Auto Scaling for the API and, with an ingest, the ingest: a target between the minimum and the maximum and one CPU target-tracking policy each. |
 | `migrate.tf` | The migration's task definition. It has no service: it is run by hand, as a release step. |
 | `iam.tf` | Four roles: the API's task role and three execution roles (API, panel, migration); a fifth, the ingest's execution role, with an ingest. |
 | `waf.tf` | The edge rate limit (a web ACL), when `edge_rate_limit_per_minute` is set. |
@@ -77,12 +78,13 @@ role with exactly that name and the default path.
 | `jwks_reachable_in_vpc` | false | Only for a data plane with `egress = "none"`: you have made the identity provider's signing keys reachable. |
 | `exposure` | `public` | `public` or `private`. See [Exposure](#exposure). |
 | `certificate_arn`, `api_hostname`, `panel_hostname` | required | An ACM certificate (in this region) that covers both names (and `ingest.hostname`), and the two names. DNS is yours: point each at `alb_dns_name`. |
-| `ingest` | null | The inbound listener, off by default: `{ image, hostname, instances = 2, pool_size = 2, cpu = 256, memory = 512, rate_limit_per_minute = 6000 }`. The hostname must differ from the other two. It is the address a sender posts to (`https://<hostname>/s/<token>`; the `ingest_url` output). The load balancer forwards only `/s/*` to it. See [The ingest](#the-ingest). |
+| `ingest` | null | The inbound listener, off by default: `{ image, hostname, instances = 2, max_instances = null, pool_size = 2, cpu = 256, memory = 512, rate_limit_per_minute = 6000 }` (`max_instances`: how far autoscaling goes, null for `instances`). The hostname must differ from the other two. It is the address a sender posts to (`https://<hostname>/s/<token>`; the `ingest_url` output). The load balancer forwards only `/s/*` to it. See [The ingest](#the-ingest). |
 | `ingress_cidrs` | null | Who may reach the load balancer. Null: `0.0.0.0/0` when public, the VPC's range when private. |
 | `alb_subnet_slot` | 12 | The first of the sixteen equal slots of `vpc_cidr` the load balancer's subnets take (public mode). The data plane's NAT subnets take 8 and up. |
 | `alb_idle_timeout_seconds` | 60 | Must be at least twice `event_heartbeat_seconds`. See [Timeouts](#timeouts). |
 | `alb_deletion_protection` | false | Turn on for a real environment; then `terraform destroy` fails until it is off. |
-| `api_instances`, `api_pool_size` | 2, 2 | A **fixed** count: the connection budget counts these processes, so there is no autoscaling. `api_instances + ingest.instances + 2 <= budgeted_control_processes` (the 2 are the migration and the tick). |
+| `api_instances`, `api_max_instances`, `api_pool_size` | 2, null, 2 | The API's tasks: `api_instances` to start with and the fewest autoscaling keeps, `api_max_instances` (null: the same, a fixed count) the most. The connection budget counts the maximum: `api_max_instances + ingest.max_instances + 2 <= budgeted_control_processes` (the 2 are the migration and the tick), so raise the data plane's `control_processes` first. |
+| `autoscaling_cpu_target_percent` | 60 | The average CPU that target tracking holds for the API and the ingest (`autoscaling.tf`). Scale-out waits 60 s between steps, scale-in 300 s. The panel holds no connection and is not scaled. The first apply needs `iam:CreateServiceLinkedRole` (Application Auto Scaling), once. |
 | `api_event_streams` | 50 | Open event streams per task. |
 | `event_stream_lifetime_seconds`, `event_heartbeat_seconds` | 600, 15 | See [Timeouts](#timeouts). |
 | `shutdown_grace_seconds` | 8 | How long the API drains before it exits; the container's `stopTimeout` is this plus 10 s. |

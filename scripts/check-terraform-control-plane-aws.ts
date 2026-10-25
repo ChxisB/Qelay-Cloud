@@ -18,7 +18,7 @@ import { checkEdgeRateLimit, checkIngress } from './terraform-control-plane-aws-
 import { checkIdentities } from './terraform-control-plane-aws-iam';
 import { checkAwsIngestPlans } from './terraform-control-plane-aws-ingest';
 import type { Fixture, Variation } from './terraform-control-plane-aws-services';
-import { checkEcsServices, checkServices } from './terraform-control-plane-aws-services';
+import { checkAutoscaling, checkEcsServices, checkServices } from './terraform-control-plane-aws-services';
 import type { Plan } from './terraform-plan-model';
 import { Checks, get, ofType } from './terraform-plan-model';
 
@@ -146,6 +146,7 @@ try {
     if (result.plan === null) return;
     checkServices(result.plan, checks, FIXTURE, v);
     checkEcsServices(result.plan, checks, FIXTURE, v);
+    checkAutoscaling(result.plan, checks, FIXTURE, { min: v.apiInstances, max: v.apiMaxInstances ?? v.apiInstances });
     checkIngress(result.plan, checks, FIXTURE, exposure);
     checkIdentities(result.plan, checks, FIXTURE, iam);
   }
@@ -153,7 +154,7 @@ try {
   // --- the control plane as CI plans it ---------------------------------------------------------------------------
   variation('base', [], BASE, EXPOSURE, IAM);
   const base = here('base-count');
-  checks.ok('the base plan has 37 resources', base.plan?.resource_changes.length === 37, String(base.plan?.resource_changes.length));
+  checks.ok('the base plan has 39 resources', base.plan?.resource_changes.length === 39, String(base.plan?.resource_changes.length));
   if (base.plan !== null) checkAwsApiAlarm(base.plan, checks, ROOT, here('no-alarm', 'alert_api_errors=false').plan);
   for (const name of ['api_url', 'panel_url', 'alb_dns_name', 'api_task_role_arn', 'migrate', 'event_stream', 'oidc_redirect_uris']) {
     checks.ok(`output ${name}`, base.plan !== null && name in base.plan.output_changes);
@@ -171,6 +172,7 @@ try {
   variation('no-monitoring', ['monitoring_read=false'], BASE, EXPOSURE, { ...IAM, monitoring: false });
   variation('not-ecr', ['image_repository_arns=[]'], BASE, EXPOSURE, { ...IAM, ecr: false });
   variation('one-api-task', ['api_instances=1'], { ...BASE, apiInstances: 1 }, EXPOSURE, IAM);
+  variation('api-autoscaling', ['api_max_instances=8', 'budgeted_control_processes=10'], { ...BASE, apiMaxInstances: 8 }, EXPOSURE, IAM);
   variation('longer-idle', ['alb_idle_timeout_seconds=300'], BASE, { ...EXPOSURE, idleSeconds: 300 }, IAM);
   const edge = here('edge-rate-limit', 'edge_rate_limit_per_minute=1200');
   checks.ok('an edge rate limit plans', edge.plan !== null, edge.diagnostics);
@@ -253,6 +255,9 @@ try {
     ['a public load balancer with no internet gateway', ['internet_gateway_id=null'], /needs the data plane's internet gateway/],
     ['no route out and no way to reach the provider', ['egress=none', 'internet_gateway_id=null', 'exposure=private'], /egress is none/],
     ['more API tasks than the connection budget counts', ['api_instances=3'], /connection budget counts/],
+    ['autoscaling past the connection budget', ['api_max_instances=3'], /connection budget counts/],
+    ['an API maximum under its minimum', ['api_max_instances=1'], /at least api_instances/],
+    ['a CPU target of 95 percent', ['autoscaling_cpu_target_percent=95'], /from 20 to 90/],
     ['a pool bigger than the budgeted one', ['api_pool_size=5'], /connections per control process/],
     ['a load balancer timeout that would cut a stream', ['event_heartbeat_seconds=40'], /at least twice/],
     ['a heartbeat longer than proxies keep an idle connection', ['event_heartbeat_seconds=120'], /between 15 and 60/],

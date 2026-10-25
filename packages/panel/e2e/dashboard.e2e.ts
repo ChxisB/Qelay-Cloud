@@ -54,7 +54,7 @@ test('authenticates, keeps every route under BASE_PATH, and navigates the full s
   // Health opens Deployment; System opens the first of its pages this deployment has (the MCP bridge).
   expect(hrefs).toContain(`${E2E_BASE_PATH}/deployment`);
   expect(hrefs).toContain(`${E2E_BASE_PATH}/mcp`);
-  for (const closed of ['/server', '/database', '/s3', '/fleet']) {
+  for (const closed of ['/server', '/database', '/fleet']) {
     expect(hrefs).not.toContain(`${E2E_BASE_PATH}${closed}`);
   }
   expect(hrefs).toContain(`${E2E_BASE_PATH}/flows`);

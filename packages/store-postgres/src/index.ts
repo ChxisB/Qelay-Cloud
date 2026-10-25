@@ -182,6 +182,18 @@ export {
 } from './store/webhookStats';
 export { MAX_SECRET_CHARS, MIN_SECRET_CHARS } from './store/webhooks';
 export type {
+  BackupMechanism,
+  BackupPolicy,
+  BackupPolicyApi,
+  BackupPolicySpec,
+} from './store/backupPolicy';
+export {
+  BACKUP_MECHANISMS,
+  checkBackupPolicy,
+  MAX_BACKUP_LOCATION_CHARS,
+  MAX_BACKUP_TOOL_CHARS,
+} from './store/backupPolicy';
+export type {
   AllDeliveriesQuery,
   AttemptOutcome,
   ClaimedDelivery,

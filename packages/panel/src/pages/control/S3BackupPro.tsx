@@ -5,7 +5,6 @@ import {
   type S3AddressingStyle,
   useS3Store,
 } from '@/components/dashboard/stores/s3Store';
-import { SystemTabs } from '@/components/SystemTabs';
 import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
@@ -83,7 +82,6 @@ export function S3BackupPro() {
   return (
     <div>
       <PageHeader title="S3 backup setup" description="Configure and operate Qelay S3 backups." />
-      <SystemTabs current="/s3" />
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-4">
         <div className="flex items-center gap-3">
           <span className="flex size-8 items-center justify-center rounded-control bg-slate-tint text-muted">

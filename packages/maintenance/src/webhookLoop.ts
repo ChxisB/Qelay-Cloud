@@ -1,6 +1,6 @@
 import type { AttemptOutcome, ClaimedDelivery, PostgresStore } from '@qelay-cloud/store-postgres';
 import type { Telemetry } from './telemetry';
-import { sendUnit, unitsOf } from './webhookBatchSend';
+import { mayHaveMore, sendUnit, unitsOf } from './webhookBatchSend';
 import type { WebhookSenderConfig } from './webhookConfig';
 import { Destinations } from './webhookDestinations';
 import { createSocketPool } from './webhookPool';
@@ -129,7 +129,7 @@ export async function runWebhookLoop(
         claimed += batch.length;
         const units = unitsOf(batch);
         for (const unit of units) start(unit);
-        nextLook = units.length < free ? performance.now() + config.idleMs : 0;
+        nextLook = mayHaveMore(units, free) ? 0 : performance.now() + config.idleMs;
       }
       if (done.length === 0) {
         const full = sends.size >= config.concurrency;

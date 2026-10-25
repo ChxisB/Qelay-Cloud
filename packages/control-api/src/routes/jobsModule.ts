@@ -10,6 +10,7 @@ import { createDashboardReader } from '../jobs/dashboardReader';
 import type { JobsConfig } from '../jobs/limits';
 import { resolveJobsConfig } from '../jobs/limits';
 import { addJobRoutes } from './addJob';
+import { backupPolicyRoutes } from './backupPolicy';
 import { cronRoutes } from './crons';
 import { dlqRoutes } from './dlq';
 import { eventRoutes } from './events';
@@ -81,6 +82,7 @@ export function jobsModule(
       ...workflowRoutes(ctx),
       ...metricsRoutes(ctx, dashboard),
       ...serverStatusRoutes(ctx),
+      ...backupPolicyRoutes(ctx),
       ...unsupportedRoutes(),
     ],
   };

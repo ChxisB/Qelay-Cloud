@@ -1,4 +1,5 @@
 import { DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MAX_AUDIT_ENTRIES } from './audit';
+import { DEFAULT_COMPLETED_RETENTION_MS } from './completedRetention';
 import { DEFAULT_MAX_COMPLETED_JOBS } from './completions';
 import { DEFAULT_EVENT_RETENTION_MS, DEFAULT_MAX_QUEUE_EVENTS } from './eventRetention';
 import { DEFAULT_MAX_JOB_LOGS, MAX_JOB_LOGS } from './logs';
@@ -31,6 +32,11 @@ export interface StoreSettingsOptions {
    * once its day ended this long ago, so the shortest value among the processes that tick decides.
    */
   readonly webhookKeepMs?: number;
+  /**
+   * How long a completed job stays before the tick deletes it (and its logs). Default seven days. 0 keeps completed jobs
+   * until `removeOnComplete` or `clean` removes them.
+   */
+  readonly completedRetentionMs?: number;
 }
 
 export interface StoreSettings {
@@ -44,6 +50,7 @@ export interface StoreSettings {
   readonly auditRetentionMs: number;
   readonly maxAuditEntries: number;
   readonly webhookKeepMs: number;
+  readonly completedRetentionMs: number;
 }
 
 const whole = (value: number | undefined, fallback: number, least: number): number =>
@@ -62,5 +69,6 @@ export function resolveSettings(options: StoreSettingsOptions): StoreSettings {
     auditRetentionMs: whole(options.auditRetentionMs, DEFAULT_AUDIT_RETENTION_MS, 1),
     maxAuditEntries: whole(options.maxAuditEntries, DEFAULT_MAX_AUDIT_ENTRIES, 1),
     webhookKeepMs: whole(options.webhookKeepMs, DEFAULT_WEBHOOK_KEEP_MS, 1),
+    completedRetentionMs: whole(options.completedRetentionMs, DEFAULT_COMPLETED_RETENTION_MS, 0),
   };
 }

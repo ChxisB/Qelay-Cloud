@@ -23,6 +23,8 @@ import type {
   TickBudget,
   TickReport,
 } from '@qelay-cloud/core';
+import type { BackupPolicyApi } from './store/backupPolicy';
+import { backupPolicyApi } from './store/backupPolicy';
 import { claimJobs } from './store/claim';
 import { completeJob, completeJobs } from './store/complete';
 import type { StoreContext } from './store/context';
@@ -121,6 +123,8 @@ export class PostgresStore implements StateStore {
   readonly webhooks: WebhookApi;
   /** Inbound sources: registrations, and the calls the ingest makes (D12, D14). */
   readonly sources: SourceApi;
+  /** How the operator says this database is backed up (D18). Qelay takes no backups itself. */
+  readonly backups: BackupPolicyApi;
   /** Durable workflow executions: the workflow engine's store. */
   readonly workflows: WorkflowApi;
   /** How long a lease lasts from a claim or a heartbeat: a worker beats at a third of it. */
@@ -145,6 +149,7 @@ export class PostgresStore implements StateStore {
     this.audit = auditApi(this.ctx);
     this.webhooks = webhookApi(this.ctx);
     this.sources = sourceApi(this.ctx);
+    this.backups = backupPolicyApi(this.ctx);
     this.workflows = workflowApi(this.ctx);
     this.leaseMs = this.ctx.leaseMs;
     this.ringWindowMs = this.ctx.ringWindowMs;

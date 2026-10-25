@@ -100,6 +100,9 @@ export function openRuntime(
       ...(settings.webhooks.keepMs === undefined
         ? {}
         : { webhookKeepMs: settings.webhooks.keepMs }),
+      ...(settings.completedRetentionMs === undefined
+        ? {}
+        : { completedRetentionMs: settings.completedRetentionMs }),
     }),
     transport,
   };

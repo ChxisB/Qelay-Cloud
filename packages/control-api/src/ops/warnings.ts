@@ -1,3 +1,4 @@
+import type { BackupMechanism } from '@qelay-cloud/store-postgres';
 import type { DeploymentResponse, DeploymentWarning } from '../opsTypes';
 import { spoken } from './tick';
 
@@ -24,6 +25,8 @@ type Parts = Pick<
   };
   /** Webhooks failing (alert level 1 to 3) and paused, or null when they could not be read. */
   readonly webhooks: { readonly failing: number; readonly paused: number } | null;
+  /** What the operator declared for backups (D18): a mechanism, `undeclared`, or null when it could not be read. */
+  readonly backup: BackupMechanism | 'undeclared' | null;
 };
 
 /**
@@ -153,6 +156,15 @@ export function deploymentWarnings(parts: Parts): DeploymentWarning[] {
       'warning',
       `${parts.webhooks.failing} webhook(s) have many failed deliveries in a row and will be paused if it continues.`
     );
+  }
+  if (parts.backup === 'undeclared') {
+    add(
+      'backup_undeclared',
+      'warning',
+      'No backup mechanism is declared. Say how this database is backed up on the Backups page, even if the answer is your own tooling.'
+    );
+  } else if (parts.backup === 'none') {
+    add('backup_none', 'warning', 'This database is declared as not backed up.');
   }
   if (parts.devToken) {
     add(

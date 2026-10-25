@@ -12,6 +12,7 @@
   "root" .
   "component" "ingest"
   "replicas" .Values.ingest.replicas
+  "autoscaled" .Values.ingest.autoscaling.enabled
   "image" (include "qelay.image" (dict "root" . "image" .Values.ingest.image))
   "env" (include "qelay.ingestEnv" .)
   "port" 8081
@@ -19,6 +20,7 @@
   "readyPath" "/healthz"
   "serviceAccountName" (printf "%s-ingest" (include "qelay.fullname" .))
   "resources" .Values.ingest.resources) }}
+{{ include "qelay.scaling" (dict "root" . "component" "ingest" "values" .Values.ingest) }}
 ---
 apiVersion: v1
 kind: Service

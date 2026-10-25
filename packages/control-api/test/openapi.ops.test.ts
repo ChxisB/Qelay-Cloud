@@ -91,6 +91,16 @@ describeDb('docs/openapi.yaml operator bodies', () => {
     }
   });
 
+  test('the backup policy documents its envelope while undeclared and once declared', async () => {
+    const undeclared = await fits('BackupPolicyEnvelope', 'GET', '/backup-policy');
+    expect(undeclared.data.policy).toBeNull();
+    const body = { mechanism: 'external', tool: 'pgBackRest', location: 'gs://acme-backups' };
+    const saved = await fits('BackupPolicySetEnvelope', 'PUT', '/backup-policy', body);
+    expect(keysFit(saved.data.policy, 'BackupPolicy')).toEqual([]);
+    const declared = await fits('BackupPolicyEnvelope', 'GET', '/backup-policy');
+    expect(keysFit(declared.data.policy, 'BackupPolicy')).toEqual([]);
+  });
+
   test('the metrics, status and audit routes document their bodies', async () => {
     await fits('MetricsTotals', 'GET', '/metrics');
     const series = await fits('MetricsSeries', 'GET', '/metrics/queues/q?minutes=3');

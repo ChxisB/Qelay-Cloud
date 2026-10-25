@@ -60,8 +60,8 @@ const QueueDetailPro = retryableLazy(() =>
 const QueuesOverview = retryableLazy(() =>
   import('./pages/control/QueuesOverview').then((m) => ({ default: m.QueuesOverview }))
 );
-const S3BackupPro = retryableLazy(() =>
-  import('./pages/control/S3BackupPro').then((m) => ({ default: m.S3BackupPro }))
+const Backups = retryableLazy(() =>
+  import('./pages/control/Backups').then((m) => ({ default: m.Backups }))
 );
 const ServerControl = retryableLazy(() =>
   import('./pages/control/ServerControl').then((m) => ({ default: m.ServerControl }))
@@ -186,7 +186,8 @@ export function App() {
         <Route path="/mcp" element={<McpServer />} />
         <Route path="/usage" element={<UsagePro />} />
         <Route path="/usage-classic" element={<LegacyRedirect />} />
-        <Route path="/s3" element={<S3BackupPro />} />
+        <Route path="/backups" element={<Backups />} />
+        <Route path="/s3" element={<Navigate to="/backups" replace />} />
         <Route path="/s3-classic" element={<LegacyRedirect />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<NotFound />} />

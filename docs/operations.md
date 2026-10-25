@@ -42,6 +42,9 @@ With the default `max_connections` of 100 a direct fleet tops out at about 44 wo
 
 - **Terraform checks it for you.** Both data planes refuse to plan a fleet that needs more than `max_connections`
   and warn above 80%. Count the tick and every Control API instance in `control_processes`.
+- **So does the Helm chart, at its largest.** Set `database.maxConnections` to the server's `max_connections` and the render
+  fails when the fleet at every autoscaler's `maxReplicas` (API, ingest, sender, workers) needs more
+  ([quickstart](quickstart-kubernetes.md#4-scale-it)). Left at `0` the guard is off.
 - **Tell the Control API your fleet** (`QCLOUD_FLEET_WORKERS` and the variables after it) and `/deployment` and the panel's
   Deployment page show real connection use against the budget, and warn at 80%.
 - **Add a pooler above about 80%.** Neither Terraform creates one: it is another paid, stateful service. Behind a
@@ -232,7 +235,13 @@ against a real project. The steps are in the [GCP runbook](runbooks/deploy-gcp.m
 - **Back up Postgres.** It is the only state: the queues hold bells, not jobs. Both data planes turn on backups with
   point-in-time recovery and database deletion protection. Bells are not state: after a restore the tick rings every
   claimable job again.
-- **Retention.** The tick removes old completed jobs, events, completion records, group state and metric buckets by the rules of each queue
+- **Say how it is backed up.** Qelay takes no backups and checks none. On the panel's Backups page (or `PUT /backup-policy`, an
+  operator's call) declare `provider` (Cloud SQL or RDS backups), `external` (your own tooling: name it, and optionally say where
+  the copies land) or `none`. Until someone does, `/deployment` and the Home page carry the warning `backup_undeclared`, and
+  `backup_none` while the answer is "nothing". The declaration is a record of what you said, not proof that a backup exists or
+  restores: test a restore yourself.
+- **Retention.** The tick removes completed jobs older than `QCLOUD_COMPLETED_RETENTION_MS` (7 days by default, `0` keeps them for ever;
+  one window for every queue, and a job a live flow still needs stays), and old events, completion records, group state and metric buckets by the rules of each queue
   (`POST /queues/{queue}/clean` removes finished jobs on demand). A queue's dead-letter queue keeps its entries for the
   configured time (`/queues/{queue}/dlq-config`).
 - **A stored inbound request** (and its rejections) is kept for 2 days (`QCLOUD_WEBHOOK_KEEP_MS`, never less than 48 hours)

@@ -1,0 +1,16 @@
+# Layered over ci/values.yaml: every autoscaler, disruption budget and the connection guard, so helm lint and template reach them.
+database: { maxConnections: 100 }
+api: { resources: { requests: { cpu: 250m } }, autoscaling: { enabled: true, maxReplicas: 4 }, podDisruptionBudget: { enabled: true } }
+ingest: { resources: { requests: { cpu: 250m } }, autoscaling: { enabled: true } }
+webhooks: { sender: { resources: { requests: { cpu: 100m } }, autoscaling: { enabled: true } } }
+workers:
+  - name: orders
+    image: ghcr.io/me/orders:1.0.0
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 8
+      triggers:
+        - type: gcp-pubsub
+          metadata: { subscriptionName: orders-sub, mode: SubscriptionSize, value: "100" }
+    podDisruptionBudget: { enabled: true }

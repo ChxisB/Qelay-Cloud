@@ -30,12 +30,14 @@
   "root" .
   "component" "api"
   "replicas" .Values.api.replicas
+  "autoscaled" .Values.api.autoscaling.enabled
   "image" (include "qelay.image" (dict "root" . "image" .Values.api.image))
   "env" (include "qelay.apiEnv" .)
   "port" 8080
   "livePath" "/health"
   "readyPath" "/health/ready"
   "resources" .Values.api.resources) }}
+{{ include "qelay.scaling" (dict "root" . "component" "api" "values" .Values.api) }}
 ---
 apiVersion: v1
 kind: Service

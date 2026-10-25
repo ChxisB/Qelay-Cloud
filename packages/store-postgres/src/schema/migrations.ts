@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { AUDIT_STATEMENTS } from './ddl/audit';
 import { AUXILIARY_STATEMENTS } from './ddl/auxiliary';
+import { BACKUP_POLICY_STATEMENTS } from './ddl/backupPolicy';
+import { COMPLETED_RETENTION_STATEMENTS } from './ddl/completedRetention';
 import { DELIVERY_PARTITION_STATEMENTS } from './ddl/deliveryPartitions';
 import { EVENT_STATEMENTS } from './ddl/events';
 import { FLOW_ROOT_STATEMENTS, FLOW_STATEMENTS } from './ddl/flows';
@@ -71,6 +73,8 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 21, name: 'remove job events', statements: REMOVE_JOB_EVENT_STATEMENTS },
   { version: 22, name: 'route schedule and batch', statements: WEBHOOK_SCHEDULE_BATCH_STATEMENTS },
   { version: 23, name: 'queue policy and run window', statements: QUEUE_POLICY_WINDOW_STATEMENTS },
+  { version: 24, name: 'completed job retention', statements: COMPLETED_RETENTION_STATEMENTS },
+  { version: 25, name: 'backup policy', statements: BACKUP_POLICY_STATEMENTS },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

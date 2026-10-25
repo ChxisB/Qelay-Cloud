@@ -25,6 +25,7 @@ const healthy = (): Parts => ({
   },
   doorbells: { notRung: 0, oldestNotRungAgeMs: null, queuesScanned: 3, partial: false },
   webhooks: { failing: 0, paused: 0 },
+  backup: 'provider',
   timing: { tickIntervalMs: 60_000, scheduledRoutes: 0, shortDelayRoutes: 0, closedWindows: 0 },
 });
 
@@ -51,6 +52,7 @@ describe('deploymentWarnings', () => {
       tick: { ...parts.tick, state: 'unknown', lastSuccessAt: null, ageMs: null },
       doorbells: { notRung: null, oldestNotRungAgeMs: null, queuesScanned: null, partial: false },
       webhooks: null,
+      backup: null,
       timing: {
         tickIntervalMs: null,
         scheduledRoutes: null,
@@ -86,8 +88,19 @@ describe('deploymentWarnings', () => {
     ['dev_token_enabled', 'warning', (): Partial<Parts> => ({ devToken: true })],
     ['webhook_paused', 'warning', (): Partial<Parts> => ({ webhooks: { failing: 0, paused: 1 } })],
     ['webhook_failing', 'warning', (): Partial<Parts> => ({ webhooks: { failing: 2, paused: 0 } })],
+    ['backup_undeclared', 'warning', (): Partial<Parts> => ({ backup: 'undeclared' })],
+    ['backup_none', 'warning', (): Partial<Parts> => ({ backup: 'none' })],
   ] as const)('%s is a %s', (code, severity, change) => {
     expect(only(warn(change), code)).toEqual([{ code, severity, message: expect.any(String) }]);
+  });
+
+  test("a declared backup mechanism, the provider's or the operator's own, is not a warning", () => {
+    for (const backup of ['provider', 'external'] as const) {
+      expect(
+        warn(() => ({ backup })),
+        backup
+      ).toEqual([]);
+    }
   });
 
   describe('the tick', () => {

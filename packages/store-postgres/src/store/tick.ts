@@ -1,5 +1,6 @@
 import type { Ring, TickBudget, TickReport } from '@qelay-cloud/core';
 import { UnsupportedOptionError } from '@qelay-cloud/core';
+import { pruneCompletedJobs } from './completedRetention';
 import { pruneCompletions } from './completions';
 import type { StoreContext } from './context';
 import { claimDueCrons } from './crons';
@@ -30,8 +31,8 @@ function positive(name: string, value: number): number {
  * 2. fire the crons that are due;
  * 3. promote delayed jobs that came due;
  * 4. delete pending jobs whose TTL elapsed;
- * 5. delete DLQ entries past their queue's `maxAge`, workers that stopped heartbeating, and webhook
- *    deliveries that are too old (expired if live, deleted if finished);
+ * 5. delete completed jobs past `completedRetentionMs`, DLQ entries past their queue's `maxAge`, workers that
+ *    stopped heartbeating, and webhook deliveries that are too old (expired if live, deleted if finished);
  * 6. trim the event journal to its window and caps, and delete the commit envelopes nothing uses;
  * 7. delete completion records of jobs that are gone, group state nothing uses, and metric buckets
  *    past their retention;
@@ -113,6 +114,7 @@ export async function runTick(ctx: StoreContext, budget: TickBudget): Promise<Ti
     [
       'retention',
       async () => {
+        note((await pruneCompletedJobs(ctx, maxItems)).more);
         note((await purgeExpiredDlq(ctx, maxItems)) >= maxItems);
         note((await expireWorkers(ctx, maxItems)).more);
         note((await pruneWebhookDeliveries(ctx, maxItems)).more);

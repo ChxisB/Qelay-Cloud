@@ -1,6 +1,6 @@
 import type { PostgresStore } from '@qelay-cloud/store-postgres';
 import type { Telemetry } from './telemetry';
-import { sendUnit, unitsOf } from './webhookBatchSend';
+import { mayHaveMore, sendUnit, unitsOf } from './webhookBatchSend';
 import type { WebhookSenderConfig } from './webhookConfig';
 import type { Destinations } from './webhookDestinations';
 import type { Enqueue } from './webhookEnqueue';
@@ -128,8 +128,8 @@ export async function sendDueWebhooks(
         paused: summary.paused,
         errors: 0,
       });
-      // A short claim took everything that was due (or everything the rate limit allowed).
-      if (units.length < take) break;
+      // A short claim took everything that was due (or everything the rate limit allowed), a batch route's backlog apart.
+      if (!mayHaveMore(units, take)) break;
       if (remaining === 0 || performance.now() - started >= config.budgetMs) {
         moreWork = true;
         break;

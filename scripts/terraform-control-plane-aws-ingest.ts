@@ -5,7 +5,7 @@
  * other AWS credential), counted in the connection budget, and rate limited by its own WAF rule when there is one.
  */
 import type { Fixture } from './terraform-control-plane-aws-services';
-import { checkHygiene, containerOf, find, rootReferences } from './terraform-control-plane-aws-services';
+import { checkAutoscaling, checkHygiene, containerOf, find, rootReferences } from './terraform-control-plane-aws-services';
 import { list, policyOf, same } from './terraform-plan-aws-model';
 import type { Checks, Plan, ResourceChange } from './terraform-plan-model';
 import { after, get, ofType } from './terraform-plan-model';
@@ -37,6 +37,11 @@ export function checkAwsIngestPlans(here: Planner, checks: Checks, fx: Fixture, 
   const plain = here('ingest', ...common, ingestVar(image));
   checks.ok('ingest: a plan with an ingest plans', plain.plan !== null, plain.diagnostics);
   if (plain.plan !== null) checkAwsIngest(plain.plan, checks, fx, image, repositories, undefined);
+  if (plain.plan !== null) checkAutoscaling(plain.plan, checks, fx, { min: 2, max: 2 }, { min: 2, max: 2 });
+
+  const scaled = here('ingest-autoscaling', 'budgeted_control_processes=10', common[1] as string, ingestVar(image, ',max_instances=6'));
+  checks.ok('ingest: a plan that autoscales the ingest to 6 tasks plans', scaled.plan !== null, scaled.diagnostics);
+  if (scaled.plan !== null) checkAutoscaling(scaled.plan, checks, fx, { min: 2, max: 2 }, { min: 2, max: 6 });
 
   const keyed = here('ingest-secrets-key', ...common, ingestVar(image), `secrets_kms_key_arn=${secretsKey}`);
   checks.ok('ingest: a plan with an ingest and a secrets key plans', keyed.plan !== null, keyed.diagnostics);
@@ -48,6 +53,8 @@ export function checkAwsIngestPlans(here: Planner, checks: Checks, fx: Fixture, 
 
   const refusals: Array<[string, string[], RegExp]> = [
     ['more tasks than the connection budget counts, the ingest included', [ingestVar(image)], /would run/],
+    ['an ingest that autoscales past the connection budget', [ingestVar(image, ',max_instances=4')], /would run/],
+    ['an ingest maximum under its minimum', ['budgeted_control_processes=6', ingestVar(image, ',max_instances=1')], /ingest\.max_instances at least/],
     ['an ingest pool bigger than the budgeted one', ['budgeted_control_processes=6', ingestVar(image, ',pool_size=5')], /ingest\.pool_size/],
     ['an ingest on the API host name', ['budgeted_control_processes=6', `ingest={image="${image}",hostname="${fx.apiHost}"}`], /three different names/],
     ['an upper-case ingest host name', ['budgeted_control_processes=6', `ingest={image="${image}",hostname="IN.example.com"}`], /lowercase DNS name/],

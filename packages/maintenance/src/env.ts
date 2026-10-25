@@ -65,6 +65,20 @@ export interface Settings extends TransportSettings {
   readonly webhooks: WebhookEnvSettings & { readonly sender: WebhookSenderOptions };
   /** The workflow step's options: the engine queue, batch, idle window and wait lease. */
   readonly workflows: WorkflowSweepOptions;
+  /** `QCLOUD_COMPLETED_RETENTION_MS`: how long a completed job stays; 0 keeps them. Absent: seven days (the store's default). */
+  readonly completedRetentionMs?: number;
+}
+
+function completedRetentionFromEnv(env: Env): number | undefined {
+  const raw = env.QCLOUD_COMPLETED_RETENTION_MS;
+  if (raw === undefined || raw === '') return undefined;
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+    throw new UnsupportedOptionError(
+      'QCLOUD_COMPLETED_RETENTION_MS',
+      `must be a non-negative integer (0 keeps completed jobs), not "${raw}"`
+    );
+  }
+  return Number(raw);
 }
 
 /**
@@ -95,6 +109,7 @@ export function settingsFromEnv(env: Env, tickDefaults?: TickOptions): Settings 
     }
     namespace = shard[0]!;
   }
+  const completedRetentionMs = completedRetentionFromEnv(env);
   return {
     namespace,
     ...(shard === undefined ? {} : { shard }),
@@ -103,5 +118,6 @@ export function settingsFromEnv(env: Env, tickDefaults?: TickOptions): Settings 
     tick: tickOptionsFromEnv(env, tickDefaults),
     webhooks: { ...webhookSettingsFromEnv(env), sender: webhookOptionsFromEnv(env) },
     workflows: workflowOptionsFromEnv(env),
+    ...(completedRetentionMs === undefined ? {} : { completedRetentionMs }),
   };
 }

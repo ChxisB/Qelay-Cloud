@@ -12,6 +12,13 @@ TABLE qcloud_audit
   outcome text NOT NULL
   status integer
   reason text
+TABLE qcloud_backup_policy
+  namespace text NOT NULL
+  mechanism text NOT NULL
+  tool text
+  location text
+  updated_by text NOT NULL
+  updated_at bigint NOT NULL
 TABLE qcloud_completions
   namespace text NOT NULL
   job_id text NOT NULL
@@ -380,6 +387,10 @@ TABLE qcloud_workflow_executions_archive
   updated_at bigint NOT NULL
   archived_at bigint NOT NULL
 CONSTRAINT qcloud_audit.qcloud_audit_pkey PRIMARY KEY (id)
+CONSTRAINT qcloud_backup_policy.qcloud_backup_policy_check CHECK (((mechanism = 'external'::text) = (tool IS NOT NULL)))
+CONSTRAINT qcloud_backup_policy.qcloud_backup_policy_check1 CHECK (((mechanism = 'external'::text) OR (location IS NULL)))
+CONSTRAINT qcloud_backup_policy.qcloud_backup_policy_mechanism_check CHECK ((mechanism = ANY (ARRAY['provider'::text, 'external'::text, 'none'::text])))
+CONSTRAINT qcloud_backup_policy.qcloud_backup_policy_pkey PRIMARY KEY (namespace)
 CONSTRAINT qcloud_completions.qcloud_completions_pkey PRIMARY KEY (namespace, job_id)
 CONSTRAINT qcloud_crons.qcloud_crons_pkey PRIMARY KEY (namespace, name)
 CONSTRAINT qcloud_deliveries.qcloud_deliveries_namespace_webhook_id_fkey FOREIGN KEY (namespace, webhook_id) REFERENCES qcloud_webhooks(namespace, id) ON DELETE CASCADE
@@ -456,6 +467,7 @@ CONSTRAINT qcloud_workflow_executions_archive.qcloud_workflow_executions_archive
 CREATE INDEX qcloud_audit_namespace_id_idx ON qcloud_audit USING btree (namespace, id DESC)
 CREATE INDEX qcloud_audit_namespace_time_idx ON qcloud_audit USING btree (namespace, occurred_at)
 CREATE UNIQUE INDEX qcloud_audit_pkey ON qcloud_audit USING btree (id)
+CREATE UNIQUE INDEX qcloud_backup_policy_pkey ON qcloud_backup_policy USING btree (namespace)
 CREATE UNIQUE INDEX qcloud_completions_pkey ON qcloud_completions USING btree (namespace, job_id)
 CREATE INDEX qcloud_completions_queue_idx ON qcloud_completions USING btree (namespace, queue, job_id)
 CREATE INDEX qcloud_completions_recent_idx ON qcloud_completions USING btree (namespace, completed_at DESC, job_id DESC)
@@ -492,6 +504,7 @@ CREATE UNIQUE INDEX qcloud_group_state_pkey ON qcloud_group_state USING btree (n
 CREATE INDEX qcloud_group_state_rotation_idx ON qcloud_group_state USING btree (namespace, queue, last_served, group_id)
 CREATE INDEX qcloud_job_logs_job_idx ON qcloud_job_logs USING btree (namespace, job_id, id)
 CREATE UNIQUE INDEX qcloud_job_logs_pkey ON qcloud_job_logs USING btree (id)
+CREATE INDEX qcloud_jobs_completed_idx ON qcloud_jobs USING btree (namespace, completed_at, id) WHERE (state = 'completed'::text)
 CREATE INDEX qcloud_jobs_delayed_idx ON qcloud_jobs USING btree (namespace, queue, run_at, id) WHERE (state = 'delayed'::text)
 CREATE INDEX qcloud_jobs_flow_idx ON qcloud_jobs USING btree (namespace, flow_root, flow_depth, id) WHERE (flow_root IS NOT NULL)
 CREATE INDEX qcloud_jobs_flow_roots_idx ON qcloud_jobs USING btree (namespace, created_at DESC, id DESC) WHERE (flow_depth = 0)

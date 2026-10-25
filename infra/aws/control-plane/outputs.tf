@@ -80,8 +80,8 @@ output "oidc_redirect_uris" {
 output "connection_budget" {
   description = "What the control plane holds, against what the data plane counted."
   value = {
-    api_connections        = var.api_instances * var.api_pool_size
-    ingest_connections     = local.ingest ? var.ingest.instances * var.ingest.pool_size : 0
+    api_connections        = local.api_max_instances * var.api_pool_size
+    ingest_connections     = local.ingest ? local.ingest_max_instances * var.ingest.pool_size : 0
     budgeted_processes     = var.budgeted_control_processes
     budgeted_pool_per_each = var.budgeted_control_pool_size
   }

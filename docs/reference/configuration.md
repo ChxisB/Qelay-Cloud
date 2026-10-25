@@ -190,6 +190,7 @@ identically on both. [webhooks.md](../webhooks.md) is the full design.
 | `QCLOUD_WEBHOOK_LEASE_MS` | `30000` | How long a claimed delivery is its sender's. At least the timeout plus 5,000, or a slow receiver is sent to twice. |
 | `QCLOUD_WEBHOOK_RATE_PER_MINUTE` | `60` | Attempts one webhook gets in a minute. |
 | `QCLOUD_WEBHOOK_KEEP_MS` | `172800000` | How long a finished delivery stays readable (two days). A day of deliveries is dropped whole once its end is this old. With several ticks on one database the shortest value decides. |
+| `QCLOUD_COMPLETED_RETENTION_MS` | `604800000` | How long a completed job stays before the tick deletes it (seven days); `0` keeps them for ever. Failed jobs and the dead-letter queue have their own limits. Migration 24 adds the index this uses, which locks writes to `qcloud_jobs` while it builds on a very large table. |
 | `QCLOUD_WEBHOOK_MAX_ATTEMPTS` | `8` | Attempts per delivery, the first included. |
 | `QCLOUD_WEBHOOK_DISABLE_AFTER` | `20` | Failed deliveries (every attempt used) in a row after which a webhook is paused; alert levels come at 50, 70, 90 and 100% of it. `0`: never pause. |
 | `QCLOUD_WEBHOOK_BASE_DELAY_MS` | `30000` | The wait after the first failure; each further failure doubles it. |

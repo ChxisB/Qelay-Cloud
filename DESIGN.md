@@ -43,6 +43,7 @@ Sources studied: `qelay` (`../qelay`, about 97k lines of TypeScript, MIT) and
 | D15 | **A route can send at a set time and in batches** (section 6): a `schedule` (cron and time zone) holds a route's events until the next fire, and a `batch` sends many events in one signed request. Both are data on the route. | **Decided** (owner, 2026-10-23) |
 | D16 | **DLQ retry is reopened.** One failed job, or a bounded set, goes back on the queue, guarded by its `version`; DLQ retention is settable through the API. No auto-retry. Reverses the Phase 0 closure of task 14 (k). | **Decided** (owner, 2026-10-23) |
 | D17 | **A queue carries its own retry policy and run window** (section 6): default attempts, backoff and timeout for jobs that set none, and hours inside which workers may claim. | **Decided** (owner, 2026-10-23) |
+| D18 | **Backups are declared, not run** (section 6): the operator says how the database is backed up (`provider`, `external` with a named tool, or `none`), the Control API records it, the panel shows it on a Backups page, and the Deployment view warns while it is missing or `none`. Qelay takes no backup and checks none. Replaces the S3 backup page. | **Decided** (owner, 2026-10-25) |
 
 The numbering above is this document's. The build plan's `CURRENT.md` has its own list (D1-D12) of decisions
 that are the user's call, and its D1 (worker hosting) and D2 (doorbell granularity) are section 10's open
@@ -263,7 +264,7 @@ each look their namespace up and open that one database.
 | Workers page | Postgres heartbeats | - | - | `workers.ts` |
 | Metrics | Postgres buckets + cloud metrics | Cloud Monitoring | CloudWatch | `qelay_metric_*` |
 | Webhooks | Postgres config + deliveries, sent by the tick | - | - | `qcloud_webhooks`, `qcloud_deliveries` (before migration 13 `qcloud_webhook_deliveries`), `webhookSender.ts` (task 52; upstream `webhookManager.ts` was in-memory) |
-| Process start/stop/restart, SQLite inspector, S3 backup, Fleet | n/a | dropped | dropped | n/a (replaced by managed backups and deploy status) |
+| Process start/stop/restart, SQLite inspector, S3 backup, Fleet | n/a | dropped | dropped | n/a (the S3 backup is replaced by a declaration of how the database is backed up, D18; and deploy status) |
 
 ## 5. Packages
 
@@ -698,6 +699,22 @@ once for every message. A queue gets the same, and a nightly queue gets hours.
   paused queue or a closed window as an overdue doorbell. A window saved on a queue is a window for the whole namespace's
   workers only once every process runs a release that has the check; an older worker claims at any time.
 - **Delays and retries** keep their meaning: a delayed or retrying job becomes ready at its time and waits for the window.
+
+**Backups are declared, not run (D18, decided 2026-10-25).** A GCP deployment backs up with Cloud SQL, an AWS one with RDS,
+and an operator may run pgBackRest, Barman or a `pg_dump` job of their own. The S3 backup page assumed none of that, so it is gone.
+
+- **The declaration.** One row per namespace in `qcloud_backup_policy` (migration 25): `mechanism` is `provider` (the managed
+  service's backups and point-in-time recovery), `external` (tooling outside Qelay; `tool` is required, `location` is optional,
+  free text, never a credential) or `none`. Table CHECKs refuse a `tool` or `location` on any other mechanism.
+- **Written by an operator, read by anyone.** `PUT /backup-policy` is a write route (operator only, audited by mechanism alone,
+  never the tool or location text); `GET /backup-policy` returns `{ policy: null }` while nobody has declared.
+- **Qelay checks nothing.** It does not look for the backup, its age or its restorability. A declaration is what the operator
+  said, with who said it and when. A restore test stays the operator's job.
+- **Two warnings** on `GET /deployment` and the panel's Home and Deployment pages: `backup_undeclared` and `backup_none`, both
+  severity `warning`. `provider` and `external` raise none. They do not colour the health strip.
+- **Terraform is not wired in.** The Cloud SQL and RDS retention settings in `infra/` are not read into the declaration.
+- **Panel.** `/backups` is the fifth Health tab. `/s3` redirects to it. The old S3 page and its client code are unrouted and
+  left in the tree for a later deletion.
 
 ## 7. Cloud specifics
 

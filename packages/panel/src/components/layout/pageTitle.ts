@@ -28,11 +28,11 @@ const TITLES: Record<string, string> = {
   '/alerts': 'Alerts',
   '/transport': 'Job delivery',
   '/deployment': 'Deployment',
+  '/backups': 'Backups',
   '/benchmark': 'Benchmark',
   '/database': 'Database',
   '/mcp': 'MCP',
   '/usage': 'Usage',
-  '/s3': 'S3 Backup',
   '/settings': 'Settings',
 };
 

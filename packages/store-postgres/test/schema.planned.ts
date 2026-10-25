@@ -1,3 +1,4 @@
+import { COMPLETED_PAST_RETENTION } from '../src/store/completedRetention';
 import { PLANNED_DEPLOYMENT } from './schema.planned.deployment';
 import { PLANNED_FLOW } from './schema.planned.flow';
 import { PLANNED_INBOUND } from './schema.planned.inbound';
@@ -81,6 +82,13 @@ export const PLANNED: readonly Planned[] = [
     sql: `SELECT id FROM qcloud_jobs WHERE ${JOB} AND ttl IS NOT NULL AND ${READY}
           AND created_at + ttl < 5000 ORDER BY created_at, id LIMIT 100`,
     index: 'qcloud_jobs_ttl_pending_idx',
+    ordered: true,
+  },
+  {
+    query: 'completed-job retention: the oldest finished jobs of the namespace, across its queues',
+    sql: COMPLETED_PAST_RETENTION,
+    params: ['ns', 5000, 101],
+    index: 'qcloud_jobs_completed_idx',
     ordered: true,
   },
   {

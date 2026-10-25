@@ -32,6 +32,15 @@ export function unitsOf(claimed: readonly ClaimedDelivery[]): ClaimedDelivery[][
   return units;
 }
 
+/**
+ * Whether a claim that made `units` may have left deliveries due. A claim shorter than its `limit` took everything due,
+ * except that it takes one batch of a batch route and leaves the rest of that route's backlog for the next claim.
+ */
+export const mayHaveMore = (
+  units: readonly (readonly ClaimedDelivery[])[],
+  limit: number
+): boolean => units.length >= limit || units.some((unit) => unit[0]?.batched === true);
+
 /** Sends one unit of `unitsOf`. Never rejects; one outcome for each delivery in it. */
 export async function sendUnit(
   unit: readonly ClaimedDelivery[],

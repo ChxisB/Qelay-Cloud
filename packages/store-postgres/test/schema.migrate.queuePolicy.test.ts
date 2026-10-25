@@ -31,9 +31,9 @@ describeDb('schema migrate: queue policy and run window (version 23)', () => {
       INSERT INTO qcloud_queue_state (namespace, queue, paused, concurrency_limit)
       VALUES ('ns', 'old', TRUE, 4)`;
 
-    expect((await migrate(fresh.db)).to).toBe(23);
+    expect((await migrate(fresh.db, { migrations: upTo(23) })).to).toBe(23);
     // A second run checks the recorded checksum of every version, this one's included.
-    expect((await migrate(fresh.db)).to).toBe(23);
+    expect((await migrate(fresh.db, { migrations: upTo(23) })).to).toBe(23);
 
     // What the release before this one runs: an insert and an update that name none of the new columns.
     await fresh.sql`INSERT INTO qcloud_queue_state (namespace, queue) VALUES ('ns', 'older-release')`;

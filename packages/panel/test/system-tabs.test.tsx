@@ -29,7 +29,7 @@ function mount(path: string, element: ReturnType<typeof createElement>) {
 const serve = (caps: typeof DEMO_CAPABILITIES) =>
   useCapabilitiesStore.setState({ status: 'ready', caps, error: null, key: 't' });
 
-const ALL = ['/server', '/database', '/s3', '/mcp', '/benchmark', '/fleet'] as const;
+const ALL = ['/server', '/database', '/mcp', '/benchmark', '/fleet'] as const;
 const tabHrefs = (host: HTMLElement) =>
   [...host.querySelectorAll<HTMLAnchorElement>('nav[aria-label="System"] a')].map((a) =>
     a.getAttribute('href')
@@ -50,7 +50,7 @@ afterEach(() => {
   localStorage.removeItem(NAV_GROUPS_STORAGE_KEY);
 });
 
-describe('System: six pages, one sidebar item', () => {
+describe('System: five pages, one sidebar item', () => {
   test('the tab bar links every page and marks the open one', () => {
     for (const open of ALL) {
       const host = mount(open, createElement(SystemTabs, { current: open }));
@@ -79,7 +79,7 @@ describe('System: six pages, one sidebar item', () => {
     expect(host.querySelector('nav[aria-label="System"]')).toBeNull();
   });
 
-  test('the sidebar has one System link, and it is the current page on all six', () => {
+  test('the sidebar has one System link, and it is the current page on all five', () => {
     for (const path of ALL) {
       const host = mount(path, createElement(Sidebar));
       const links = [...host.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Primary"] a')];
