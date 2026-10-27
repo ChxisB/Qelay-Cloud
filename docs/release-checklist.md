@@ -60,10 +60,10 @@ git remote add origin https://github.com/<owner>/<repo>.git
 git push -u origin main
 ```
 
-`.claude/.planning/v1.0.0/` and `.claude/completions/` are committed, and eight links in `docs/security/phase2-pass.md` and
-`docs/spikes/` point into the plan, so keep them committed: a clone without them fails `docs:check` (and so the `gate` job)
-with "no such file or folder". Check `git status` for new untracked files under `.claude/` before you push. `ci.yml` has never run, so expect to fix
-forward on the first run. Wait for `gate`, `transports` and `terraform` to pass.
+`.claude/.planning/`, `.claude/completions/` and `.claude/sessions/` are gitignored, so a clone does not have them. The docs name
+tasks by number and must not link into `.claude/`: a link to a file the clone lacks fails `docs:check` (and so the `gate` job)
+with "no such file or folder". `ci.yml` has never run, so expect to fix forward on the first run. Wait for `gate`,
+`transports` and `terraform` to pass.
 
 ## 3. Bump the version
 

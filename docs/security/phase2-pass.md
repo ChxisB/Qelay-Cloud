@@ -2,7 +2,7 @@
 
 **Who did this: the author of the code.** That is a weaker check than an independent review. It finds what the author
 thought to ask and misses what they did not, and it shares their blind spots about the design. It is the Phase 2 gate's
-pass, not the release review: [task 72](../../.claude/.planning/v1.0.0/72-security-review.md) writes the threat model and
+pass, not the release review: task 72 writes the threat model and
 `docs/security/review-v1.0.0.md`, and you decide there whether an outsider reviews before anything is published.
 
 Scope: the Control API (`packages/control-api`), the panel's static server (`packages/panel/serve`), their images and the
