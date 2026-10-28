@@ -3,19 +3,24 @@ import { UnsupportedOptionError } from '@qelay-cloud/core';
 import { describeDb } from '../../../test/support/db';
 import { ABANDONED_ERROR, RATE_WINDOW_MS } from '../src/store/webhookClaim';
 import { resetTables } from './finishHelpers';
+import { addSource, post } from './inboundHelpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore } from './storeHelpers';
 import {
   addHook,
   CLAIM,
-  event,
-  journal,
   KEY,
   outcome,
   POLICY,
   rawDeliveries,
   SECRET,
+  send,
+  sendAll,
 } from './webhookHelpers';
+
+/** The JSON a claimed delivery carries: the request's own bytes. */
+const bodyOf = (claimed: { requestBody: Uint8Array | null }): unknown =>
+  JSON.parse(new TextDecoder().decode(claimed.requestBody!));
 
 describeDb('webhooks: claiming deliveries', () => {
   let t: TestStore;
@@ -29,18 +34,16 @@ describeDb('webhooks: claiming deliveries', () => {
     await resetTables(t);
   });
 
-  test('a claim takes what is due, leases it, and carries the journal detail and the secret', async () => {
+  test('a claim takes what is due, leases it, and carries the request and the secret', async () => {
     const hook = await addHook(t, { secret: SECRET });
-    await journal(t, [
-      event('pushed', 'q', 'a'),
-      event('failed', 'q', 'b', { state: 'failed', error: 'boom' }),
-      event('progress', 'q', 'c', { state: 'active', progress: 40 }),
-    ]);
+    await sendAll(t, [{ id: 'a' }, { id: 'b', error: 'boom' }, { id: 'c', progress: 40 }]);
     const claimed = await t.store.webhooks.claimDue(CLAIM);
-    expect(claimed.map((c) => [c.event, c.jobId, c.state, c.error, c.progress])).toEqual([
-      ['job.pushed', 'a', 'waiting', null, null],
-      ['job.failed', 'b', 'failed', 'boom', null],
-      ['job.progress', 'c', 'active', null, 40],
+    expect(
+      claimed.map((c) => [c.event, c.requestId !== null, c.requestContentType, c.body, bodyOf(c)])
+    ).toEqual([
+      ['request.received', true, 'application/json', null, { id: 'a' }],
+      ['request.received', true, 'application/json', null, { id: 'b', error: 'boom' }],
+      ['request.received', true, 'application/json', null, { id: 'c', progress: 40 }],
     ]);
     expect(
       claimed.every((c) => c.attempt === 1 && c.secret === SECRET && !c.secretUnreadable)
@@ -55,7 +58,7 @@ describeDb('webhooks: claiming deliveries', () => {
 
   test('a delivery is claimed once: not while its lease runs, and not before it is due', async () => {
     await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     expect(await t.store.webhooks.claimDue(CLAIM)).toHaveLength(1);
     expect(await t.store.webhooks.claimDue(CLAIM)).toHaveLength(0);
     t.clock.advance(CLAIM.leaseMs - 1);
@@ -64,7 +67,7 @@ describeDb('webhooks: claiming deliveries', () => {
 
   test('a delivery whose lease lapsed is taken again, noted as abandoned, and its late result is stale', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     const [first] = await t.store.webhooks.claimDue(CLAIM);
     t.clock.advance(CLAIM.leaseMs);
     const [second] = await t.store.webhooks.claimDue(CLAIM);
@@ -84,7 +87,7 @@ describeDb('webhooks: claiming deliveries', () => {
 
   test('a disabled webhook is not served, and is again once enabled', async () => {
     const hook = await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     await t.store.webhooks.setEnabled(hook.id, false);
     expect(await t.store.webhooks.claimDue(CLAIM)).toHaveLength(0);
     await t.store.webhooks.setEnabled(hook.id, true);
@@ -93,7 +96,7 @@ describeDb('webhooks: claiming deliveries', () => {
 
   test('a retry waits for its time', async () => {
     await addHook(t);
-    await journal(t, [event('pushed')]);
+    await send(t);
     const [c] = await t.store.webhooks.claimDue(CLAIM);
     await t.store.webhooks.record([outcome(c!, { ok: false })], POLICY);
     expect(await t.store.webhooks.claimDue(CLAIM)).toHaveLength(0);
@@ -105,9 +108,9 @@ describeDb('webhooks: claiming deliveries', () => {
 
   test('a webhook gets at most ratePerMinute attempts in a minute, and the count starts over in the next', async () => {
     const hook = await addHook(t);
-    await journal(
+    await sendAll(
       t,
-      Array.from({ length: 5 }, (_, i) => event('pushed', 'q', `j${i}`))
+      Array.from({ length: 5 }, (_, i) => ({ id: `j${i}` }))
     );
     const rate = { ...CLAIM, ratePerMinute: 2 };
     expect(await t.store.webhooks.claimDue(rate)).toHaveLength(2);
@@ -118,26 +121,27 @@ describeDb('webhooks: claiming deliveries', () => {
   });
 
   test('the limit caps one claim, and a backlog does not take every slot from another webhook', async () => {
-    const busy = await addHook(t, { queue: 'busy' });
-    const quiet = await addHook(t, { queue: 'quiet' });
-    await journal(
+    const other = await addSource(t, { name: 'quiet' });
+    const busy = await addHook(t);
+    const quiet = await addHook(t, { source: other.id });
+    await sendAll(
       t,
-      Array.from({ length: 10 }, (_, i) => event('pushed', 'busy', `b${i}`))
+      Array.from({ length: 10 }, (_, i) => ({ id: `b${i}` }))
     );
     t.clock.advance(5);
-    await journal(t, [event('pushed', 'quiet', 'q0')]);
+    await t.store.sources.accept(other.id, post({ id: 'q0' }));
     const claimed = await t.store.webhooks.claimDue({ ...CLAIM, limit: 3 });
     expect(claimed).toHaveLength(3);
     expect(new Set(claimed.map((c) => c.webhookId))).toEqual(new Set([busy.id, quiet.id]));
-    expect(claimed.filter((c) => c.webhookId === busy.id).map((c) => c.jobId)).toEqual([
-      'b0',
-      'b1',
+    expect(claimed.filter((c) => c.webhookId === busy.id).map(bodyOf)).toEqual([
+      { id: 'b0' },
+      { id: 'b1' },
     ]);
   });
 
   test('a signed webhook whose secret cannot be opened is flagged, never sent unsigned', async () => {
     await addHook(t, { secret: SECRET });
-    await journal(t, [event('pushed')]);
+    await send(t);
     const wrongKey = t.another({ webhookKey: 'ff'.repeat(32) });
     expect(await wrongKey.webhooks.claimDue(CLAIM)).toMatchObject([
       { secret: null, secretUnreadable: true },
@@ -151,26 +155,26 @@ describeDb('webhooks: claiming deliveries', () => {
 
   test('an unsigned webhook (made by a store with no key) carries no secret and is not flagged', async () => {
     await addHook({ store: t.another({ webhookKey: undefined as never }) });
-    await journal(t, [event('pushed')]);
+    await send(t);
     expect(await t.store.webhooks.claimDue(CLAIM)).toMatchObject([
       { secret: null, secretUnreadable: false },
     ]);
   });
 
-  test('an event the journal has already trimmed is delivered without its detail', async () => {
+  test('a request retention has already removed is claimed without its bytes', async () => {
     await addHook(t);
-    await journal(t, [event('failed', 'q', 'b', { state: 'failed', error: 'boom' })]);
-    await t.fresh.sql`DELETE FROM qcloud_events`;
+    const id = await send(t, { id: 'b' });
+    await t.fresh.sql`DELETE FROM qcloud_requests`;
     expect(await t.store.webhooks.claimDue(CLAIM)).toMatchObject([
-      { event: 'job.failed', jobId: 'b', state: null, error: null, progress: null },
+      { event: 'request.received', requestId: id, requestBody: null, body: null },
     ]);
   });
 
   test('a test delivery is claimed like any other', async () => {
-    const hook = await addHook(t, { events: ['job.progress'] });
+    const hook = await addHook(t);
     await t.store.webhooks.sendTest(hook.id);
     expect(await t.store.webhooks.claimDue(CLAIM)).toMatchObject([
-      { event: 'webhook.test', queue: 'webhook-test', jobId: 'webhook-test', state: null },
+      { event: 'webhook.test', requestId: null, requestBody: null, body: null },
     ]);
   });
 

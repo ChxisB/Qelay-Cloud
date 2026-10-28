@@ -1,24 +1,24 @@
 import {
   MAX_WEBHOOK_URL_CHARS,
-  routeJobId,
   WEBHOOK_DESTINATIONS,
-  WEBHOOK_EVENTS,
   WEBHOOK_PAUSE_MODES,
   webhookPausedBy,
 } from '@qelay-cloud/core';
 import type {
-  AttemptRecord,
+  WebhookBatch,
   WebhookDedupe,
   WebhookDestination,
   WebhookFilter,
+  WebhookSchedule,
   WebhookShape,
 } from '@qelay-cloud/core';
-import type { DeliveryRecord, WebhookIssued, WebhookRecord } from '@qelay-cloud/store-postgres';
+import type { WebhookIssued, WebhookRecord } from '@qelay-cloud/store-postgres';
 import {
   MAX_BULK_RETRY,
   MAX_DELIVERY_PAGE,
   MAX_SECRET_CHARS,
   MAX_STATS_BUCKETS,
+  nextFire,
 } from '@qelay-cloud/store-postgres';
 import { z } from 'zod';
 import type { Role } from '../types';
@@ -31,12 +31,20 @@ import type { Role } from '../types';
  */
 
 /**
- * A name, a description, a delay and a dedupe, as `POST /webhooks` and `PATCH /webhooks/:id` take them. The bounds here only
+ * A name, a description, a delay, a dedupe, a schedule and a batch, as `POST /webhooks` and `PATCH /webhooks/:id` take them. The bounds here only
  * keep a body small: the store (core's `validateName` and the others) names the exact rule that a value breaks.
  */
 // Typed as the store takes it, though any object gets this far: the store's `validateDedupe` checks it and names the fault.
 const dedupeField = z.record(z.string(), z.unknown()).nullable().optional() as unknown as z.ZodType<
   WebhookDedupe | null | undefined
+>;
+// The same for the send schedule and batch (D15): `validateSchedule` and `validateBatch` name the fault.
+const scheduleField = z
+  .record(z.string(), z.unknown())
+  .nullable()
+  .optional() as unknown as z.ZodType<WebhookSchedule | null | undefined>;
+const batchField = z.record(z.string(), z.unknown()).nullable().optional() as unknown as z.ZodType<
+  WebhookBatch | null | undefined
 >;
 
 const ruleFields = {
@@ -44,6 +52,8 @@ const ruleFields = {
   description: z.string().max(5_000).nullable().optional(),
   delayMs: z.number().nullable().optional(),
   dedupe: dedupeField,
+  schedule: scheduleField,
+  batch: batchField,
 };
 
 /**
@@ -56,8 +66,8 @@ export const webhookBody = z.strictObject({
   url: z.string().max(MAX_WEBHOOK_URL_CHARS).optional(),
   target: z.string().max(256).nullable().optional(),
   destinationId: z.string().max(256).nullable().optional(),
-  events: z.array(z.enum(WEBHOOK_EVENTS)).min(1).max(WEBHOOK_EVENTS.length),
-  queue: z.string().max(256).nullable().optional(),
+  // The inbound source whose requests the route delivers (D14). The store names the option when it is missing.
+  source: z.string().max(256).nullable().optional(),
   secret: z.string().max(MAX_SECRET_CHARS).nullable().optional(),
   enabled: z.boolean().optional(),
   // Plain JSON objects here; the store validates the grammar (core's `validateFilter`/`validateShape`)
@@ -68,28 +78,27 @@ export const webhookBody = z.strictObject({
 });
 
 /**
- * `PATCH /webhooks/:id`: the fields to change, by name; null clears one (`events` cannot be empty). An empty body is
- * the store's 400. The source queue, the destination and the secret are not editable here.
+ * `PATCH /webhooks/:id`: the fields to change, by name; null clears one. An empty body is
+ * the store's 400. The destination and the secret are not editable here.
  */
 export const patchBody = z.strictObject({
-  events: z.array(z.enum(WEBHOOK_EVENTS)).min(1).max(WEBHOOK_EVENTS.length).optional(),
+  /** Moves the route to another source. */
+  source: z.string().max(256).optional(),
   filter: z.record(z.string(), z.unknown()).nullable().optional(),
   shape: z.record(z.string(), z.unknown()).nullable().optional(),
   ...ruleFields,
 });
 
-/** `POST /webhooks/preview`: a filter and a shape tried on one made-up event, nothing saved or sent. */
+/** `POST /webhooks/preview`: a filter and a shape tried on one made-up request, nothing saved or sent. */
 export const previewBody = z.strictObject({
   filter: z.record(z.string(), z.unknown()).nullable().optional(),
   shape: z.record(z.string(), z.unknown()).nullable().optional(),
-  event: z.strictObject({
-    event: z.enum(WEBHOOK_EVENTS),
-    queue: z.string().min(1).max(256),
-    jobId: z.string().min(1).max(256),
-    occurredAt: z.number().int().nonnegative().optional(),
-    state: z.string().max(64).nullable().optional(),
-    error: z.string().max(4096).nullable().optional(),
-    progress: z.number().finite().nullable().optional(),
+  /** What a rule reads (D14): `body` is the parsed JSON, left out for a request that was not JSON. */
+  request: z.strictObject({
+    method: z.string().min(1).max(16).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    query: z.record(z.string(), z.string()).optional(),
+    body: z.unknown().optional(),
   }),
 });
 
@@ -153,19 +162,25 @@ export interface WebhookWire {
   readonly destinationId: string | null;
   /** True when `url` is only the origin: the caller may read webhooks but not the path a token could be in. */
   readonly urlRedacted: boolean;
-  readonly events: readonly string[];
-  readonly queue: string | null;
-  /** Only events this passes are sent (`docs/webhooks.md`); null sends every event of the list. */
+  /** The inbound source whose requests the route delivers (D14); null for a route from before sources, which is disabled. */
+  readonly source: string | null;
+  /** Only requests this passes are sent (`docs/webhooks.md`); null sends every request. */
   readonly filter: WebhookFilter | null;
-  /** The body template; null sends the default body. */
+  /** The body template; null sends the request's own body. */
   readonly shape: WebhookShape | null;
   /** What the operator calls it, and a note; null for none. */
   readonly name: string | null;
   readonly description: string | null;
-  /** A delivery is due this many ms after its event; null for at once. */
+  /** A delivery is due this many ms after its request; null for at once. */
   readonly delayMs: number | null;
-  /** Drops an event whose chosen fields repeat inside the window; null for none. */
+  /** Drops a request whose chosen fields repeat inside the window; null for none. */
   readonly dedupe: WebhookDedupe | null;
+  /** Holds deliveries until the cron next fires, in the zone (D15); null sends at once. */
+  readonly schedule: WebhookSchedule | null;
+  /** When the schedule next fires (epoch ms); null without a schedule, or one the cron parser can no longer read. */
+  readonly nextSendAt: number | null;
+  /** Sends due deliveries as one request (D15); `http` routes only; null sends one request each. */
+  readonly batch: WebhookBatch | null;
   readonly signed: boolean;
   readonly enabled: boolean;
   readonly createdAt: number;
@@ -200,21 +215,23 @@ export function shownUrl(raw: string, role: Role): { url: string; urlRedacted: b
   }
 }
 
-export function toWebhookWire(webhook: WebhookRecord, role: Role): WebhookWire {
+export function toWebhookWire(webhook: WebhookRecord, role: Role, now: number): WebhookWire {
   return {
     id: webhook.id,
     destination: webhook.destination,
     ...shownUrl(webhook.url, role),
     target: webhook.target,
     destinationId: webhook.destinationId,
-    events: webhook.events,
-    queue: webhook.queue,
+    source: webhook.source,
     filter: webhook.filter,
     shape: webhook.shape,
     name: webhook.name,
     description: webhook.description,
     delayMs: webhook.delayMs,
     dedupe: webhook.dedupe,
+    schedule: webhook.schedule,
+    nextSendAt: nextSend(webhook.schedule, now),
+    batch: webhook.batch,
     signed: webhook.signed,
     enabled: webhook.enabled,
     createdAt: webhook.createdAt,
@@ -230,58 +247,22 @@ export function toWebhookWire(webhook: WebhookRecord, role: Role): WebhookWire {
   };
 }
 
+function nextSend(schedule: WebhookSchedule | null, now: number): number | null {
+  if (schedule === null) return null;
+  try {
+    return nextFire(schedule, now) || null;
+  } catch {
+    return null;
+  }
+}
+
 /** `data` of a create or rotate response: the webhook, and the secret when the store made it. */
-export function toIssuedWire(webhook: WebhookIssued): { webhook: WebhookWire; secret?: string } {
+export function toIssuedWire(
+  webhook: WebhookIssued,
+  now: number
+): { webhook: WebhookWire; secret?: string } {
   return {
-    webhook: toWebhookWire(webhook, 'operator'),
+    webhook: toWebhookWire(webhook, 'operator', now),
     ...(webhook.secret === null ? {} : { secret: webhook.secret }),
-  };
-}
-
-export interface DeliveryWire {
-  readonly id: string;
-  readonly webhookId: string;
-  readonly event: string;
-  readonly queue: string;
-  readonly jobId: string;
-  /** The job a delivered `queue` route made in its target queue; null for `http` and until it is delivered. */
-  readonly routedJobId: string | null;
-  readonly occurredAt: number;
-  readonly status: string;
-  readonly attempts: number;
-  readonly nextAttemptAt: number;
-  readonly lastStatusCode: number | null;
-  readonly lastError: string | null;
-  readonly history: readonly AttemptRecord[];
-  readonly createdAt: number;
-  readonly finishedAt: number | null;
-}
-
-/**
- * A delivery names no URL and no secret; its errors are the fixed sentences the sender writes. `via` is
- * its route's destination: the store keeps no answer on a success, so a queue route's job is named
- * from the delivery id (core's `routeJobId`).
- */
-export function toDeliveryWire(
-  delivery: DeliveryRecord,
-  via: WebhookDestination = 'http'
-): DeliveryWire {
-  return {
-    id: delivery.id,
-    webhookId: delivery.webhookId,
-    event: delivery.event,
-    queue: delivery.queue,
-    jobId: delivery.jobId,
-    routedJobId:
-      via === 'queue' && delivery.status === 'delivered' ? routeJobId(delivery.id) : null,
-    occurredAt: delivery.occurredAt,
-    status: delivery.status,
-    attempts: delivery.attempts,
-    nextAttemptAt: delivery.nextAttemptAt,
-    lastStatusCode: delivery.lastStatusCode,
-    lastError: delivery.lastError,
-    history: delivery.history,
-    createdAt: delivery.createdAt,
-    finishedAt: delivery.finishedAt,
   };
 }

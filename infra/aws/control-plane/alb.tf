@@ -1,7 +1,9 @@
-# One application load balancer in front of both services, routing by host name: api_hostname to the API, panel_hostname
-# to the panel, and a 404 for anything else. HTTPS only (port 80 redirects), with a certificate you bring.
+# One application load balancer in front of the services, routing by host name: api_hostname to the API, panel_hostname
+# to the panel, ingest.hostname to the ingest (when there is one), and a 404 for anything else. HTTPS only (port 80
+# redirects), with a certificate you bring.
 #
-# The tasks' own group (the data plane's `tasks` group) gains one inbound rule: this load balancer's group, on 8080.
+# The tasks' own group (the data plane's `tasks` group) gains one inbound rule: this load balancer's group, on 8080 (and
+# on 8081 with an ingest).
 # Nothing else may open a connection to a task. The load balancer's group may reach the tasks and nothing else.
 #
 # `public` puts the load balancer in subnets of its own that route to the data plane's internet gateway; `private`
@@ -86,6 +88,30 @@ resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb" {
   ip_protocol                  = "tcp"
 }
 
+# The ingest listens on 8081, so it gets its own pair of rules (ingest.tf). Without an ingest the tasks' group opens
+# nothing more.
+resource "aws_vpc_security_group_egress_rule" "to_ingest" {
+  count = local.ingest ? 1 : 0
+
+  security_group_id            = aws_security_group.alb.id
+  description                  = "The ingest's port, to the tasks only"
+  referenced_security_group_id = var.tasks_security_group_id
+  from_port                    = 8081
+  to_port                      = 8081
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb_ingest" {
+  count = local.ingest ? 1 : 0
+
+  security_group_id            = var.tasks_security_group_id
+  description                  = "Control plane load balancer to the ingest"
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = 8081
+  to_port                      = 8081
+  ip_protocol                  = "tcp"
+}
+
 resource "aws_lb" "control" {
   name                       = "${var.name}-control"
   load_balancer_type         = "application"
@@ -132,6 +158,29 @@ resource "aws_lb_target_group" "panel" {
 
   health_check {
     path                = "/health"
+    matcher             = "200"
+    interval            = 15
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+}
+
+resource "aws_lb_target_group" "ingest" {
+  count = local.ingest ? 1 : 0
+
+  name                 = local.ingest_name
+  port                 = 8081
+  protocol             = "HTTP"
+  vpc_id               = var.vpc_id
+  target_type          = "ip"
+  deregistration_delay = var.deregistration_delay_seconds
+  tags                 = local.tags
+
+  # `/healthz` touches nothing: a database that is down does not take the ingest out of the load balancer, it makes the
+  # requests it cannot store answer 503, which a sender retries.
+  health_check {
+    path                = "/healthz"
     matcher             = "200"
     interval            = 15
     timeout             = 5
@@ -189,6 +238,33 @@ resource "aws_lb_listener_rule" "panel" {
   condition {
     host_header {
       values = [var.panel_hostname]
+    }
+  }
+}
+
+# Only `/s/*` reaches the ingest from outside: anything else on its host name falls through to the 404 above, and its
+# `/healthz` is answered to the target group's check only.
+resource "aws_lb_listener_rule" "ingest" {
+  count = local.ingest ? 1 : 0
+
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 30
+  tags         = local.tags
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.ingest[0].arn
+  }
+
+  condition {
+    host_header {
+      values = [var.ingest.hostname]
+    }
+  }
+
+  condition {
+    path_pattern {
+      values = ["/s/*"]
     }
   }
 }

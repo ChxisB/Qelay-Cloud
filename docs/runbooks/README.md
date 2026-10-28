@@ -42,6 +42,8 @@ Without an alert, for a symptom or a planned task:
 | The database password changes | [rotate the database secret](rotate-database-secret.md) |
 | The database was lost or damaged | [restore from a backup](restore-from-backup.md) |
 | Moving a queue to another broker | [drain and cut over a queue](drain-and-cut-over-queue.md) |
+| Moving a Pub/Sub consumer's work into a Qelay queue | [import from Pub/Sub](import-from-pubsub.md) |
+| A sender's posts to a source fail, a flood of 429s, the ingest is down, a source's secret or URL leaked, a route sends nothing | [inbound source trouble](inbound-source-trouble.md) |
 | First deploy | [GCP](deploy-gcp.md), [AWS](deploy-aws.md) |
 
 ## What was run

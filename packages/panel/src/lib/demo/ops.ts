@@ -25,6 +25,7 @@ function transport(now: number): Json {
       reRingDue,
       oldestNotRungAgeMs: notRung > 0 ? 1_500 : null,
       paused: false,
+      windowClosed: false,
       capped: false,
     },
   });

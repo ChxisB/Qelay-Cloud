@@ -1,20 +1,26 @@
 import { createHash } from 'node:crypto';
 import { AUDIT_STATEMENTS } from './ddl/audit';
 import { AUXILIARY_STATEMENTS } from './ddl/auxiliary';
+import { BACKUP_POLICY_STATEMENTS } from './ddl/backupPolicy';
+import { COMPLETED_RETENTION_STATEMENTS } from './ddl/completedRetention';
 import { DELIVERY_PARTITION_STATEMENTS } from './ddl/deliveryPartitions';
 import { EVENT_STATEMENTS } from './ddl/events';
 import { FLOW_ROOT_STATEMENTS, FLOW_STATEMENTS } from './ddl/flows';
+import { INBOUND_SOURCE_STATEMENTS } from './ddl/inboundSources';
 import { JOBS_STATEMENTS } from './ddl/jobs';
 import { PROGRESS_STATEMENTS } from './ddl/progress';
+import { QUEUE_POLICY_WINDOW_STATEMENTS } from './ddl/queuePolicyWindow';
 import { TICK_STATEMENTS } from './ddl/tick';
 import { TICK_STATE_STATEMENTS } from './ddl/tickState';
 import { TUNING_STATEMENTS } from './ddl/tuning';
 import { WEBHOOK_DESTINATION_STATEMENTS } from './ddl/webhookDestinations';
 import { WEBHOOK_DESTINATION_TABLE_STATEMENTS } from './ddl/webhookDestinationTable';
 import { WEBHOOK_ISSUE_STATEMENTS } from './ddl/webhookIssues';
+import { REMOVE_JOB_EVENT_STATEMENTS } from './ddl/webhookJobEvents';
 import { WEBHOOK_PAUSE_STATEMENTS } from './ddl/webhookPause';
 import { WEBHOOK_RULE_STATEMENTS } from './ddl/webhookRules';
 import { WEBHOOK_STATEMENTS } from './ddl/webhooks';
+import { WEBHOOK_SCHEDULE_BATCH_STATEMENTS } from './ddl/webhookScheduleBatch';
 import { WEBHOOK_WRITER_STATEMENTS } from './ddl/webhookWriter';
 import { WORKFLOW_DEFINITION_STATEMENTS } from './ddl/workflowDefinitions';
 import { WORKFLOW_LIVE_STATEMENTS } from './ddl/workflowLive';
@@ -63,6 +69,12 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 17, name: 'webhook rules', statements: WEBHOOK_RULE_STATEMENTS },
   { version: 18, name: 'webhook issues', statements: WEBHOOK_ISSUE_STATEMENTS },
   { version: 19, name: 'saved destinations', statements: WEBHOOK_DESTINATION_TABLE_STATEMENTS },
+  { version: 20, name: 'inbound sources', statements: INBOUND_SOURCE_STATEMENTS },
+  { version: 21, name: 'remove job events', statements: REMOVE_JOB_EVENT_STATEMENTS },
+  { version: 22, name: 'route schedule and batch', statements: WEBHOOK_SCHEDULE_BATCH_STATEMENTS },
+  { version: 23, name: 'queue policy and run window', statements: QUEUE_POLICY_WINDOW_STATEMENTS },
+  { version: 24, name: 'completed job retention', statements: COMPLETED_RETENTION_STATEMENTS },
+  { version: 25, name: 'backup policy', statements: BACKUP_POLICY_STATEMENTS },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

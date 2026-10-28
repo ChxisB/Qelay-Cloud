@@ -1,6 +1,7 @@
-import { deliveryBody, QcloudError, routeJobId, WEBHOOK_ERROR_CHARS } from '@qelay-cloud/core';
+import { QcloudError, routeJobId, WEBHOOK_ERROR_CHARS } from '@qelay-cloud/core';
 import type { NewJob } from '@qelay-cloud/core';
 import type { AttemptOutcome, ClaimedDelivery } from '@qelay-cloud/store-postgres';
+import { deliveryPayload, jobData } from './webhookPayload';
 
 /**
  * A `queue` route's attempt (D11): the delivery becomes a job in the same database, with no network
@@ -24,26 +25,17 @@ export async function enqueueDelivery(
 ): Promise<AttemptOutcome> {
   if (enqueue === undefined) return outcome(false, 'this sender cannot add jobs');
   if (delivery.target === null) return outcome(false, 'queue route has no target queue');
-  // The delivery writer shapes a body once and stores it; the empty string means it was too large to make.
-  if (delivery.body === '') return outcome(false, 'shaped body was too large to make');
+  const made = deliveryPayload(delivery);
+  if (!made.ok) return outcome(false, made.reason);
   try {
-    const body =
-      delivery.body ??
-      deliveryBody({
-        id: delivery.deliveryId,
-        event: delivery.event,
-        occurredAt: delivery.occurredAt,
-        queue: delivery.queue,
-        jobId: delivery.jobId,
-        state: delivery.state,
-        error: delivery.error,
-        progress: delivery.progress,
-      });
+    const job = jobData(delivery, made.payload);
+    if (job === null)
+      return outcome(false, 'the request body is not text, so it cannot be job data');
     await enqueue([
       {
         queue: delivery.target,
         name: delivery.event,
-        data: JSON.parse(body),
+        data: job.data,
         options: { jobId: routeJobId(delivery.deliveryId) },
       },
     ]);

@@ -9,6 +9,9 @@ What each broker does, side by side (delay mechanism, at-least-once, dead-letter
 cost drivers), and which test pins it, is in [transports.md](transports.md). Its delay-precision figures are compared
 with section 1 below by `test/contract/matrix.test.ts`.
 
+The settings to start a production deployment with, each marked measured or chosen, are in
+[production.md](production.md).
+
 Measured on PostgreSQL 18.6 on one developer machine, Bun 1.4.2.
 
 ## 1. Delay precision, by hosting mode
@@ -46,6 +49,11 @@ is.** `run_at` is a floor: no job was ever claimed early in any run.
   accepted, but fires no more often than the tick runs. **A late occurrence is not made up:** after an hour of downtime
   a cron fires once, not sixty times.
 - Add the broker's own latency on a real queue; the table is the tick's share.
+- **A queue's run window opens at the tick too.** The claim checks the window, so no job starts early, and the tick
+  rings the queue after it opens: allow one tick interval (a minute with the scheduler alone). A window that closes lets
+  running jobs finish, and a retry or a delayed job that comes due while it is closed waits for the next opening. Jobs
+  held by a window are not an overdue doorbell on the Deployment page, and they pile up while it is closed: size the
+  workers for the opening, when the whole backlog is claimable at once.
 - **On AWS the scheduler can run slower than a minute** (`scheduler_schedule = "rate(N minutes)"`) to save the tick's task
   launches, about 43,200 a month at one a minute. That moves the floor above from one minute to N minutes for everything
   that waits for the tick, so do it only when the workers run `TickLoop`. The `tick-stalled` alarm follows the rate. Plan-checked,
@@ -65,7 +73,7 @@ is.** `run_at` is a floor: no job was ever claimed early in any run.
 | A flow | **1,000** jobs and **100** levels; an action on a flow names at most 1,000 jobs | `MAX_FLOW_JOBS`, `MAX_FLOW_DEPTH` |
 | A flow in the Control API | `GET /flows/:id` returns **1,000** jobs by default and at most **5,000**, top level first, with `truncated`; `GET /flows` pages of at most **100** | `DEFAULT_FLOW_VIEW_NODES`, `MAX_FLOW_VIEW_NODES`; every statement has a `LIMIT` |
 | Webhooks | **100** per namespace; a URL of at most **2,048** characters; a secret of **16 to 256** characters; a delivery's history keeps its last **20** attempts and its error **500** characters; a deliveries page is at most the store's `MAX_DELIVERY_PAGE` | `MAX_WEBHOOKS`, `MAX_WEBHOOK_URL_CHARS`, `WEBHOOK_HISTORY_ENTRIES`; see [webhooks.md](webhooks.md) and section 12 |
-| Event gateway routes | a chain of `queue` routes is at most **5** routes long, and a loop is refused when a route is saved (`409 route_chain_too_long`, `route_cycle`); **Retry all failed** puts back at most **500** events a call; the stats window is at most **7 days** | `MAX_ROUTE_CHAIN`, `MAX_BULK_RETRY`, `MAX_STATS_WINDOW_MS`; see [event-gateway.md](event-gateway.md) |
+| Event gateway routes | no route can loop, because a job a route adds makes no event; **Retry all failed** puts back at most **500** events a call; the stats window is at most **7 days** | `MAX_BULK_RETRY`, `MAX_STATS_WINDOW_MS`; see [event-gateway.md](event-gateway.md) |
 | Doorbell content | a bell carries no payload and no job id: it says only that a queue has work | design (fungible bells) |
 
 ## 3. Throughput and latency (load check)
@@ -177,13 +185,11 @@ here measured the effect: a drain with `pg_stat_user_tables` (`n_tup_hot_upd`, `
 real instance is part of the load check owed under section 8. Raising the instance's `autovacuum_max_workers` and
 alerting on dead rows are instance settings, not schema, and are not made by the migration.
 
-**Webhook delivery writer (migration 14).** A namespace that runs `qcloud-tick webhook-writer on` has its deliveries made from
-the event journal by a pass of at most 500 events, in one transaction that also moves its cursor, instead of by the trigger in
-the job's transaction. Deliveries then appear a few seconds after the job's commit, and a webhook can have a `filter` and a
-`shape`. A shaped body is made once and stored (at most 64 KiB; a larger one is recorded as a failed delivery). If the journal's
-retention removes events before the writer reads them, those events make no deliveries (gauge `webhooks.writer_gaps`).
-Not measured: the writer's throughput and lag at volume, and what the lock taken by `off` costs on a busy namespace on Cloud SQL
-or RDS. Tested on PostgreSQL 18.6 on one machine only.
+**Webhook deliveries are made by the accept (migration 21, D14).** A request is stored and its deliveries are made in one
+transaction, so a delivery exists as soon as the request is accepted. The trigger and the delivery writer that made them
+from job events (migrations 12 and 14) are gone, with the cursor and the `webhooks.written` and `webhooks.writer_gaps`
+gauges. A shaped body is made once and stored (at most 64 KiB; a larger one is recorded as a failed delivery). The cost of an accept at volume
+is in [section 15](#15-the-public-ingest-tasks-07-to-10).
 
 **Webhook deliveries by day (migration 13).** `qcloud_deliveries` is partitioned by `created_at` (the event's time), one
 partition a day (`qcloud_deliveries_YYYYMMDD`, UTC) plus a default partition. The tick makes today and the next three
@@ -249,7 +255,7 @@ against Qelay's with its status; the headlines are:
 
 - No Qelay TCP server, embedded mode, `connection`, `autoBatch` or `prefixKey` (use `databaseUrl`, `database` and `namespace`).
 - Every `Queue` method is async. The SDK has no cron API of its own: crons are in the store (`store.crons`).
-- Manual retry of a failed job, DLQ auto-retry, `getCountsPerPriority`, `extendJobLock` and job groups are not supported.
+- DLQ auto-retry, `getCountsPerPriority`, `extendJobLock` and job groups are not supported. A failed job is put back by hand with `retryDlq` (D16).
 - `FlowProducer` is supported, with a flow held to 1,000 jobs and 100 levels (Qelay allows 10,000 jobs), written in one
   transaction; [docs/compat.md](compat.md#flowproducer) lists the rest. The Workflow Engine is supported ([docs/compat.md](compat.md#workflow-engine)).
 - A `Queue` sees only its own queue; job ids are unique per namespace.
@@ -317,6 +323,7 @@ A wrong value throws `UnsupportedOptionError` naming the variable and never repe
 | `QCLOUD_WEBHOOK_DISABLE_AFTER` | Failed deliveries in a row after which a webhook is paused (0 never) | 20 |
 | `QCLOUD_WEBHOOK_KEEPALIVE_MS`, `_DNS_TTL_MS`, `_PER_DESTINATION`, `_BREAKER_FAILURES`, `_BREAKER_COOLDOWN_MS`, `_IDLE_MS` | `qcloud-tick send` only: how long a connection to a receiver is kept (0 off), how long a name's addresses are kept (0 off), requests in flight to one host and port, failed attempts in a row that pause a destination (0 never), how long it stays paused, the wait when nothing is due | 15,000, 30,000, 4, 5, 30,000, 500 |
 | `QCLOUD_WEBHOOK_KEEP_MS` | How long a finished webhook delivery stays readable; the tick only. With several ticks the shortest decides | 172,800,000 |
+| `QCLOUD_COMPLETED_RETENTION_MS` | How long a completed job stays before the tick deletes it (oldest first, `QCLOUD_TICK_MAX_ITEMS` per pass; a job a live flow consumer needs stays). `0` keeps them. Failed jobs are not touched | 604,800,000 |
 | `QCLOUD_WORKFLOW_QUEUE` | The queue the workflow engine's node jobs travel on. Must be the name the `Engine` was given (`queueName`) | `__wf:steps` |
 | `QCLOUD_WORKFLOW_BATCH` | Workflow runs the tick looks at per pass, for due waits and for recovery each (**0 turns the step off**) | 100 |
 | `QCLOUD_WORKFLOW_IDLE_MS` | How long a `running`, `compensating` or `failed` run may show no write before the tick takes it over. Must exceed the longest gap between two writes of a live run (a running node writes every `heartbeatMs`, 10,000 by default) | 300,000 |
@@ -487,18 +494,10 @@ publishes to the shared topic and nobody hears it until the tick re-rings (and t
 What the delivery path costs and where it stops. The design is in [webhooks.md](webhooks.md). Measured on PostgreSQL 18.6
 on one developer machine, Bun 1.4.2.
 
-**Measured: the trigger on the job path.** `packages/store-postgres/test/webhook.cost.test.ts`: 8 claimers push, claim and
-complete 2,000 jobs in a queue three webhooks watch (pushed, started, completed: nine delivery rows per job) and in a queue
-none watch.
-
-| Path | With webhooks, against without |
-| --- | --- |
-| Claim and complete | about **1.1x** (1.10x and 1.09x in two runs) |
-| Enqueue | about **1.6x to 1.8x** (1.61x and 1.83x) |
-
-A queue no webhook watches pays for the trigger's lookup and inserts nothing. The figures are from two runs on one
-machine, the enqueue ratio moves between them, and a timing bound would be a flaky test, so the test prints them and asserts
-correctness only.
+**The job path pays nothing for webhooks.** Since migration 21 (D14) no trigger runs in a job's transaction: the job events
+that fed it are gone, and a delivery is made by the accept of an inbound request. An earlier measurement of that trigger
+(claim and complete about 1.1x, enqueue about 1.6x to 1.8x with three webhooks watching a queue) no longer applies and was
+removed with it.
 
 **Derived: what the sender sends.** One pass sends at most `QCLOUD_WEBHOOK_BATCH` (50) deliveries, in chunks of
 `QCLOUD_WEBHOOK_CONCURRENCY` (8), and starts no chunk after `QCLOUD_WEBHOOK_BUDGET_MS` (5 s); one webhook gets at most
@@ -509,12 +508,58 @@ rate for more, and past operator scale use a delivery queue of your own (webhook
 the settings, not a load test. `qcloud-tick send` is not bound by the batch or the budget: it keeps
 `QCLOUD_WEBHOOK_CONCURRENCY` requests in flight and refills as they finish, so its ceiling is concurrency divided by the
 time of one request (8 in flight at 200 ms a request is about 40 a second), and the per-webhook rate still applies.
-That too is arithmetic.
+That too is arithmetic, and the next paragraph measures it.
+
+**Measured (scale review, 2026-10-24): what the sender sends.** `QCLOUD_REQUIRE_DB=1 bun scripts/sender-load.ts --events 20000
+--latency 20`: 20,000 requests are accepted into a fresh schema, then drained by sender loops against a scripted receiver that
+answers 200 after 20 ms. Local PostgreSQL 18.6, Bun 1.4.2, one machine, so the rates are a floor for separate hosts. The socket
+pool, the name lookup and `QCLOUD_WEBHOOK_PER_DESTINATION` (4 in flight to one host and port) are **not** in it, and the
+per-webhook rate limit is lifted.
+
+| Route and settings | Sender | Deliveries a second |
+| --- | --- | --- |
+| `http`, defaults (8 in flight) | the tick's pass | 263 |
+| `http`, defaults (8 in flight) | `qcloud-tick send` loop | 304 |
+| `http`, 32 in flight | one loop | 1,155 |
+| `http`, 32 in flight | four loops, one route | 2,700 |
+| `http`, 32 in flight, four routes (80,000 deliveries) | four loops | 2,882 |
+| `http` with a `batch` of 100 (200 requests) | the tick's pass | 3,083 |
+| `http` with a `batch` of 100 (200 requests) | one loop | 12,419 |
+| `queue`, defaults | the tick's pass | 1,065 |
+| `queue`, 32 in flight | four loops | 3,802 |
+
+- **Accepting is not the limit.** The store takes about 10,000 requests a second from 8 callers (about 9,000 when each makes
+  four deliveries); the sender is the slower side by an order of magnitude.
+- **A sender's rate is its requests in flight divided by the receiver's time plus about 10 ms of store work** (a claim and a
+  record for each chunk): 8 in flight against a 20 ms receiver is about 300 a second, 32 is about 1,150. A real receiver is
+  slower than 20 ms, and `QCLOUD_WEBHOOK_PER_DESTINATION` then caps one host at 4 in flight for each sender process.
+- **More senders raise one hot route's rate, but less than in proportion.** Four loops reached 2,700 a second, not 4,600: a
+  claim holds the route's row, so another sender's claim that finds it locked sees nothing due and waits
+  `QCLOUD_WEBHOOK_IDLE_MS` (500 ms). Spreading the traffic over several routes, or using a batch or a queue route, avoids it.
+- **A batch route is the cheapest way to move many events to one receiver**: one loop sent 20,000 events as 200 requests, at
+  12,400 events a second. A `queue` route sends no request: 1,065 a second in the tick's pass, 3,802 with four loops.
+- **The default per-webhook rate, 60 a minute, is the first ceiling a real route meets** (86,400 requests a day to one plain
+  route). It protects the receiver, and a batch of 100 raises it to 8,640,000 events a day. See
+  [production.md](production.md#volume-millions-of-requests-jobs-and-events).
+
+**A scheduled route holds its events as rows, and a batch route sends one request per claim** (D15). A
+route with a `schedule` stores every event it accepts as a delivery that is due at the next fire, so its rows grow with the
+events of the gap between two fires (up to 31 days) and are cleared by the retention that clears any finished delivery. A
+delivery still unsent 24 hours after its fire is failed with `expired`. A route with a `batch` sends at most `maxEvents` (500)
+or `maxBytes` (1 MiB) in a request, and a claim takes **one batch per route**, which counts as one attempt toward the pass limit
+and the route's 60 a minute. The sender claims again at once while a batch route may have more due (a pass stops at
+`QCLOUD_WEBHOOK_BATCH` requests, the loop when its slots are full), so a backlog of N events is N / `maxEvents` requests in one
+pass: 250 events at the default 100 are three requests. Before the scale review a claim shorter than the free slots ended the
+pass and put the sender process to sleep for `QCLOUD_WEBHOOK_IDLE_MS`, so a batch route drained one batch a beat or half a
+second: the sender process measured 195 events a second on a 20,000-event backlog and now 12,419. The three-batch drain is a
+test (`store-postgres/test/webhook.batch.test.ts`), and so is the sender process taking a backlog back to back
+(`maintenance/test/webhook.batch.db.test.ts`). The decision to fail all the events of a batch together when the receiver
+answers anything but 2xx is in [webhooks.md](webhooks.md#schedule-and-batch).
 
 **A `queue` route** (event gateway, [event-gateway.md](event-gateway.md)) sends no request: its attempt is one `enqueue` in the
 same database, so it costs a job insert and counts against the sender's batch like a request does. It is not measured
-separately; the figures above are for `http` routes. A queue route is operator-scale too, and a chain multiplies it:
-each hop is one more job and one more delivery row per event.
+separately; the figures above are for `http` routes. A queue route is operator-scale too. The job it adds makes
+no event of its own, so routes do not chain.
 
 **The stats read** (`GET /webhooks/stats`, behind the panel's Metrics and Home) reads every delivery row of its window with
 the attempts each keeps, so its cost grows with the events in that window (at most 7 days). It is not measured. Home asks
@@ -533,21 +578,21 @@ with a heavy event rate should lengthen it, or keep Metrics closed.
   The Issues tab reads an index on `(namespace, status, id DESC)`, at most 200 rows. The tick prunes resolved issues with
   the finished deliveries (`QCLOUD_WEBHOOK_KEEP_MS`, 2 days).
 - **De-duplication** adds one read of `qcloud_webhook_dedupe` for the page's keyed events and one write of the keys
-  that opened a window, inside the writer's transaction. A route with a window of 24 hours keeps a row for every distinct
-  value it accepted in that day, so a `jobId` key on a busy queue is one row for each job; choose few fields and short
-  windows. The tick prunes rows whose window has ended.
+  that opened a window, inside the accept's transaction. A route with a window of 24 hours keeps a row for every distinct
+  value it accepted in that day, so a key on a unique field (`body.id`) is one row for each request; choose few fields and
+  short windows. The tick prunes rows whose window has ended.
 - **Saved destinations** are at most 100 for each namespace. Changing one rewrites the copies of every connection that uses
-  it (at most 100) and re-checks the loop rule, in one transaction under the same advisory lock as a save.
+  it (at most 100) in one transaction.
 
 **What this does not promise.**
 
-- **A sustained event rate above the sender's rate grows the backlog** until the 24-hour expiry fails what is left.
-  `job.progress` makes that easy: subscribe to it only where updates are rare.
+- **A sustained request rate above the sender's rate grows the backlog** until the 24-hour expiry fails what is left.
+  Put a `filter` on a busy source, or a `delayMs` and a `dedupe` where repeats are common.
 - **A late outcome after a lease lapse is dropped**, so a send can repeat. An attempt that was claimed and never answered
   (a dead sender) counts against the delivery's attempt budget.
 - **The claim serialises per webhook** between concurrent claimers (a webhook row is locked while its deliveries are
   taken); with many webhooks the claimers pass each other by (`SKIP LOCKED`).
-- **No ordering**, and the body has no job data.
+- **No ordering**, and a route sends what was posted, nothing about any job.
 - A **test event** uses the full retry policy: a test to a receiver that is down is retried for 63.5 minutes.
 - Registration validates a URL and does not resolve it; a name that points at a private address is accepted and every
   attempt then fails with `destination not allowed`.
@@ -614,3 +659,64 @@ with a heavy event rate should lengthen it, or keep Metrics closed.
 - **Tested** on two schemas of one Postgres standing in for two databases: a queue writes only to its namespace's shard,
   `migrate` names each shard, and one loop ticks two namespaces over one pool and leaves the other shard alone.
   **Not run** on two real database servers and **not measured** under load, so the gain is a design property, not a number.
+
+## 15. The public ingest (tasks 07 to 10)
+
+What the listener at `/s/<token>` takes and where it stops. The design is in [event-gateway.md](event-gateway.md#the-public-address).
+Measured on PostgreSQL 18.6 on one developer machine, Bun 1.4.2, with the client and the server in one process and one
+event loop, so every rate is a floor and a latency includes the client's own queueing.
+
+| Limit | Value | Where it is set | What happens past it |
+| --- | --- | --- | --- |
+| Body | 256 KB, the most it can be set to | `QCLOUD_INGEST_MAX_BODY_BYTES` | `413`, stored as a rejection with no body. Held three ways: the declared length, a counted stream and the socket |
+| Time to deliver a body | 10 s | `QCLOUD_INGEST_READ_TIMEOUT_MS` | `408`, stored as a rejection |
+| One source | 600 a minute **per process** | `QCLOUD_INGEST_RATE_PER_SOURCE` | `429` with `Retry-After`, nothing stored |
+| All sources | 6,000 a minute **per process**, counted before the lookup | `QCLOUD_INGEST_RATE_GLOBAL` | `429` with `Retry-After`, nothing stored |
+| Rejected requests kept | 60 a minute per source, across processes (the rest are counted) | the store | the log stays small under a flood |
+| Headers and query kept | 64 pairs each, a value cut at 2,048 characters | the store | the rest is dropped |
+| Sources | 100 a namespace | the store | `409 source_limit` |
+| Retention | 2 days: `QCLOUD_WEBHOOK_KEEP_MS`, and never less than 48 hours (twice the 24 hours an event may wait to be sent) | the tick, which deletes oldest first in batches | a plain table with a retention index, not partitioned by day |
+| Connections | `ingest.pool_size` (2) per instance | `budget()` | counted as a control process: raise the data plane's `control_processes` by the instances |
+
+The rates are a fixed minute in each process, so `n` instances allow about `n` times the figure, and a window boundary can
+let through up to twice the rate across it. The per-address limit is the edge's (Cloud Armor, the WAF), where the client address
+is known; the Terraform sets it and the chart leaves it to the ingress.
+
+**Measured** (`QCLOUD_REQUIRE_DB=1 bun scripts/ingest-load.ts --seconds 10`, a pool of 2 connections as deployed):
+
+```
+capacity  (limits lifted)    200/s  sent 1920  200:1920                p50 2.6 ms  p99 6.4 ms
+defaults  (as shipped)       200/s  sent 1920  200:600 429:1320        p50 1.0 ms  p99 4.9 ms
+flood     real sender          5/s  sent   47  200:14 429:33
+          random tokens     2000/s  sent 19000  404:5986 429:13014     p50 1.4 ms  p99 4.9 ms
+```
+
+Read it as: the store keeps up with the 200 posts a second this run offers (it is the script's offered rate, not the
+ceiling; the next paragraph raises it), and every `200` is a stored
+request (the script fails if the two differ, or if the connections held pass `budget()`); the per-source limit gives exactly
+600 in the minute; and **a flood of random tokens uses the process's global rate in about three seconds**, after which the
+real sender gets `429` for the rest of the minute (14 of 47 accepted). That is the known weakness
+([known issues](known-issues.md), row 12): the cheap defence is the edge's per-address limit, then a larger global rate, then
+more instances.
+
+**Capacity (scale review, 2026-10-24).** With the limits lifted and 6,000 posts a second offered, one instance on its two
+connections stored about 5,200 a second; every `200` was a stored request. What the instance could not take it answered
+`503 {"error":"unavailable"}` with `Retry-After: 5`, which is the handler's answer when a store lookup or accept fails (a
+pool that is busy for too long), not a deliberate shed. So one instance does about 5,000 a second, 430 million a day, at the
+store, and the shipped limits (100 a second for all sources, 10 for one source, per process) are the throttle, not the code.
+Raise them with `QCLOUD_INGEST_RATE_PER_SOURCE` and `QCLOUD_INGEST_RATE_GLOBAL`, and add instances before raising
+`ingest.pool_size`. Client and server shared one event loop, so this is a floor. At a sustained 5,000 a second the 2-day
+retention holds about 860 million request rows; the tick deletes about 133,000 rows a second, so retention keeps up, but the table
+and its index are large: size the disk for `events a day × body size × 2` and watch autovacuum (see
+[production.md](production.md#volume-millions-of-requests-jobs-and-events)).
+
+**Completed-job retention (scale review, 2026-10-24).** With 1 million completed jobs older than the window in 20 queues, a tick
+pass at the default `QCLOUD_TICK_MAX_ITEMS` of 200 deleted 200 jobs in about 15 ms (about 13,000 a second) and at 5,000 in about
+60 ms (about 85,000 a second), each reading the oldest entries of `qcloud_jobs_completed_idx` and stopping at the cap. The
+loop repeats a pass at once while a step reports more, so a backlog drains within the beat, and a service that completes 10
+million jobs a day (116 a second) needs a fraction of one pass. Migration 24 built that index over the 1 million rows in 1.1 s on
+a local Postgres 18 and takes a lock that blocks writes to `qcloud_jobs` for that long; a table with hundreds of millions of rows
+takes minutes, so apply it in a quiet period. One machine, no concurrent claims.
+
+**Not run:** another host or CPU count; client and server in separate processes; a real load balancer, Cloud Armor or WAF in
+front; a slow-loris on the headers (the socket's idle timeout is the only defence, not measured); the real clouds (D9).

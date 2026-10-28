@@ -1,4 +1,5 @@
 import type { StoreContext } from './context';
+import { pruneRequests } from './inboundRetention';
 import { runTransaction } from './retry';
 import { pruneResolvedIssues } from './webhookIssues';
 
@@ -121,9 +122,17 @@ export async function pruneWebhookDeliveries(
   });
   // Issues resolved more than `webhookKeepMs` ago (migration 18); likewise only decides `more`.
   const issues = await pruneResolvedIssues(ctx, limit);
+  // Stored requests (D14) are kept as long as a delivery of one may still be sent or retried: a delivery is failed
+  // `WEBHOOK_DELIVERY_EXPIRY_MS` after it was due, so twice that is the floor. Likewise only decides `more`.
+  const requests = await pruneRequests(
+    ctx,
+    limit,
+    Math.max(ctx.webhookKeepMs, 2 * WEBHOOK_DELIVERY_EXPIRY_MS)
+  );
   return {
     expired,
     deleted,
-    more: expired >= limit || deleted >= limit || keys >= limit || issues >= limit,
+    more:
+      expired >= limit || deleted >= limit || keys >= limit || issues >= limit || requests >= limit,
   };
 }

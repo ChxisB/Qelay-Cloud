@@ -99,13 +99,31 @@ describe('bq request construction', () => {
     );
   });
 
-  test('DLQ retry and completed requeue fail synchronously before transport', () => {
+  test('completed requeue fails synchronously before transport', () => {
     const before = fetchHarness.calls.length;
-    expect(() => bq.retryDlq('q1')).toThrow(/unavailable|disabled|flow/i);
-    expect(() => bq.retryDlq('q1', 'job-9')).toThrow(/unavailable|disabled|flow/i);
     expect(() => bq.retryCompleted('q1')).toThrow(/unavailable|disabled|flow/i);
     expect(() => bq.retryCompleted('q1', 'job-9')).toThrow(/unavailable|disabled|flow/i);
     expect(fetchHarness.calls).toHaveLength(before);
+  });
+
+  test('DLQ retry posts the version the page read; bulk retry sends the queue name as confirm', async () => {
+    fetchHarness.responder = () => json({ ok: true, count: 3, remaining: 0, done: true });
+    await bq.retryDlq('orders:eu', 'job-9', 4);
+    expect(lastCall().url).toBe('http://srv/queues/orders%3Aeu/dlq/job-9/retry');
+    expect(lastCall().init?.method).toBe('POST');
+    expect(JSON.parse(String(lastCall().init?.body))).toEqual({ expectedVersion: 4 });
+
+    await bq.retryDlq('orders', 'job-1');
+    expect(JSON.parse(String(lastCall().init?.body))).toEqual({});
+    expect(() => bq.retryDlq('orders', 'job/9')).toThrow(/opaque path-safe/);
+
+    await bq.retryDlqMany('orders', { limit: 500, reason: 'timeout' });
+    expect(lastCall().url).toBe('http://srv/queues/orders/dlq/retry');
+    expect(JSON.parse(String(lastCall().init?.body))).toEqual({
+      confirm: 'orders',
+      limit: 500,
+      reason: 'timeout',
+    });
   });
 
   test('rejects enabling DLQ auto-retry before transport', () => {
@@ -116,18 +134,32 @@ describe('bq request construction', () => {
     expect(fetchHarness.calls).toHaveLength(before);
   });
 
-  test('rejects unsupported DLQ retention patches before transport', () => {
-    const before = fetchHarness.calls.length;
-    expect(() => bq.setDlqConfig('orders', { maxAge: null })).toThrow(
-      /retention|maxAge|unavailable/i
-    );
-    expect(() => bq.setDlqConfig('orders', { maxEntries: 10_000 })).toThrow(
-      /retention|maxEntries|unavailable/i
-    );
-    expect(() => bq.setDlqConfig('orders', { maxAge: 60_000, maxEntries: 100 })).toThrow(
-      /retention|maxAge|maxEntries|unavailable/i
-    );
-    expect(fetchHarness.calls).toHaveLength(before);
+  test('saves DLQ retention as a PUT of the config', async () => {
+    fetchHarness.responder = () => json({ ok: true });
+    await bq.setDlqConfig('orders', { maxAge: null, maxEntries: 100 });
+    expect(lastCall().url).toBe('http://srv/queues/orders/dlq-config');
+    expect(lastCall().init?.method).toBe('PUT');
+    expect(JSON.parse(String(lastCall().init?.body))).toEqual({
+      config: { maxAge: null, maxEntries: 100 },
+    });
+  });
+
+  test('saves a retry policy and a run window as bare objects, and removes a window with DELETE', async () => {
+    fetchHarness.responder = () => json({ ok: true });
+    await bq.setQueuePolicy('orders', { attempts: 3 });
+    expect(lastCall().url).toBe('http://srv/queues/orders/policy');
+    expect(lastCall().init?.method).toBe('PUT');
+    expect(JSON.parse(String(lastCall().init?.body))).toEqual({ attempts: 3 });
+
+    await bq.setRunWindow('orders', { cron: '0 0 * * *', durationMs: 3_600_000 });
+    expect(lastCall().url).toBe('http://srv/queues/orders/run-window');
+    expect(JSON.parse(String(lastCall().init?.body))).toEqual({
+      cron: '0 0 * * *',
+      durationMs: 3_600_000,
+    });
+
+    await bq.clearRunWindow('orders');
+    expect(lastCall().init?.method).toBe('DELETE');
   });
 
   test('bulk jobs translate the public jobId field to the upstream customId field', async () => {

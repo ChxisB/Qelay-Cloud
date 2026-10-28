@@ -11,7 +11,7 @@ import { runTransaction } from './retry';
  * The dead-letter queue is the queue's `failed` jobs: one row each, written once by the failure that
  * ended the job (`dlq_entry` holds the final error and the attempt history). The limit, the purge
  * and the age expiry below delete rows, and each deletion is journaled as a `removed` event in the
- * same transaction. Retrying a DLQ entry is not here: it stays fail-closed (task 14 Result, task 32).
+ * same transaction. Retrying an entry is `dlqRetry.ts`.
  */
 
 type Count = number | string | bigint;

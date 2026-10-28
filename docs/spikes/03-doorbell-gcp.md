@@ -1,6 +1,6 @@
 # Spike 03: the doorbell on Pub/Sub
 
-- **Task:** [03](../../.claude/.planning/v1.0.0/03-spike-doorbell-gcp.md), run on 2026-10-13.
+- **Task:** 03, run on 2026-10-13.
 - **Spike code:** `packages/store-postgres/spike/doorbell/`, on top of the task 01 port. **Task 17 removed most of it**: the
   scenarios, the worker, the Pub/Sub helpers and `tools/` are gone, and the scenarios run as
   [`packages/transport-gcp/test/`](../../packages/transport-gcp/test/) against `PostgresStore` and `PubSubTransport`. Five files stay

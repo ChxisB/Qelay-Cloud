@@ -1,4 +1,10 @@
 export type { BulkJob } from './add';
+export type {
+  QueuePolicy,
+  QueueRunWindow,
+  QueueRunWindowInput,
+  QueueRunWindowState,
+} from '@qelay-cloud/core';
 export type { DlqConfig, DlqFilter, JobLogs, StallConfig } from './config';
 export type { FlowReads } from './flowOps';
 export { FlowProducer } from './flowProducer';
@@ -31,8 +37,12 @@ export type {
 export { Worker } from './worker';
 export { UnrecoverableError } from './workerOptions';
 export type {
+  BatchProcessor,
+  BatchWorkerOptions,
+  JobWorkerOptions,
   Processor,
   ProcessorContext,
+  WorkerBatchOptions,
   WorkerCloseOptions,
   WorkerEvents,
   WorkerJob,

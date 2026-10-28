@@ -78,7 +78,7 @@ variable "worker_services" {
 }
 
 variable "control_processes" {
-  description = "Processes beyond the worker services that hold a pool: the tick (this configuration) and each Control API instance at its max (infra/gcp/control-plane). The panel holds no connection."
+  description = "Processes beyond the worker services that hold a pool: the tick (this configuration), each Control API instance and each ingest instance at its max (infra/gcp/control-plane). The panel holds no connection."
   type        = number
   default     = 3
 }

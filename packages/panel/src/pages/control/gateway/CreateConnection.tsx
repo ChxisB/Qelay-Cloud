@@ -37,7 +37,7 @@ export function CreateConnection() {
       <Card>
         <CardHeader
           title="New connection"
-          sub="Choose a queue's job events, then an address of yours or another queue to send them to."
+          sub="Choose an inbound source, then an address of yours or a queue to send its requests to."
         />
         {made ? (
           <SecretBanner

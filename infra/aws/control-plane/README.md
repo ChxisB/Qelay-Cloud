@@ -1,10 +1,10 @@
 # The Qelay-Cloud control plane on AWS (Terraform)
 
-The Control API and the panel as ECS Fargate services behind one Application Load Balancer, and the schema migration as a
-one-off task. It is a root of its own that sits beside the data plane ([`../example`](../README.md)), not inside it: the
+The Control API and the panel as ECS Fargate services behind one Application Load Balancer, optionally the inbound
+listener (the ingest) as a third, and the schema migration as a one-off task. It is a root of its own that sits beside the data plane ([`../example`](../README.md)), not inside it: the
 data plane is applied once and rarely, the control plane every time a build is released.
 
-Same behaviour as the GCP control plane ([`../../gcp/control-plane`](../../gcp/README.md), runbook [deploy-gcp.md](../../../docs/runbooks/deploy-gcp.md)): the same two
+Same behaviour as the GCP control plane ([`../../gcp/control-plane`](../../gcp/README.md), runbook [deploy-gcp.md](../../../docs/runbooks/deploy-gcp.md)): the same
 images (nothing here is cloud-specific, the broker is chosen by `QCLOUD_TRANSPORT=aws-sqs`), the same environment contract,
 the same panel build (it reads `/config.json` at start-up, so only configuration differs), the same smoke test steps
 ([`scripts/smoke-aws.ts`](../../../scripts/smoke-aws.ts)). Operations: [`docs/runbooks/deploy-aws.md`](../../../docs/runbooks/deploy-aws.md).
@@ -21,8 +21,11 @@ for an explicit go-ahead (decision D9). What was and was not run is listed in [N
 | `alb.tf` | The load balancer, its two subnets (public mode), its security group, the listeners, the two host rules and the two target groups. |
 | `api.tf` | The API's log group, task definition and ECS service. |
 | `panel.tf` | The panel's log group, task definition and ECS service. |
+| `ingest.tf` | With `ingest` set: the inbound listener's log group, task definition and ECS service. Nothing without it. |
+| `autoscaling.tf` | Application Auto Scaling for the API and, with an ingest, the ingest: a target between the minimum and the maximum and one CPU target-tracking policy each. |
 | `migrate.tf` | The migration's task definition. It has no service: it is run by hand, as a release step. |
-| `iam.tf` | Four roles: the API's task role and three execution roles (API, panel, migration). |
+| `iam.tf` | Four roles: the API's task role and three execution roles (API, panel, migration); a fifth, the ingest's execution role, with an ingest. |
+| `waf.tf` | The edge rate limit (a web ACL), when `edge_rate_limit_per_minute` is set. |
 | `outputs.tf` | The URLs, the redirect URIs to register, the load balancer's name for DNS, the migration's `run-task` inputs. |
 | `ci.tfvars.example` | The values of a fictional account, used by `bun run check:terraform`. Not a real environment. |
 
@@ -31,7 +34,8 @@ for an explicit go-ahead (decision D9). What was and was not run is listed in [N
 With the CI values this is 36 resources to add: the load balancer, two listeners, two host rules, two target groups, its
 security group and rules (and, in public mode, two subnets, a route table and a route to the data plane's internet gateway),
 two ECS services, three task definitions, three log groups, four IAM roles and their policies. The ECS cluster, the VPC, the
-database, the queues, the tick and its schedule belong to the data plane.
+database, the queues, the tick and its schedule belong to the data plane. With `ingest` set it adds a third service, task
+definition, log group and target group, a host rule (`/s/*` only), a pair of security group rules (8081) and a fifth role.
 
 ## Handover from the data plane
 
@@ -66,19 +70,21 @@ role with exactly that name and the default path.
 | --- | --- | --- |
 | `account_id`, `region`, `name`, `namespace` | required (from the data plane) | The account (the provider refuses any other), the region, the prefix of every resource, `QCLOUD_NAMESPACE`. |
 | `api_image`, `panel_image` | required | The images of tasks 36 (`packages/control-api/Dockerfile`, `packages/panel/Dockerfile`). Push them first; use a digest or an immutable tag. |
-| `image_repository_arns` | `[]` | ECR repositories the execution roles may pull from. Empty for another registry (which needs `egress = "nat"`). |
+| `image_repository_arns` | `[]` | ECR repositories the execution roles may pull from (the ingest's too). Empty for another registry (which needs `egress = "nat"`). |
 | `cpu_architecture` | `X86_64` | `ARM64` is accepted; the images must match. |
 | `oidc_issuer`, `oidc_audience`, `oidc_jwks_url` | required | What the API checks a token against. `oidc_audience` is a list. |
 | `oidc_client_id`, `oidc_authority`, `oidc_scope`, `oidc_token_audience` | client id required | What the panel signs in with. `oidc_authority` defaults to the issuer. |
 | `role_claim`, `operator_roles`, `viewer_roles` | null (the API's defaults) | Which claim carries roles, and which values mean operator or viewer. |
 | `jwks_reachable_in_vpc` | false | Only for a data plane with `egress = "none"`: you have made the identity provider's signing keys reachable. |
 | `exposure` | `public` | `public` or `private`. See [Exposure](#exposure). |
-| `certificate_arn`, `api_hostname`, `panel_hostname` | required | An ACM certificate (in this region) that covers both names, and the two names. DNS is yours: point both at `alb_dns_name`. |
+| `certificate_arn`, `api_hostname`, `panel_hostname` | required | An ACM certificate (in this region) that covers both names (and `ingest.hostname`), and the two names. DNS is yours: point each at `alb_dns_name`. |
+| `ingest` | null | The inbound listener, off by default: `{ image, hostname, instances = 2, max_instances = null, pool_size = 2, cpu = 256, memory = 512, rate_limit_per_minute = 6000 }` (`max_instances`: how far autoscaling goes, null for `instances`). The hostname must differ from the other two. It is the address a sender posts to (`https://<hostname>/s/<token>`; the `ingest_url` output). The load balancer forwards only `/s/*` to it. See [The ingest](#the-ingest). |
 | `ingress_cidrs` | null | Who may reach the load balancer. Null: `0.0.0.0/0` when public, the VPC's range when private. |
 | `alb_subnet_slot` | 12 | The first of the sixteen equal slots of `vpc_cidr` the load balancer's subnets take (public mode). The data plane's NAT subnets take 8 and up. |
 | `alb_idle_timeout_seconds` | 60 | Must be at least twice `event_heartbeat_seconds`. See [Timeouts](#timeouts). |
 | `alb_deletion_protection` | false | Turn on for a real environment; then `terraform destroy` fails until it is off. |
-| `api_instances`, `api_pool_size` | 2, 2 | A **fixed** count: the connection budget counts these processes, so there is no autoscaling. `api_instances + 2 <= budgeted_control_processes`. |
+| `api_instances`, `api_max_instances`, `api_pool_size` | 2, null, 2 | The API's tasks: `api_instances` to start with and the fewest autoscaling keeps, `api_max_instances` (null: the same, a fixed count) the most. The connection budget counts the maximum: `api_max_instances + ingest.max_instances + 2 <= budgeted_control_processes` (the 2 are the migration and the tick), so raise the data plane's `control_processes` first. |
+| `autoscaling_cpu_target_percent` | 60 | The average CPU that target tracking holds for the API and the ingest (`autoscaling.tf`). Scale-out waits 60 s between steps, scale-in 300 s. The panel holds no connection and is not scaled. The first apply needs `iam:CreateServiceLinkedRole` (Application Auto Scaling), once. |
 | `api_event_streams` | 50 | Open event streams per task. |
 | `event_stream_lifetime_seconds`, `event_heartbeat_seconds` | 600, 15 | See [Timeouts](#timeouts). |
 | `shutdown_grace_seconds` | 8 | How long the API drains before it exits; the container's `stopTimeout` is this plus 10 s. |
@@ -101,7 +107,7 @@ panel's JavaScript already carries). The exposure mode decides only what stands 
 | --- | --- | --- |
 | **Public HTTPS, application-layer OIDC** | `exposure = "public"`: an internet-facing ALB in two subnets of its own, HTTPS only (port 80 redirects), TLS 1.3 policy, open to `ingress_cidrs`. Every request to the API needs a token from your identity provider. | **Yes** |
 | **Private only** | `exposure = "private"`: an internal ALB in the data plane's private subnets, reachable from the VPC (peering, VPN, Transit Gateway, or a bastion). Needs no internet gateway. | |
-| **Edge rate limit** (WAF) | `edge_rate_limit_per_minute = n`: a regional web ACL on the load balancer with one rule, requests per minute from one client address over the API and the panel together. Over it the load balancer answers 429 with `Retry-After: 60` before a task sees the request. Null by default: no WAF and no charge. The API's own limiter stays on as the second layer (it is per task and per principal). The plan is checked, never applied (D9); whether 1200 is the right number for your clients is yours to measure. | |
+| **Edge rate limit** (WAF) | `edge_rate_limit_per_minute = n`: a regional web ACL on the load balancer with one rule, requests per minute from one client address over the API and the panel together (with an ingest, a second rule limits the ingest's host name on its own, at `ingest.rate_limit_per_minute`, so sender traffic cannot use up an operator's allowance). Over it the load balancer answers 429 with `Retry-After: 60` before a task sees the request. Null by default: no WAF and no charge. The API's own limiter stays on as the second layer (it is per task and per principal). The plan is checked, never applied (D9); whether 1200 is the right number for your clients is yours to measure. | |
 | **ALB OIDC action** in front of both | An `authenticate-oidc` rule on the listener, so the load balancer signs users in before a request reaches a task. **Not implemented**: it puts the identity provider's client secret in Terraform state, it signs browsers in by cookie and does not replace the API's own bearer-token check (a script has no cookie), and the API would check tokens anyway. A private listener is the better second layer. | |
 
 Whatever the mode, the load balancer drops invalid header fields and runs the strictest desync mitigation; the default action
@@ -130,7 +136,7 @@ A stream open at a rollover is cut at the grace and reconnects to another task. 
 
 ## Identities
 
-Four roles; each statement names its resources (`*` only for `ecr:GetAuthorizationToken` and `cloudwatch:GetMetricData`, which
+Four roles (five with an ingest); each statement names its resources (`*` only for `ecr:GetAuthorizationToken` and `cloudwatch:GetMetricData`, which
 take none), and none carries an `iam:` or `sts:` action.
 
 | Role | Can | Cannot |
@@ -139,6 +145,31 @@ take none), and none carries an `iam:` or `sts:` action.
 | `<name>-api-execution` | Pull the image, write its log group, read the database secret (and decrypt it through Secrets Manager). | Anything at run time. |
 | `<name>-panel-execution` | Pull the image, write its log group. | Read a secret. The panel has no task role. |
 | `<name>-migrate-execution` | As the API's execution role, for the migration's log group and the direct (else the main) database secret. | |
+| `<name>-ingest-execution` (with an ingest) | Pull the image, write its log group, read the database secret and, when set, the webhook key secret. | Anything at run time. The ingest has no task role: it publishes to no queue, calls no destination and reads no queue. |
+
+## The ingest
+
+Opt-in with `ingest = { image, hostname }`. It is the public address of the event gateway's inbound sources:
+`https://<hostname>/s/<token>`. The service (`packages/ingest`) validates a request, stores it in Postgres and answers; it
+never calls a destination. It shares the load balancer, the cluster and the tasks' security group with the API, and differs
+from them in four ways:
+
+- **Its own host name.** The plan refuses one name for two services. The listener rule needs the host **and** the path
+  `/s/*`; any other path on that host falls through to the 404. The target group's check is `/healthz`, which touches no
+  database.
+- **Its own port, 8081**, so the tasks' group gains one inbound rule (from the load balancer's group only), and the load
+  balancer's group one outbound rule.
+- **Its own edge limit.** Its limits are per process (a rate per source and a global one), so the per-address limit is the
+  WAF's: with `edge_rate_limit_per_minute` set, the ingest's host name is excluded from the first rule and has its own,
+  at `ingest.rate_limit_per_minute`. The host match is a prefix match on the header (`STARTS_WITH`), so a host name that
+  begins with the ingest's is counted in the ingest's rule too; give it a name that is not a prefix of another.
+- **Its connections count.** `connection_budget.ingest_connections` is `instances * pool_size`, and the data plane's
+  `control_processes` must be raised by the ingest's `instances` before this is applied, or the plan's budget precondition
+  refuses.
+
+The secrets are the API's: the database URL and, when set, `webhook_key_secret`. The ingest opens a source's stored
+verification secret with that key, so set it when any source verifies a signature, a password or an API key. The plan does
+not check this: it cannot know what the sources are.
 
 The deployer's own identity needs `iam:CreateRole`, `iam:PutRolePolicy` and `iam:PassRole` for these four roles, which this
 configuration cannot grant it.
@@ -171,7 +202,8 @@ On top of that, the data plane's network: a NAT gateway is $0.045 per hour (abou
 that passes it. The control plane shares the data plane's gateway (it needs the identity provider's signing keys, ECR, and
 CloudWatch through it), so it adds data processing, not a second gateway. The data plane's database, queues and workers are
 costed in [`../README.md`](../README.md#cost-drivers). A public load balancer holds a public address per zone, which AWS
-bills at $0.005 per hour each (about $7 a month for two). With one API and one panel task (`api_instances = 1`,
+bills at $0.005 per hour each (about $7 a month for two). An ingest (two tasks of 0.25 vCPU and 0.5 GB at its defaults) adds about $18, and the WAF, when asked for, $5 a month for the
+web ACL plus $1 for each rule and $0.60 per million requests. With one API and one panel task (`api_instances = 1`,
 `panel_instances = 1`) the floor falls by about $27, and the rollover stops being zero-downtime (the API's rollover is then
 0 percent minimum, 100 percent maximum).
 
@@ -195,8 +227,11 @@ placeholder keys (`offline_plan`).
   circuit breaker, private subnets, no public address.
 - **Ingress:** HTTPS only on a TLS 1.3 policy with a certificate, a 404 default, a redirect from port 80, exactly two host-only
   rules, target groups on `/health`, security group rules (the only inbound rule on the tasks' group is 8080 from the load
-  balancer's), no NAT, endpoint or address allocated here, the idle timeout against the heartbeat.
-- **Identities:** the four roles above, their trust (ECS tasks in this account), every statement scoped, no `iam:`/`sts:`.
+  balancer's, and 8081 with an ingest), no NAT, endpoint or address allocated here, the idle timeout against the heartbeat.
+- **Ingest:** plans with an ingest, with a customer-managed secrets key, and with the WAF on both (the edge rules, their host scope-downs
+  and limits), and six refusals (the budget, the pool, one host name for two services, a malformed host name, no task and a
+  rate limit under 10). The listener rule is `/s/*` only, the ingest has no task role and no `iam:`/`sts:` action.
+- **Identities:** the roles above, their trust (ECS tasks in this account), every statement scoped, no `iam:`/`sts:`.
 - **Handover:** the control plane's variables against the data plane's `control_plane_inputs`, that the data plane admits
   `<name>-api-task`, and that the connection budget's numbers are equal.
 

@@ -6,6 +6,8 @@
 #            webhooks are on, the webhook key;
 #            read of Pub/Sub depth and age from Cloud Monitoring
 #   panel    nothing: it serves static files and a config document built from its environment
+#   ingest   accessor on the database secrets and the webhook key, when it is deployed. No Pub/Sub role and no secret
+#            write: it stores what it is sent and rings nothing
 #   migrate  accessor on the database secrets it needs: the direct URL (or the pooled one) and the CA
 
 resource "google_service_account" "api" {
@@ -16,6 +18,13 @@ resource "google_service_account" "api" {
 resource "google_service_account" "panel" {
   account_id   = "${var.name}-panel"
   display_name = "Qelay-Cloud panel (${var.name})"
+}
+
+resource "google_service_account" "ingest" {
+  count = local.ingest ? 1 : 0
+
+  account_id   = "${var.name}-ingest"
+  display_name = "Qelay-Cloud ingest listener (${var.name})"
 }
 
 resource "google_service_account" "migrate" {
@@ -53,6 +62,15 @@ resource "google_secret_manager_secret_iam_member" "api_read" {
   member    = "serviceAccount:${google_service_account.api.email}"
 }
 
+# The same three secrets as the API's: the listener opens a source's secret with the webhook key to check a signature.
+resource "google_secret_manager_secret_iam_member" "ingest_read" {
+  for_each = toset(local.ingest ? local.api_secret_ids : [])
+
+  secret_id = each.value
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ingest[0].email}"
+}
+
 resource "google_secret_manager_secret_iam_member" "migrate_read" {
   for_each = toset(local.migrate_secret_ids)
 
@@ -82,13 +100,14 @@ resource "google_project_iam_member" "api_reads_metrics" {
 
 locals {
   act_as = {
-    for pair in setproduct(["api", "panel", "migrate"], var.deployer_members) :
+    for pair in setproduct(concat(["api", "panel", "migrate"], local.ingest ? ["ingest"] : []), var.deployer_members) :
     "${pair[0]}:${pair[1]}" => { account = pair[0], member = pair[1] }
   }
   account_ids = {
     api     = google_service_account.api.name
     panel   = google_service_account.panel.name
     migrate = google_service_account.migrate.name
+    ingest  = local.ingest ? google_service_account.ingest[0].name : null
   }
 }
 

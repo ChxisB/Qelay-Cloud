@@ -71,7 +71,12 @@ A job added with a `delay` starts as `delayed` and joins the same loop when it i
   current lease.**
 - **Retry** follows `attempts` and `backoff`. An attempt is counted when it ends without success, by failure or by lease
   recovery, never when it is claimed. When attempts run out the job moves to the dead-letter queue with the reason
-  `max_attempts_exceeded`. Retrying a dead letter by hand is [not supported in v1.0.0](unsupported.md).
+  `max_attempts_exceeded`. A dead letter is put back by hand with `queue.retryDlq(id)` or `retryDlqMany({ limit })`, or from the
+  panel; nothing retries it by itself ([compat.md](compat.md#queue-methods)).
+- **A queue can carry its own defaults.** A **retry policy** (`attempts`, `backoff`, `timeout`) fills what a job leaves out, and
+  a job's own option wins. A **run window** (`{ cron, durationMs, timezone }`) is when the queue may start jobs: outside it the
+  jobs wait and are rung when the window opens, which the tick does, so allow one tick. Set a window only after every process
+  runs the release that has it ([production settings](production.md#run-windows)).
 - **Delivery is at least once.** A lease that expires while a job runs hands the job to another worker, so **a handler must
   be idempotent**. Webhooks are at least once too: the receiver deduplicates on `X-Webhook-Id` ([webhooks.md](webhooks.md)).
 
@@ -86,7 +91,7 @@ Something must ring the jobs that are not ready when they are added, and repair 
   15 minutes), the tick rings it ahead of time and the broker delivers it on time.
 - **Re-ring.** Every claimable job whose last bell is older than `reRingAfterMs` is rung again, with a cap per queue per tick
   so a backlog does not become a bell storm, and a grace period for a bell still in flight.
-- **Expiry and retention.** Jobs past their TTL expire, and old completed jobs, events, completion records and group state are cleaned up by the rules of the queue.
+- **Expiry and retention.** Jobs past their TTL expire, and completed jobs (after 7 days by default, `QCLOUD_COMPLETED_RETENTION_MS`), events, completion records and group state are cleaned up by the tick.
 - **Workflows.** Waits that have ended are finished and runs whose engine died are taken over ([Flows and workflows](#flows-and-workflows)).
 
 Two things run it, and you choose:
@@ -118,8 +123,8 @@ The panel shows both on **one Flows page**, because both are "things that run in
 separate. Every flow could be written as a workflow, not the other way round, and merging the engines would rewrite the
 flow's one-transaction write for nothing the page needs.
 
-"When this event happens, do that" is neither: it is a **route** of the [event gateway](event-gateway.md), from one
-queue's job events to a URL or to a job in another queue. It is opt-in per route (an event with no route does
+"When this event happens, do that" is neither: it is a **route** of the [event gateway](event-gateway.md), from an inbound
+source (what is posted to it) to a URL or to a job in another queue. It is opt-in per route (a request with no route does
 nothing), and a route that starts a workflow is a queue route whose worker calls `startWorkflow`.
 
 ## Namespaces, queues and the panel
@@ -141,8 +146,7 @@ not support ([routes](reference/routes.md)).
 
 ## What this is not
 
-Qelay-Cloud covers the BullMQ-style core of Qelay. Repeat jobs, job groups' admin methods, manual retry of failed jobs and
-DLQ replay, batch processing, the Qelay TCP server and embedded mode are not in v1.0.0. Each one throws
+Qelay-Cloud covers the BullMQ-style core of Qelay. Repeat jobs, job groups' admin methods, the Qelay TCP server and embedded mode are not in v1.0.0. Each one throws
 `UnsupportedOptionError` naming the option, or answers `501`; nothing is ignored silently ([unsupported.md](unsupported.md)).
 
 ## Where to go next

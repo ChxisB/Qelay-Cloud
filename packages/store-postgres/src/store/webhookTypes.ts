@@ -2,10 +2,11 @@ import type {
   AttemptRecord,
   DeliveredEvent,
   DeliveryStatus,
+  WebhookBatch,
   WebhookDedupe,
   WebhookDestination,
-  WebhookEvent,
   WebhookFilter,
+  WebhookSchedule,
   WebhookShape,
 } from '@qelay-cloud/core';
 
@@ -15,17 +16,15 @@ export interface WebhookSpec {
   readonly destination?: WebhookDestination;
   /** Where deliveries are POSTed; `http` only. The store checks only the length: the address rules are `core`'s `validateWebhookUrl`. */
   readonly url?: string;
-  /** The queue a `queue` route adds jobs to, in this namespace; needs a source `queue`, and is refused when it would make a loop. */
+  /** The queue a `queue` route adds jobs to, in this namespace. */
   readonly target?: string | null;
   /**
    * Makes the webhook from a saved destination: its kind and address are copied, so the spec gives this or `destination`,
    * `url` and `target`, not both. A change to the destination reaches the webhook; removing it is refused while it is used.
    */
   readonly destinationId?: string | null;
-  /** At least one. Duplicates are merged. */
-  readonly events: readonly WebhookEvent[];
-  /** Only this queue's events. Null or omitted: every queue's. */
-  readonly queue?: string | null;
+  /** The inbound source whose requests the route delivers (D14), by id. It must exist; a route without one is refused. */
+  readonly source?: string | null;
   /**
    * The signing secret, in the clear and only here: the store seals it (`webhookKey`) and nothing
    * reads it back to a caller except the sender's `claimDue`. Null or omitted: the store makes one
@@ -35,34 +34,43 @@ export interface WebhookSpec {
   /** Default true. */
   readonly enabled?: boolean;
   /**
-   * Only events that pass it are delivered (`validateFilter`). Needs the delivery writer on: the
-   * trigger cannot evaluate it. Null or omitted: every event the webhook subscribes to.
+   * Only requests that pass it are delivered (`validateFilter`). Null or omitted: every request of the source.
    */
   readonly filter?: WebhookFilter | null;
-  /** The body template (`validateShape`); same condition. Null or omitted: the default body. */
+  /** The body template (`validateShape`). Null or omitted: the request's own body. */
   readonly shape?: WebhookShape | null;
   /** What the operator calls it (at most 80 characters) and a note (at most 500). Blank or null: none. */
   readonly name?: string | null;
   readonly description?: string | null;
-  /** A delivery is made when the event is, and is due this many milliseconds later (1 s to 1 h). Writer only. */
+  /** A delivery is made when the request is taken, and is due this many milliseconds later (1 s to 1 h). */
   readonly delayMs?: number | null;
-  /** Drops an event whose chosen fields repeat inside the window (`validateDedupe`). Writer only. */
+  /** Drops a request whose chosen fields repeat inside the window (`validateDedupe`). */
   readonly dedupe?: WebhookDedupe | null;
+  /**
+   * Holds the route's deliveries until the next time the cron fires (D15): due at the first fire at or after the
+   * request plus `delayMs`. Null or omitted: due at once. Either destination.
+   */
+  readonly schedule?: WebhookSchedule | null;
+  /** Sends the route's due deliveries as one request (D15); `http` routes only. Null or omitted: one request each. */
+  readonly batch?: WebhookBatch | null;
 }
 
 /**
- * What `update` may change. A key that is present is set (null clears it, except `events`, which cannot be empty);
- * an absent one is left alone. The source queue, the destination and the secret are not editable: remove and add, or rotate.
- * A `filter`, `shape`, `delayMs` or `dedupe` needs the delivery writer, as at creation.
+ * What `update` may change. A key that is present is set (null clears it); an absent one is left alone.
+ * The destination and the secret are not editable: remove and add, or rotate.
  */
 export interface WebhookPatch {
   readonly name?: string | null;
   readonly description?: string | null;
-  readonly events?: readonly WebhookEvent[];
+  /** Moves the route to another source. */
+  readonly source?: string;
   readonly filter?: WebhookFilter | null;
   readonly shape?: WebhookShape | null;
   readonly delayMs?: number | null;
   readonly dedupe?: WebhookDedupe | null;
+  /** A schedule or batch applies to deliveries made after the change; ones already waiting keep their due time. */
+  readonly schedule?: WebhookSchedule | null;
+  readonly batch?: WebhookBatch | null;
 }
 
 /** A webhook as listings show it. The secret is never part of it, sealed or not: `signed` says there is one. */
@@ -75,8 +83,8 @@ export interface WebhookRecord {
   readonly target: string | null;
   /** The saved destination the address was copied from, else null. */
   readonly destinationId: string | null;
-  readonly events: readonly WebhookEvent[];
-  readonly queue: string | null;
+  /** The inbound source the route listens to; null for a route from before sources, which is disabled until it gets one. */
+  readonly source: string | null;
   readonly signed: boolean;
   readonly enabled: boolean;
   readonly filter: WebhookFilter | null;
@@ -85,6 +93,8 @@ export interface WebhookRecord {
   readonly description: string | null;
   readonly delayMs: number | null;
   readonly dedupe: WebhookDedupe | null;
+  readonly schedule: WebhookSchedule | null;
+  readonly batch: WebhookBatch | null;
   readonly createdBy: string;
   readonly createdAt: number;
   /** When the last attempt to deliver to it started. */
@@ -117,8 +127,8 @@ export interface DeliveryRecord {
   readonly id: string;
   readonly webhookId: string;
   readonly event: DeliveredEvent;
-  readonly queue: string;
-  readonly jobId: string;
+  /** The inbound request it carries (D14); null for a test delivery. */
+  readonly requestId: string | null;
   readonly occurredAt: number;
   readonly status: DeliveryStatus;
   /** Attempts started, including ones whose result was never recorded. */
@@ -131,6 +141,8 @@ export interface DeliveryRecord {
   readonly history: readonly AttemptRecord[];
   readonly createdAt: number;
   readonly finishedAt: number | null;
+  /** The batch the latest attempt went out in (D15); null when it was sent alone. */
+  readonly batchId: string | null;
 }
 
 export interface DeliveryPage {
@@ -179,11 +191,14 @@ export type RetryResult =
   | { readonly outcome: 'not_failed'; readonly status: DeliveryStatus };
 
 export interface ClaimOptions {
-  /** Most deliveries one claim takes, over all webhooks. */
+  /**
+   * Most requests one claim makes ready, over all webhooks: a delivery of a plain route is one, and the deliveries a batch
+   * route contributes (up to its `maxEvents`) are one together. A claim returns the deliveries, so it can return more.
+   */
   readonly limit: number;
   /** How long a claimed delivery is the claimer's: past it another claim takes it again. */
   readonly leaseMs: number;
-  /** Most attempts one webhook gets in a fixed minute. */
+  /** Most requests one webhook gets in a fixed minute: a batch counts once. */
   readonly ratePerMinute: number;
 }
 
@@ -200,24 +215,29 @@ export interface ClaimedDelivery {
   /** The attempt's number, from 1; it is what `record` is fenced by. */
   readonly attempt: number;
   readonly event: DeliveredEvent;
-  readonly queue: string;
-  readonly jobId: string;
   readonly occurredAt: number;
-  /** From the journal, when the event is still in it. */
-  readonly state: string | null;
-  readonly error: string | null;
-  readonly progress: number | null;
   /**
-   * The bytes to POST, when the delivery writer shaped them: null means the default body. The empty
-   * string means the shaped body was too large to make: nothing can be sent.
+   * The bytes to POST, when the route's shape made them: null means the request's own bytes, or the test document. The
+   * empty string means the shaped body was too large to make: nothing can be sent.
    */
   readonly body: string | null;
+  /** The inbound request this delivery carries (D14), or null. */
+  readonly requestId: string | null;
+  /** The request's own bytes, when it has no shaped `body`; null if it has none or the request was removed. */
+  readonly requestBody: Uint8Array | null;
+  /** The request's `Content-Type`; null when it had none. */
+  readonly requestContentType: string | null;
   /** The signing secret, opened; null for an unsigned webhook (and when `secretUnreadable`). */
   readonly secret: string | null;
   /** The secret before the last rotation while it still signs; null otherwise. */
   readonly previousSecret: string | null;
   /** The webhook is signed but its secret could not be opened (no key, or the wrong one): send nothing. */
   readonly secretUnreadable: boolean;
+  /**
+   * True for a delivery of a batch route (D15): the ones of this claim with the same `webhookId` go out together, in one
+   * request. Absent or false: this delivery is sent alone, which is all a sender that predates batches does.
+   */
+  readonly batched?: boolean;
 }
 
 /** What one attempt came to. */
@@ -235,6 +255,11 @@ export interface AttemptOutcome {
   readonly response?: string | null;
   readonly startedAt: number;
   readonly durationMs: number;
+  /**
+   * The batch this delivery went out in, when it did (D15): stored on the delivery and in its history entry. The members of
+   * one batch that are retried share one retry time.
+   */
+  readonly batchId?: string | null;
 }
 
 export interface RecordSummary {
@@ -245,31 +270,4 @@ export interface RecordSummary {
   readonly paused: number;
   /** Outcomes the delivery no longer accepted: its claim had lapsed and another attempt owns it, or it is gone. */
   readonly stale: number;
-}
-
-/** Where the delivery writer stands. */
-export interface WriterState {
-  /** `trigger`: the job transaction makes deliveries. `writer`: the writer does. `stopping`: switching back. */
-  readonly mode: 'trigger' | 'writer' | 'stopping';
-  /** The journal position the writer has consumed; null in `trigger` mode. */
-  readonly commitSeq: number | null;
-  readonly eventId: number | null;
-}
-
-export interface WriteOptions {
-  /** Most journal events one pass reads. Default 500. */
-  readonly limit?: number;
-}
-
-export interface WriteResult {
-  /** False: this namespace is in `trigger` mode, or another writer holds the cursor right now. */
-  readonly active: boolean;
-  /** Journal events read. */
-  readonly events: number;
-  /** Delivery rows made (events that matched no webhook, or were delivered already, make none). */
-  readonly written: number;
-  /** More events are waiting: call again at once. */
-  readonly more: boolean;
-  /** The writer had been away longer than retention keeps events: those events were lost to webhooks. */
-  readonly gap: boolean;
 }

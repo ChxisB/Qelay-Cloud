@@ -1,5 +1,7 @@
+import { COMPLETED_PAST_RETENTION } from '../src/store/completedRetention';
 import { PLANNED_DEPLOYMENT } from './schema.planned.deployment';
 import { PLANNED_FLOW } from './schema.planned.flow';
+import { PLANNED_INBOUND } from './schema.planned.inbound';
 import { PLANNED_OPERATOR } from './schema.planned.operator';
 import { PLANNED_WEBHOOK } from './schema.planned.webhook';
 import { PLANNED_WORKFLOW } from './schema.planned.workflow';
@@ -83,6 +85,13 @@ export const PLANNED: readonly Planned[] = [
     ordered: true,
   },
   {
+    query: 'completed-job retention: the oldest finished jobs of the namespace, across its queues',
+    sql: COMPLETED_PAST_RETENTION,
+    params: ['ns', 5000, 101],
+    index: 'qcloud_jobs_completed_idx',
+    ordered: true,
+  },
+  {
     query: 'deduplication: the live job holding a unique key',
     sql: `SELECT id FROM qcloud_jobs WHERE ${JOB} AND unique_key = 'k1'
           AND state IN ('waiting', 'prioritized', 'delayed', 'waiting-children', 'active')`,
@@ -153,6 +162,13 @@ export const PLANNED: readonly Planned[] = [
     query: 'cron: schedules that are due',
     sql: `SELECT name FROM qcloud_crons WHERE namespace = 'ns' AND next_run <= 5000 ORDER BY next_run, name LIMIT 100`,
     index: 'qcloud_crons_due_idx',
+    ordered: true,
+  },
+  {
+    query: 'run window: queues whose window has ended, soonest first',
+    sql: `SELECT queue FROM qcloud_queue_state WHERE namespace = 'ns' AND run_window IS NOT NULL
+          AND window_until <= 5000 ORDER BY window_until LIMIT 100`,
+    index: 'qcloud_queue_state_window_idx',
     ordered: true,
   },
   {
@@ -239,5 +255,6 @@ export const PLANNED: readonly Planned[] = [
   ...PLANNED_FLOW,
   ...PLANNED_DEPLOYMENT,
   ...PLANNED_WEBHOOK,
+  ...PLANNED_INBOUND,
   ...PLANNED_WORKFLOW,
 ];

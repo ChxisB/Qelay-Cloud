@@ -69,6 +69,8 @@ export interface StoreContext {
   readonly maxAuditEntries: number;
   /** How long a finished webhook delivery stays readable. */
   readonly webhookKeepMs: number;
+  /** How long a completed job stays before the tick deletes it; 0: never (`completedRetention.ts`). */
+  readonly completedRetentionMs: number;
   /** The key webhook secrets are sealed with (32 bytes), or null: then a webhook cannot be given a secret. */
   readonly webhookKey: Uint8Array | null;
 }

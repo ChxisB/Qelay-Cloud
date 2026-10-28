@@ -47,10 +47,11 @@ export {
   NotImplementedError,
   PayloadTooComplexError,
   PayloadTooLargeError,
-  RouteChainError,
-  RouteCycleError,
   SchemaDriftError,
   SchemaVersionError,
+  SourceInUseError,
+  SourceLimitError,
+  SourceNameTakenError,
   WebhookDisabledError,
   WebhookKeyError,
   WebhookLimitError,
@@ -92,6 +93,7 @@ export {
   MAX_AUDIT_PAGE,
 } from './store/audit';
 export type { DlqPage, DlqStats } from './store/dlq';
+export { MAX_DLQ_RETRY } from './store/dlqRetry';
 export type { ControlApi } from './store/controlApi';
 export type { FlowAdded } from './store/flowAdd';
 export type { FlowApi } from './store/flowApi';
@@ -145,6 +147,23 @@ export type {
   WorkerApi,
 } from './store/facets';
 export type { JobLogEntry, LogLevel } from './store/logs';
+export type { SourceApi } from './store/inboundApi';
+export type {
+  AcceptResult,
+  InboundRequest,
+  RejectResult,
+  ReplayResult,
+  RequestDetail,
+  RequestPage,
+  RequestQuery,
+  RequestSummary,
+  SourceAuth,
+  SourceIssued,
+  SourcePatch,
+  SourceRecord,
+  SourceSpec,
+  SourceVerificationInput,
+} from './store/inboundTypes';
 export type { WebhookApi } from './store/webhookApi';
 export type { WorkflowApi } from './store/workflowApi';
 export { MAX_EXECUTION_BLOB_BYTES } from './store/workflowRows';
@@ -154,6 +173,7 @@ export type { WebhookRetention } from './store/webhookRetention';
 export { DEFAULT_WEBHOOK_KEEP_MS, WEBHOOK_DELIVERY_EXPIRY_MS } from './store/webhookRetention';
 export { RATE_WINDOW_MS } from './store/webhookClaim';
 export { MAX_BULK_RETRY } from './store/webhookFeed';
+export { nextFire } from './store/webhookSchedule';
 export { DEFAULT_DELIVERY_PAGE, MAX_DELIVERY_PAGE } from './store/webhookHistory';
 export {
   DEFAULT_STATS_BUCKETS,
@@ -161,6 +181,18 @@ export {
   MAX_STATS_WINDOW_MS,
 } from './store/webhookStats';
 export { MAX_SECRET_CHARS, MIN_SECRET_CHARS } from './store/webhooks';
+export type {
+  BackupMechanism,
+  BackupPolicy,
+  BackupPolicyApi,
+  BackupPolicySpec,
+} from './store/backupPolicy';
+export {
+  BACKUP_MECHANISMS,
+  checkBackupPolicy,
+  MAX_BACKUP_LOCATION_CHARS,
+  MAX_BACKUP_TOOL_CHARS,
+} from './store/backupPolicy';
 export type {
   AllDeliveriesQuery,
   AttemptOutcome,
@@ -183,9 +215,6 @@ export type {
   WebhookRecord,
   WebhookSpec,
   WebhookStats,
-  WriteOptions,
-  WriterState,
-  WriteResult,
 } from './store/webhookTypes';
 export type {
   DestinationPatch,
@@ -200,7 +229,6 @@ export type {
   IssueRecord,
   IssueResult,
 } from './store/webhookIssueTypes';
-export { DEFAULT_WRITE_PAGE } from './store/webhookWriter';
 export { DEFAULT_MAX_JOB_LOGS, MAX_JOB_LOGS, MAX_LOG_MESSAGE_CHARS } from './store/logs';
 export type { StoreSettingsOptions } from './store/settings';
 export type { NamespaceTotals, Throughput, ThroughputPoint } from './store/throughput';

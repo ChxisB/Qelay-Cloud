@@ -2,9 +2,13 @@ import type { WebhookDeliveryFull, WebhookDeliveryStatus, WebhookPauseMode } fro
 import type { WebhookFull } from '@/lib/bqTypes';
 import { displayWebhookUrl } from '../webhooks/model';
 
-/** What a route's source says: a queue's job events (the one kind of source until inbound HTTP sources exist). */
+/** What a route reads from: its inbound source, by id (the Sources page names them). */
 export const sourceLabel = (route: WebhookFull): string =>
-  `Qelay jobs: ${route.queue ?? 'all queues'}`;
+  route.source ? `Source: ${route.source}` : 'No source';
+
+/** What a delivery was made from: the request it came in as, or a test. */
+export const requestLabel = (delivery: WebhookDeliveryFull): string =>
+  delivery.requestId ? `Request ${delivery.requestId}` : 'Test delivery';
 
 export const destinationLabel = (route: WebhookFull): string =>
   route.destination === 'queue' ? `Queue: ${route.target}` : displayWebhookUrl(route.url);
@@ -53,6 +57,8 @@ export function ruleChips(route: WebhookFull): string[] {
   if (route.shape) chips.push('Reshaped');
   if (route.delayMs) chips.push('Delay');
   if (route.dedupe) chips.push('Deduplicated');
+  if (route.schedule) chips.push('Scheduled');
+  if (route.batch) chips.push('Batched');
   if (route.destination === 'http' && route.signed) chips.push('Signed');
   return chips;
 }
@@ -75,7 +81,7 @@ export function filterRoutes(
     (route) =>
       (filter.state === 'all' || routeState(route) === filter.state) &&
       (needle === '' ||
-        [route.id, route.name, route.queue, route.target, destinationLabel(route)].some(
+        [route.id, route.name, route.source, route.target, destinationLabel(route)].some(
           (value) => typeof value === 'string' && value.toLowerCase().includes(needle)
         ))
   );
@@ -157,7 +163,7 @@ export function matchesEvent(
   }
   const text = filter.text.trim().toLowerCase();
   if (!text) return true;
-  return [delivery.jobId, delivery.queue, delivery.event, delivery.routedJobId, delivery.lastError]
+  return [delivery.requestId, delivery.event, delivery.routedJobId, delivery.lastError]
     .filter((value): value is string => typeof value === 'string')
     .some((value) => value.toLowerCase().includes(text));
 }

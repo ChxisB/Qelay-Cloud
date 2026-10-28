@@ -4,7 +4,7 @@ import { describeDb } from '../../../test/support/db';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore, START } from './storeHelpers';
-import { addHook, CLAIM, event, journal, KEY, outcome } from './webhookHelpers';
+import { addHook, CLAIM, KEY, outcome, send } from './webhookHelpers';
 
 const ONCE = { maxAttempts: 1, baseDelayMs: 1_000, maxDelayMs: 60_000 };
 const MINUTE = 60_000;
@@ -43,9 +43,10 @@ describeDb('webhooks: stats for every route at once', () => {
 
   test('the counts, the ratio, the backlog and the trend equal the single-route read', async () => {
     const [a, b] = [await addHook(t), await addHook(t)];
-    const quiet = await addHook(t, { queue: 'other' });
+    const other = (await t.store.sources.create({ name: 'other' }, 'tester')).id;
+    const quiet = await addHook(t, { source: other });
     for (const job of ['j1', 'j2', 'j3', 'j4']) {
-      await journal(t, [event('pushed', 'q', job)]);
+      await send(t, { id: job });
       t.clock.advance(MINUTE);
     }
     const claimed = await t.store.webhooks.claimDue({ ...CLAIM, limit: 6 });
@@ -84,7 +85,7 @@ describeDb('webhooks: stats for every route at once', () => {
 
   test('a window outside the events counts nothing but still lists the routes', async () => {
     await addHook(t);
-    await journal(t, [event('pushed', 'q', 'j1')]);
+    await send(t, { id: 'j1' });
     const later = { since: START + 60 * MINUTE, until: START + 70 * MINUTE };
     const answer = await t.store.webhooks.statsByWebhook(later);
     expect(answer.groups).toHaveLength(1);

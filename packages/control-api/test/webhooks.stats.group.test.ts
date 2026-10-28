@@ -1,13 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { describeDb } from '../../../test/support/db';
-import {
-  addHook,
-  CLAIM,
-  event,
-  journal,
-  KEY,
-  outcome,
-} from '../../store-postgres/test/webhookHelpers';
+import { addHook, CLAIM, KEY, outcome, send } from '../../store-postgres/test/webhookHelpers';
 import type { JobsApi, JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
 
@@ -31,9 +24,11 @@ describeDb('webhook routes: stats for every route at once (groupBy=webhook)', ()
     api.call('GET', `/webhooks/stats?groupBy=webhook&${window()}${query}`);
 
   test('every route is an entry, a quiet one with zeros, and the totals agree with the single-route read', async () => {
-    const busy = await addHook(f, { events: ['job.pushed'], queue: 'q' });
-    const quiet = await addHook(f, { events: ['job.pushed'], queue: 'other' });
-    await journal(f.t, [event('pushed', 'q', 'j1'), event('pushed', 'q', 'j2')]);
+    const busy = await addHook(f);
+    const other = (await f.store.sources.create({ name: 'other' }, 'tester')).id;
+    const quiet = await addHook(f, { source: other });
+    await send(f.t, { id: 1 });
+    await send(f.t, { id: 2 });
     const claimed = await f.store.webhooks.claimDue(CLAIM);
     await f.store.webhooks.record(
       claimed.map((c, index) => outcome(c, { ok: index === 0 })),

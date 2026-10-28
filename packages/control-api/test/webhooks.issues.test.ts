@@ -1,13 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { describeDb } from '../../../test/support/db';
-import {
-  addHook,
-  CLAIM,
-  event,
-  journal,
-  KEY,
-  outcome,
-} from '../../store-postgres/test/webhookHelpers';
+import { addHook, CLAIM, KEY, outcome, send } from '../../store-postgres/test/webhookHelpers';
 import { deploymentHarness } from './deploymentHarness';
 import type { JobsApi, JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
@@ -33,7 +26,7 @@ describeDb('webhook routes: issues (D13)', () => {
   /** Sends one event through to a recorded result. */
   const run = async (ok: boolean, limit = 1) => {
     n += 1;
-    await journal(f.t, [event('pushed', 'q', `j${n}`)]);
+    await send(f.t, { n });
     f.t.clock.advance(1);
     const claimed = await f.store.webhooks.claimDue({ ...CLAIM, limit });
     await f.store.webhooks.record(
@@ -61,7 +54,7 @@ describeDb('webhook routes: issues (D13)', () => {
   });
 
   test('a failing route is an open issue that carries the route name and streak', async () => {
-    const hook = await addHook(f, { name: 'Orders to billing', events: ['job.pushed'] });
+    const hook = await addHook(f, { name: 'Orders to billing' });
     await fails(2);
     const { data } = await issues();
     expect(data.issues).toHaveLength(1);
@@ -82,7 +75,7 @@ describeDb('webhook routes: issues (D13)', () => {
   });
 
   test('an operator acknowledges, ignores and reopens an issue; the counts follow', async () => {
-    await addHook(f, { events: ['job.pushed'] });
+    await addHook(f);
     await fails(1);
     const [issue] = (await issues()).data.issues;
     const acknowledged = await set(issue.id, 'acknowledged');
@@ -105,7 +98,7 @@ describeDb('webhook routes: issues (D13)', () => {
   });
 
   test('resolving by hand is history: it cannot be changed, and the next failure opens a new one', async () => {
-    await addHook(f, { events: ['job.pushed'] });
+    await addHook(f);
     await fails(1);
     const [issue] = (await issues()).data.issues;
     expect((await set(issue.id, 'resolved')).body.data.issue.status).toBe('resolved');
@@ -123,7 +116,7 @@ describeDb('webhook routes: issues (D13)', () => {
   });
 
   test('a delivery resolves the issue without anyone touching it', async () => {
-    await addHook(f, { events: ['job.pushed'] });
+    await addHook(f);
     await fails(1);
     await run(true);
     const { data } = await issues('?status=resolved');
@@ -145,9 +138,9 @@ describeDb('webhook routes: issues (D13)', () => {
   });
 
   test('issues page newest first, with a cursor', async () => {
-    const a = await addHook(f, { events: ['job.pushed'], queue: 'q' });
-    const b = await addHook(f, { events: ['job.pushed'], queue: 'q' });
-    const c = await addHook(f, { events: ['job.pushed'], queue: 'q' });
+    const a = await addHook(f);
+    const b = await addHook(f);
+    const c = await addHook(f);
     await run(false, 3);
     const first = (await issues('?limit=2')).data;
     expect(first.issues).toHaveLength(2);
@@ -160,7 +153,7 @@ describeDb('webhook routes: issues (D13)', () => {
   });
 
   test('a viewer reads issues without who changed them, and cannot change one', async () => {
-    await addHook(f, { events: ['job.pushed'] });
+    await addHook(f);
     await fails(1);
     const [issue] = (await issues()).data.issues;
     await set(issue.id, 'acknowledged');
@@ -173,7 +166,7 @@ describeDb('webhook routes: issues (D13)', () => {
   });
 
   test('the audit row of a change holds the issue id and nothing of the route', async () => {
-    await addHook(f, { url: PRIVATE_URL, name: 'private-looking-name', events: ['job.pushed'] });
+    await addHook(f, { url: PRIVATE_URL, name: 'private-looking-name' });
     await fails(1);
     const [issue] = (await issues()).data.issues;
     await api.asViewer('PUT', `/webhooks/issues/${issue.id}`, { status: 'ignored' });
@@ -192,7 +185,7 @@ describeDb('webhook routes: issues (D13)', () => {
     const warned = async () => codes(await deployment(open()));
 
     test('a route with a rising streak warns, and an ignored issue silences it', async () => {
-      await addHook(f, { events: ['job.pushed'] });
+      await addHook(f);
       await fails(2);
       expect(await warned()).toContain('webhook_failing');
       const [issue] = (await issues()).data.issues;
@@ -203,7 +196,7 @@ describeDb('webhook routes: issues (D13)', () => {
     });
 
     test('a route the failures paused warns; a pause by hand does not', async () => {
-      const hook = await addHook(f, { events: ['job.pushed'] });
+      const hook = await addHook(f);
       await fails(4);
       expect((await api.call('GET', `/webhooks/${hook.id}`)).body.data.webhook.pausedBy).toBe(
         'failures'

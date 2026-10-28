@@ -1,13 +1,15 @@
 import {
-  previewWebhook,
+  previewRequest,
   validateFilter,
   validateShape,
   validateWebhookUrl,
 } from '@qelay-cloud/core';
 import type { WebhookUrlPolicy } from '@qelay-cloud/core';
+import type { WebhookRecord } from '@qelay-cloud/store-postgres';
 import { ApiError } from '../errors';
 import type { Route } from '../http/router';
 import type { JobsContext } from '../jobs/context';
+import { toDeliveryWire } from '../jobs/deliveryWire';
 import {
   allDeliveriesQuery,
   deliveriesQuery,
@@ -17,7 +19,6 @@ import {
   retryFailedBody,
   rotateBody,
   statsQuery,
-  toDeliveryWire,
   toIssuedWire,
   toWebhookWire,
   webhookBody,
@@ -28,8 +29,8 @@ const webhookNotFound = (id: string): ApiError =>
   new ApiError(404, 'webhook_not_found', 'webhook not found', { webhookId: id });
 
 /**
- * Webhooks: an operator registers a URL and the events it wants, and the maintenance tick delivers
- * them (`docs/webhooks.md`). `GET /webhooks` answers the panel's `{ ok, data: { webhooks, stats } }`.
+ * Webhooks: an operator registers a URL and the source whose requests it wants, and the maintenance tick
+ * delivers them (`docs/webhooks.md`). `GET /webhooks` answers the panel's `{ ok, data: { webhooks, stats } }`.
  *
  * The address is judged here with the deployment's URL policy (https only and no private, loopback
  * or metadata destination, unless the deployment runs in development mode), so a bad one is a 400
@@ -45,14 +46,15 @@ const webhookNotFound = (id: string): ApiError =>
  * read-only caller sees only its origin; the audit trail records a webhook's id, never its URL.
  *
  * A webhook is a route (D11): its destination is `http` (the URL) or `queue` (a job added to `target`,
- * which has no address to judge). The store refuses a route that would loop and the error map answers
- * 409. `GET /webhooks/deliveries` and `GET /webhooks/stats` read across routes, for the console's Events
+ * which has no address to judge). `GET /webhooks/deliveries` and `GET /webhooks/stats` read across routes, for the console's Events
  * and Metrics screens (`GET /webhooks/stats?groupBy=webhook` is the connections list's, one entry per route);
  * the router prefers their literal paths to `/webhooks/:id`.
  */
 export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route[] {
   const { store } = ctx;
   const roleOf = (principal: { readonly role: Role } | null): Role => principal?.role ?? 'viewer';
+  const wire = (hook: WebhookRecord, role: Role = 'operator') =>
+    toWebhookWire(hook, role, ctx.clock.now());
 
   return [
     {
@@ -61,7 +63,7 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
       access: 'read',
       async handle({ principal }) {
         const role = roleOf(principal);
-        const webhooks = (await store.webhooks.list()).map((hook) => toWebhookWire(hook, role));
+        const webhooks = (await store.webhooks.list()).map((hook) => wire(hook, role));
         return {
           ok: true,
           data: {
@@ -117,7 +119,7 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
       async handle({ params, principal }) {
         const webhook = await store.webhooks.get(params.id!);
         if (webhook === null) throw webhookNotFound(params.id!);
-        return { ok: true, data: { webhook: toWebhookWire(webhook, roleOf(principal)) } };
+        return { ok: true, data: { webhook: wire(webhook, roleOf(principal)) } };
       },
     },
     {
@@ -134,27 +136,15 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
           }
         }
         const webhook = await store.webhooks.create(
-          {
-            ...(body.destination === undefined ? {} : { destination: body.destination }),
-            ...(body.url === undefined ? {} : { url: body.url }),
-            ...(body.target == null ? {} : { target: body.target }),
-            ...(body.destinationId == null ? {} : { destinationId: body.destinationId }),
-            events: body.events,
-            ...(body.queue == null ? {} : { queue: body.queue }),
-            ...(body.secret == null ? {} : { secret: body.secret }),
-            ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
-            ...(body.filter == null ? {} : { filter: body.filter }),
-            ...(body.shape == null ? {} : { shape: body.shape }),
-            ...(body.name == null ? {} : { name: body.name }),
-            ...(body.description == null ? {} : { description: body.description }),
-            ...(body.delayMs == null ? {} : { delayMs: body.delayMs }),
-            ...(body.dedupe == null ? {} : { dedupe: body.dedupe }),
-          },
+          withoutNullish(body),
           context.principal!.subject
         );
         // The entry was written before this ran, so it could not know the id.
         context.audit(`webhook=${webhook.id}`);
-        return Response.json({ ok: true, data: toIssuedWire(webhook) }, { status: 201 });
+        return Response.json(
+          { ok: true, data: toIssuedWire(webhook, ctx.clock.now()) },
+          { status: 201 }
+        );
       },
     },
     {
@@ -166,10 +156,15 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
         // Pure: no store, no network. A bad filter or shape is 400 `unsupported_option` naming which.
         const filter = body.filter == null ? null : validateFilter(body.filter);
         const shape = body.shape == null ? null : validateShape(body.shape);
-        const { event } = body;
-        const preview = previewWebhook(
+        const { request } = body;
+        const preview = previewRequest(
           { filter, shape },
-          { ...event, occurredAt: event.occurredAt ?? Date.now() }
+          {
+            method: (request.method ?? 'POST').toUpperCase(),
+            headers: request.headers ?? {},
+            query: request.query ?? {},
+            ...(request.body === undefined ? {} : { body: request.body }),
+          }
         );
         return { ok: true, data: { preview } };
       },
@@ -183,7 +178,7 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
         // Only the named fields change. The audit entry has the webhook's id from the path, never what it was changed to.
         const webhook = await store.webhooks.update(context.params.id!, withoutUndefined(body));
         if (webhook === null) throw webhookNotFound(context.params.id!);
-        return { ok: true, data: { webhook: toWebhookWire(webhook, 'operator') } };
+        return { ok: true, data: { webhook: wire(webhook) } };
       },
     },
     {
@@ -194,7 +189,7 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
         const { enabled, mode } = await context.json(enabledBody);
         const webhook = await store.webhooks.setEnabled(context.params.id!, enabled, mode);
         if (webhook === null) throw webhookNotFound(context.params.id!);
-        return { ok: true, data: { webhook: toWebhookWire(webhook, 'operator') } };
+        return { ok: true, data: { webhook: wire(webhook) } };
       },
     },
     {
@@ -206,7 +201,7 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
         // The old secret keeps signing beside the new one for a day, so the receiver can switch over.
         const webhook = await store.webhooks.rotateSecret(context.params.id!, body.secret);
         if (webhook === null) throw webhookNotFound(context.params.id!);
-        return { ok: true, data: toIssuedWire(webhook) };
+        return { ok: true, data: toIssuedWire(webhook, ctx.clock.now()) };
       },
     },
     {
@@ -293,4 +288,9 @@ export function webhookRoutes(ctx: JobsContext, policy: WebhookUrlPolicy): Route
 
 function withoutUndefined<T extends object>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+}
+
+/** The create body without its nulls and absent keys: a spec leaves out what it does not set. */
+function withoutNullish<T extends object>(value: T): { [K in keyof T]?: NonNullable<T[K]> } {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry != null)) as never;
 }

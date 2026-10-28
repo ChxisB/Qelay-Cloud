@@ -1,10 +1,14 @@
+import type { DlqRetryRefusal } from '@qelay-cloud/core';
+import { MAX_DLQ_RETRY } from '@qelay-cloud/store-postgres';
 import { z } from 'zod';
 import { ApiError } from '../errors';
 import type { Route } from '../http/router';
-import { purgeDlqBody, requireConfirmation } from '../jobs/actionSchemas';
+import { fencedBody, purgeDlqBody, requireConfirmation, retryDlqBody } from '../jobs/actionSchemas';
 import type { JobsContext } from '../jobs/context';
+import { explainRefusal, jobNotFound } from '../jobs/context';
 import type { DlqEntryWire } from '../jobs/dlqModel';
 import { toDlqEntryWire, toDlqStatsWire } from '../jobs/dlqModel';
+import { ringAfterCommit } from '../jobs/ring';
 
 const dlqQuery = z.object({
   limit: z.coerce.number().int().min(1).optional(),
@@ -14,21 +18,19 @@ const dlqQuery = z.object({
 /** Entries one purge call deletes per transaction. */
 const PURGE_BATCH = 500;
 
-const retryClosed = (): never => {
-  throw ApiError.notSupported(
-    'dlq-retry',
-    'a failed job is not requeued from the DLQ: retrying it needs a job-generation, state and flow precondition that is not built yet'
-  );
-};
-
 /**
  * The dead-letter queue of a queue: its failed jobs, newest failure last, each with how it failed.
  * Reading is paged and bounded like the job lists (a payload over the list budget is a marker).
  * Purging needs `confirm` with the queue's name and works in bounded transactions under the same
  * time budget as drain, answering `done: false` when it stopped with entries left.
  *
- * Retrying an entry stays closed (501 `dlq-retry`): `GET /capabilities` lists it under `unsupported`
- * so the panel leaves the button out.
+ * Retrying (D16) puts a failed job back as waiting with no attempt used, in a new `version`, and rings
+ * it. One entry takes `expectedVersion` like the other job actions: 404 `job_not_found`, 409
+ * `version_conflict`, 409 `job_state` (it is not failed, for example because another caller retried it
+ * first), 409 `flow_member` (retry the flow instead) and 409 `duplicate_job` (a live job holds its
+ * dedup key) each change nothing. A set is `limit` entries (at most 500, one transaction), oldest
+ * failure first, optionally one `reason`, and needs `confirm` with the queue's name; the answer's
+ * `remaining` is what a repeat call would still retry. Nothing retries by itself (`dlq-auto-retry`).
  */
 export function dlqRoutes(ctx: JobsContext): Route[] {
   const { store, config } = ctx;
@@ -110,13 +112,79 @@ export function dlqRoutes(ctx: JobsContext): Route[] {
       method: 'POST',
       path: '/queues/:queue/dlq/retry',
       access: 'write',
-      handle: retryClosed,
+      async handle(context) {
+        const queue = context.params.queue!;
+        const body = await context.json(retryDlqBody);
+        requireConfirmation(queue, body?.confirm, 'retry', 'puts failed jobs back in the queue');
+        context.audit(
+          `dlqRetry limit=${body?.limit ?? MAX_DLQ_RETRY} reason=${body?.reason ?? '*'}`
+        );
+        const result = await store.retryDlqMany(queue, {
+          limit: body?.limit ?? MAX_DLQ_RETRY,
+          ...(body?.reason === undefined ? {} : { reason: body.reason }),
+        });
+        await ringAfterCommit(store, ctx.transport, ctx.logger, result.rings);
+        return {
+          ok: true,
+          count: result.retried.length,
+          remaining: result.remaining,
+          done: result.remaining === 0,
+        };
+      },
     },
     {
       method: 'POST',
       path: '/queues/:queue/dlq/:jobId/retry',
       access: 'write',
-      handle: retryClosed,
+      async handle(context) {
+        const { queue, jobId } = context.params as { queue: string; jobId: string };
+        const body = await context.json(fencedBody);
+        const expectedVersion = body?.expectedVersion;
+        const result = await store.retryDlq(
+          queue,
+          jobId,
+          expectedVersion === undefined ? {} : { expectedVersion }
+        );
+        if (!result.ok) return refuse(ctx, result.reason, jobId, expectedVersion);
+        await ringAfterCommit(store, ctx.transport, ctx.logger, result.rings);
+        return { ok: true };
+      },
     },
   ];
+}
+
+/** The answer for a retry the store refused: every one is a 4xx and nothing changed. */
+function refuse(
+  ctx: JobsContext,
+  reason: DlqRetryRefusal,
+  jobId: string,
+  expectedVersion: number | undefined
+): Promise<never> {
+  switch (reason) {
+    case 'not_found':
+      throw jobNotFound(jobId);
+    case 'version':
+      throw new ApiError(
+        409,
+        'version_conflict',
+        'the job changed since it was read, so nothing was changed',
+        { jobId, expectedVersion }
+      );
+    case 'flow_member':
+      throw new ApiError(
+        409,
+        'flow_member',
+        'the job belongs to a flow: retry the flow (POST /flows/:id/actions, retry-failed) instead',
+        { jobId }
+      );
+    case 'duplicate':
+      throw new ApiError(
+        409,
+        'duplicate_job',
+        'a live job holds the same deduplication key, so this one cannot be waiting too',
+        { jobId }
+      );
+    case 'not_failed':
+      return explainRefusal(ctx, jobId);
+  }
 }

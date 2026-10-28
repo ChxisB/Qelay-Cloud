@@ -19,11 +19,13 @@
   "root" .
   "component" "webhook-sender"
   "replicas" .Values.webhooks.sender.replicas
+  "autoscaled" .Values.webhooks.sender.autoscaling.enabled
   "image" $image
   "command" $tick
   "args" (list "send")
   "env" (print (include "qelay.env" (dict "root" . "poolSize" .Values.webhooks.sender.poolSize)) (include "qelay.extraEnv" .Values.webhooks.sender.env))
   "resources" .Values.webhooks.sender.resources) }}
+{{ include "qelay.scaling" (dict "root" . "component" "webhook-sender" "values" .Values.webhooks.sender) }}
 {{- end }}
 {{- if .Values.tick.cron.enabled }}
 ---

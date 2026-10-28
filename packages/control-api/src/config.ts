@@ -77,6 +77,8 @@ export interface DeploymentSettings {
   readonly tickLateAfterMs?: number;
   /** Tick age at which the status is "stale" (red), in ms, past `tickLateAfterMs`. Default 300,000. */
   readonly tickStaleAfterMs?: number;
+  /** The longest gap between ticks the deployer promises (the scheduler's period). Unset: not declared, so no timing warning. */
+  readonly tickIntervalMs?: number;
   readonly fleet?: FleetSettings;
   /** How long this instance keeps the answers of `/transport` and `/deployment`, in ms. 0 turns it off. Default 2,000. */
   readonly cacheMs?: number;
@@ -88,6 +90,7 @@ export interface ResolvedDeployment {
   readonly commit: string | null;
   readonly tickLateAfterMs: number;
   readonly tickStaleAfterMs: number;
+  readonly tickIntervalMs: number | null;
   readonly fleet: FleetSettings | null;
   readonly cacheMs: number;
   readonly maxQueues: number;
@@ -230,6 +233,8 @@ function deploymentSettings(input: DeploymentSettings = {}): ResolvedDeployment 
     commit: input.commit ?? null,
     tickLateAfterMs: late,
     tickStaleAfterMs: stale,
+    tickIntervalMs:
+      input.tickIntervalMs === undefined ? null : positive('tickIntervalMs', input.tickIntervalMs),
     fleet: fleet ?? null,
     cacheMs,
     maxQueues: positive('maxQueues', input.maxQueues ?? DEFAULT_MAX_TRANSPORT_QUEUES),

@@ -46,6 +46,7 @@ async function readScan(ctx: OpsContext): Promise<DoorbellScan> {
         reRingDue: 0,
         oldestNotRungAgeMs: null,
         paused: item.paused,
+        windowClosed: false,
         capped: false,
       }
     );

@@ -81,6 +81,8 @@ function deploymentFromEnv(env: Env): DeploymentSettings {
     commit,
     tickLateAfterMs: integer(env, 'QCLOUD_API_TICK_LATE_AFTER_MS'),
     tickStaleAfterMs: integer(env, 'QCLOUD_API_TICK_STALE_AFTER_MS'),
+    // The tick's own setting, read by the same name so it is declared once.
+    tickIntervalMs: integer(env, 'QCLOUD_TICK_INTERVAL_MS'),
     cacheMs: integer(env, 'QCLOUD_API_DEPLOYMENT_CACHE_MS'),
     maxQueues: integer(env, 'QCLOUD_API_TRANSPORT_MAX_QUEUES'),
     fleet,

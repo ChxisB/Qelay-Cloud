@@ -64,7 +64,6 @@ describe('Sidebar: what the deployment offers, and the header', () => {
     for (const closed of [
       '/server',
       '/database',
-      '/s3',
       '/fleet',
       '/flows',
       '/workflows',

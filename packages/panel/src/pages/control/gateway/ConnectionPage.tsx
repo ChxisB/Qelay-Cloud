@@ -19,6 +19,7 @@ import {
   routeState,
   sourceLabel,
 } from './model';
+import { NeedsSource } from './NeedsSource';
 import { RouteStatePill } from './RouteStatePill';
 import { useRouteActions } from './useRouteActions';
 
@@ -111,6 +112,11 @@ export function ConnectionPage({ tab }: { tab: 'overview' | 'metrics' | 'setting
               )}
             </div>
           </div>
+          {route.source === null && (
+            <div className="mb-4">
+              <NeedsSource routeId={route.id} operator={operator} refetch={refetch} />
+            </div>
+          )}
           {state === 'paused' && route.disabledReason && (
             <div className="mb-4">
               <Banner tone="warn" title="Paused after failures">

@@ -26,3 +26,16 @@ resource "google_cloud_run_v2_service_iam_member" "panel_invoker" {
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
+
+# The listener is open to the internet by design: a sender posts to it without a login. What it checks instead is the
+# token in the address, then the source's own verification (none, HMAC, basic or API key), and a body cap and a rate
+# limit before either.
+resource "google_cloud_run_v2_service_iam_member" "ingest_invoker" {
+  count = local.ingest ? 1 : 0
+
+  project  = google_cloud_run_v2_service.ingest[0].project
+  location = google_cloud_run_v2_service.ingest[0].location
+  name     = google_cloud_run_v2_service.ingest[0].name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}

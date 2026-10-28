@@ -3,13 +3,15 @@
 > Generated from the TSDoc of [packages/sdk/src/index.ts](../../packages/sdk/src/index.ts) by `bun run docs:check --write`.
 > Do not edit it by hand: change the source.
 
-The 95 names `import ... from 'qelay-cloud'` gives you. What each `Queue`, `Worker`, `QueueEvents` and
+The 103 names `import ... from 'qelay-cloud'` gives you. What each `Queue`, `Worker`, `QueueEvents` and
 `FlowProducer` method does, and how it differs from Qelay, is in [compat.md](../compat.md); the workflow engine is its
 last section. A name with no summary has no TSDoc on its declaration: read the signature in the file named.
 
 | Name | Kind | Defined in | Summary |
 | --- | --- | --- | --- |
 | `ActiveEvent` | interface | [packages/sdk/src/queueEventTypes.ts](../../packages/sdk/src/queueEventTypes.ts) |  |
+| `BatchProcessor` | type | [packages/sdk/src/workerOptions.ts](../../packages/sdk/src/workerOptions.ts) | What a worker with `batch` runs: up to `size` jobs at once. Return nothing to complete every job, or an array with one entry per job, in order: an `Error` entry fails that job, anything else is its result. A throw, or any other return, fails every job. Each job keeps its own lease, attempts and backoff. `context.signal` aborts when the worker closes out of its grace or every job's lease is lost; a job whose lease is lost alone is dropped from the outcome and its entry is ignored. |
+| `BatchWorkerOptions` | type | [packages/sdk/src/workerOptions.ts](../../packages/sdk/src/workerOptions.ts) | The options of a worker that runs a `BatchProcessor`. |
 | `BranchCondition` | type | [packages/sdk/src/workflow/stepTypes.ts](../../packages/sdk/src/workflow/stepTypes.ts) | Branch condition function |
 | `BulkJob` | interface | [packages/sdk/src/add.ts](../../packages/sdk/src/add.ts) |  |
 | `CleanupOptions` | interface | [packages/sdk/src/workflow/engineTypes.ts](../../packages/sdk/src/workflow/engineTypes.ts) |  |
@@ -46,6 +48,7 @@ last section. A name with no summary has no TSDoc on its declaration: read the s
 | `JobLogs` | interface | [packages/sdk/src/config.ts](../../packages/sdk/src/config.ts) |  |
 | `JobNode` | interface | [packages/sdk/src/flowTypes.ts](../../packages/sdk/src/flowTypes.ts) | A job of an added or read flow, with the nodes of its children. `children` is absent for a leaf. |
 | `JobStateName` | type | [packages/sdk/src/jobOps.ts](../../packages/sdk/src/jobOps.ts) | What one job accepts, by id. Job ids are unique per namespace, not per queue, so each operation first checks that the job belongs to this queue: a `Queue` never sees or changes another queue's job. That is one read before the write; the job's queue cannot change, so only a job removed and re-created under the same custom id in another queue between the two could be missed. |
+| `JobWorkerOptions` | type | [packages/sdk/src/workerOptions.ts](../../packages/sdk/src/workerOptions.ts) | The options of a worker that runs one job per call; `batch` is what tells the two constructors apart. |
 | `Logger` | interface | [packages/sdk/src/options.ts](../../packages/sdk/src/options.ts) | Receives what the SDK swallows on purpose, such as a ring that failed after the job was admitted. |
 | `LoopCondition` | type | [packages/sdk/src/workflow/stepTypes.ts](../../packages/sdk/src/workflow/stepTypes.ts) | Loop condition: receives context + iteration count, returns boolean |
 | `LoopDefinition` | interface | [packages/sdk/src/workflow/stepTypes.ts](../../packages/sdk/src/workflow/stepTypes.ts) | Definition of a doUntil/doWhile loop (type-erased) |
@@ -63,6 +66,10 @@ last section. A name with no summary has no TSDoc on its declaration: read the s
 | `QueueEvents` | class | [packages/sdk/src/queueEvents.ts](../../packages/sdk/src/queueEvents.ts) | The stream of what happens to the jobs of one queue, read from the event journal (`qcloud_events`) that `PostgresStore` writes in the same transaction as each change. Qelay's `QueueEvents`, with these differences (docs/compat.md): |
 | `QueueEventsOptions` | interface | [packages/sdk/src/queueEvents.ts](../../packages/sdk/src/queueEvents.ts) |  |
 | `QueueOptions` | interface | [packages/sdk/src/options.ts](../../packages/sdk/src/options.ts) | What a `Queue` is built from. Qelay's `host`, `port`, `embedded`, `connection`, `dataPath`, `autoBatch` and `prefixKey` are refused (see `rejectLegacyOptions`). |
+| `QueuePolicy` | interface | [packages/core/src/queuePolicy.ts](../../packages/core/src/queuePolicy.ts) | What a queue gives a job that sets none of its own (DESIGN.md D17). Each setting is applied at enqueue and only to a job that left that setting out, so a job's own option always wins. Bounds are those of the job options. |
+| `QueueRunWindow` | interface | [packages/core/src/queueWindow.ts](../../packages/core/src/queueWindow.ts) |  |
+| `QueueRunWindowInput` | type | [packages/core/src/queueWindow.ts](../../packages/core/src/queueWindow.ts) | What a caller sends: the zone may be left out. |
+| `QueueRunWindowState` | interface | [packages/core/src/queueWindow.ts](../../packages/core/src/queueWindow.ts) | A window and where it stands now: the interval that is open, or the next one to open. |
 | `realClock` | constant | [packages/sdk/src/workflow/clock.ts](../../packages/sdk/src/workflow/clock.ts) |  |
 | `RecoverResult` | interface | [packages/sdk/src/workflow/engineTypes.ts](../../packages/sdk/src/workflow/engineTypes.ts) | Result of `engine.recover()` and of the tick's recovery step. |
 | `RemovedEvent` | interface | [packages/sdk/src/queueEventTypes.ts](../../packages/sdk/src/queueEventTypes.ts) |  |
@@ -91,6 +98,7 @@ last section. A name with no summary has no TSDoc on its declaration: read the s
 | `WaitingChildrenEvent` | interface | [packages/sdk/src/queueEventTypes.ts](../../packages/sdk/src/queueEventTypes.ts) |  |
 | `WaitingEvent` | interface | [packages/sdk/src/queueEventTypes.ts](../../packages/sdk/src/queueEventTypes.ts) | The payloads of `QueueEvents`, under Qelay's names. Where the journal knows less, a field is left out. |
 | `Worker` | class | [packages/sdk/src/worker.ts](../../packages/sdk/src/worker.ts) | The consumer side of one queue: Qelay's `Worker` over Postgres, with a cloud queue as the doorbell. It turns bells into claimed, heartbeated, completed or failed jobs. |
+| `WorkerBatchOptions` | interface | [packages/sdk/src/workerOptions.ts](../../packages/sdk/src/workerOptions.ts) |  |
 | `WorkerCloseOptions` | interface | [packages/sdk/src/workerOptions.ts](../../packages/sdk/src/workerOptions.ts) |  |
 | `WorkerEvents` | interface | [packages/sdk/src/workerOptions.ts](../../packages/sdk/src/workerOptions.ts) |  |
 | `WorkerJob` | interface | [packages/sdk/src/workerOptions.ts](../../packages/sdk/src/workerOptions.ts) | What a processor receives: the claimed job and the calls that report on it while it runs. |

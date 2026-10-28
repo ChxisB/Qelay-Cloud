@@ -133,6 +133,15 @@ export class FakeCore {
     });
   }
 
+  /** `retry-dlq`: a dead-lettered job is pending again with no attempt used, and its DLQ entry is gone. */
+  protected reopen(row: Row, now: number): void {
+    this.endLease(row, 'pending');
+    row.attempts = 0;
+    row.runAt = now;
+    row.rungAt = null;
+    this.dlq.delete(row.id);
+  }
+
   protected endLease(row: Row, status: Row['status']): void {
     row.status = status;
     row.leaseToken = null;

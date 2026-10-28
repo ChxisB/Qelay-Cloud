@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { toast } from '@/components/dashboard/stores/toastStore';
 import { EmptyState, ErrorState, LoadingState, OfflineBanner } from '@/components/ui/feedback';
 import { IconDlq } from '@/components/ui/icons';
 import { InboxDrawing } from '@/components/ui/illustrations';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { bq } from '@/lib/bq';
-import { downloadCsv } from '@/lib/exportFile';
+import { useActionSupported, useCanOperate } from '@/lib/capabilities/useCapabilities';
 import type { QueueSummary } from '@/lib/types';
 import { usePolledData } from '@/lib/usePolledData';
 import { DlqFilters, DlqQueueGrid, DlqSummary } from './dlq/DlqProControls';
 import { DlqProTable } from './dlq/DlqProTable';
 import { DlqUnavailableNote } from './dlq/DlqUnavailableNote';
+import { exportDlqPage } from './dlq/exportDlq';
+import { useDlqRetry } from './dlq/useDlqRetry';
 import { loadAllQueuePages } from './queue/queueDiscovery';
 
 const PAGE_SIZE = 25;
@@ -26,6 +27,8 @@ export function DlqPro() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [expandedErrors, setExpandedErrors] = useState<Set<string>>(new Set());
+  const retryOpen = useActionSupported('dlq-retry');
+  const canRetry = useCanOperate() && retryOpen;
 
   // The queue list (per-queue DLQ counts + grand total + dropdown) changes
   // slowly, so poll it on its own slow cadence instead of on the fast DLQ poll.
@@ -72,6 +75,10 @@ export function DlqPro() {
   }, [queue, page]);
   const { data: raw, error, loading, refetch } = usePolledData(fetcher, [queue, page]);
   const data = raw?.queue === queue && raw.page === page ? raw : null;
+  const { retrying, retryOne, retryAll } = useDlqRetry(queue, reason, () => {
+    refetch();
+    refetchQueues();
+  });
 
   // Clamp the page when the DLQ shrinks (retries/purges here or elsewhere) so a
   // stale offset can't render "empty" while entries remain.
@@ -96,21 +103,6 @@ export function DlqPro() {
     setPage(0);
     setReason('all');
   }, [qs, queue]);
-
-  const exportEntries = () => {
-    const rows = (data?.entries ?? []).map((e) => ({
-      jobId: e.job.id,
-      reason: e.reason,
-      error: e.error ?? '',
-      enteredAt: new Date(e.enteredAt).toISOString(),
-      attempts: e.attempts?.length ?? 0,
-    }));
-    if (rows.length === 0) {
-      toast.info('Nothing to export on this page');
-      return;
-    }
-    downloadCsv(`dlq-${queue}`, rows, ['jobId', 'reason', 'error', 'enteredAt', 'attempts']);
-  };
 
   const selectQueue = (name: string) => {
     // Any manual choice — including a reset to "Select a queue…" — disarms
@@ -191,7 +183,7 @@ export function DlqPro() {
     <div>
       <PageHeader
         title="Dead letter queue"
-        description="Jobs that failed after using up all their retries. Look at them here, or export them."
+        description="Jobs that failed after using up all their retries. Look at them here, export them, or put them back in the queue."
         live={!!queue && !!data && !data.statsError && !error && !discoveryError}
       />
 
@@ -237,9 +229,16 @@ export function DlqPro() {
         onReason={setReason}
         onSort={setSort}
         onSearch={setSearch}
-        onExport={exportEntries}
+        onExport={() => exportDlqPage(queue, data?.entries ?? [])}
+        {...(canRetry
+          ? {
+              onRetryAll: retryAll,
+              retryingAll: retrying !== null,
+              nothingFailed: data?.entriesTotal === 0,
+            }
+          : {})}
       />
-      <DlqUnavailableNote className="mb-4" />
+      {!retryOpen && <DlqUnavailableNote className="mb-4" />}
 
       {error && !data ? (
         <ErrorState error={error} onRetry={refetch} />
@@ -274,6 +273,7 @@ export function DlqPro() {
         <DlqProTable
           entries={entries}
           expanded={expandedErrors}
+          {...(canRetry ? { onRetry: retryOne, retrying } : {})}
           onToggle={(key) =>
             setExpandedErrors((current) => {
               const next = new Set(current);

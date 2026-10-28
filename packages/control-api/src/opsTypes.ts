@@ -37,6 +37,8 @@ export interface DoorbellHealthRow {
   readonly reRingDue: number;
   readonly oldestNotRungAgeMs: number | null;
   readonly paused: boolean;
+  /** Outside its run window: the tick does not ring it, and its jobs are held on purpose. */
+  readonly windowClosed: boolean;
   /** A count stopped at the cap: read it as "this many or more". */
   readonly capped: boolean;
 }

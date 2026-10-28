@@ -1,4 +1,5 @@
-# The control plane on GCP: the Control API and the panel as Cloud Run services, and the migration job.
+# The control plane on GCP: the Control API and the panel as Cloud Run services, the optional inbound listener, and the
+# migration job.
 # Read ../README.md first. It sits beside the data plane (`../example`), not inside it: the data plane is
 # applied once and rarely, the control plane every time a build is released, and the two have different
 # owners. They meet at the values listed under "From the data plane" in variables.tf.
@@ -19,6 +20,10 @@ locals {
 
   private = var.exposure == "private"
   edge    = var.edge != null
+  ingest  = var.ingest != null
+
+  # The listener's processes and pool, as the connection budget counts them (0 when there is none).
+  ingest_max_instances = local.ingest ? var.ingest.max_instances : 0
 
   # With an edge the Cloud Run URLs stop answering the internet, so the services are named by their host names.
   api_url   = local.edge ? "https://${var.edge.api_hostname}" : local.run_api_url
@@ -61,10 +66,10 @@ locals {
 
   # The subnet is the data plane's. Direct VPC egress gives every instance an address, and a rollover runs
   # two revisions together, so every instance counts twice. The data plane counted its own; these are ours
-  # (the API, the panel and one migration task).
+  # (the API, the panel, the listener when there is one, and one migration task).
   subnet_prefix   = tonumber(split("/", var.subnet_cidr)[1])
   subnet_usable   = pow(2, 32 - local.subnet_prefix) - 4 # Google reserves four addresses of every subnet
-  instances_total = var.data_plane_instances + var.api_max_instances + var.panel_max_instances + 1
+  instances_total = var.data_plane_instances + var.api_max_instances + var.panel_max_instances + local.ingest_max_instances + 1
   subnet_required = 2 * local.instances_total
 
   oidc_authority = coalesce(var.oidc_authority, var.oidc_issuer)
@@ -83,8 +88,24 @@ resource "terraform_data" "inputs" {
       error_message = "database_tls = \"off\" needs a pooler (pooled = true): the instance accepts only encrypted connections."
     }
     precondition {
-      condition     = 1 + var.api_max_instances <= var.budgeted_control_processes
-      error_message = "The connection budget counts ${var.budgeted_control_processes} control processes (the tick and each API instance): ${1 + var.api_max_instances} would run at full scale. Raise the data plane's control_processes, or lower api_max_instances."
+      condition     = 1 + var.api_max_instances + local.ingest_max_instances <= var.budgeted_control_processes
+      error_message = "The connection budget counts ${var.budgeted_control_processes} control processes (the tick, each API instance and each ingest instance): ${1 + var.api_max_instances + local.ingest_max_instances} would run at full scale. Raise the data plane's control_processes, or lower api_max_instances or ingest.max_instances."
+    }
+    precondition {
+      condition     = !local.ingest ? true : var.ingest.pool_size <= var.budgeted_control_pool_size
+      error_message = "The connection budget counts ${var.budgeted_control_pool_size} connections per control process; ingest.pool_size is ${local.ingest ? var.ingest.pool_size : 0}. Raise the data plane's control_pool_size, or lower ingest.pool_size."
+    }
+    precondition {
+      condition     = !local.ingest ? true : var.ingest.min_instances >= 0 && var.ingest.min_instances <= var.ingest.max_instances
+      error_message = "ingest.min_instances must be between 0 and ingest.max_instances."
+    }
+    precondition {
+      condition     = local.edge && local.ingest ? var.edge.ingest_hostname != null : true
+      error_message = "ingest with edge needs edge.ingest_hostname: with a load balancer the Cloud Run services take its traffic only, so the ingest has no other address."
+    }
+    precondition {
+      condition     = local.edge && !local.ingest ? var.edge.ingest_hostname == null : true
+      error_message = "edge.ingest_hostname is set but ingest is not: nothing would answer on that name."
     }
     precondition {
       condition     = var.api_pool_size <= var.budgeted_control_pool_size

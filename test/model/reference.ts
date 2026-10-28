@@ -159,6 +159,15 @@ export class QueueModel {
     });
   }
 
+  /** An operator puts a dead-lettered job back: no attempt used, ready at once. */
+  retryDlq(job: ModelJob, now: number): void {
+    this.#move(job, 'retry-dlq', now, () => {
+      job.attempts = 0;
+      job.runAt = now;
+      this.#endLease(job, 'pending');
+    });
+  }
+
   changePriority(job: ModelJob, priority: number, now: number): void {
     this.#move(job, 'change-priority', now, () => {
       job.priority = priority;

@@ -8,6 +8,11 @@ output "panel_url" {
   value       = local.panel_url
 }
 
+output "ingest_url" {
+  description = "Where senders post, `<ingest_url>/s/<token>`: the base of a source's address. Null when the ingest is not deployed."
+  value       = local.ingest ? (local.edge ? "https://${var.edge.ingest_hostname}" : google_cloud_run_v2_service.ingest[0].uri) : null
+}
+
 output "exposure" {
   value = var.exposure
 }
@@ -15,9 +20,10 @@ output "exposure" {
 output "edge" {
   description = "The load balancer's address when `edge` is set, else null: point the two host names at ip_address."
   value = local.edge ? {
-    ip_address     = google_compute_global_address.edge[0].address
-    api_hostname   = var.edge.api_hostname
-    panel_hostname = var.edge.panel_hostname
+    ip_address      = google_compute_global_address.edge[0].address
+    api_hostname    = var.edge.api_hostname
+    panel_hostname  = var.edge.panel_hostname
+    ingest_hostname = var.edge.ingest_hostname
   } : null
 }
 
@@ -31,6 +37,7 @@ output "service_accounts" {
     api     = google_service_account.api.email
     panel   = google_service_account.panel.email
     migrate = google_service_account.migrate.email
+    ingest  = local.ingest ? google_service_account.ingest[0].email : null
   }
 }
 

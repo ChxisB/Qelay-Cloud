@@ -73,6 +73,31 @@ export function dlqConfigPayload(config: DlqDraft): ConfigValidation<DlqConfig> 
   };
 }
 
+const DAY_MS = 86_400_000;
+
+/** What the retention form holds: whole or part days as typed (blank is for ever), and the count as typed. */
+export type DlqRetentionDraft = { days: string; maxEntries: string };
+
+export const retentionDraft = (config: DlqConfig): DlqRetentionDraft => ({
+  days: config.maxAge === null ? '' : String(config.maxAge / DAY_MS),
+  maxEntries: String(config.maxEntries),
+});
+
+/** The two values `PUT /dlq-config` saves. A blank `days` is `maxAge: null`; days convert to whole milliseconds. */
+export function dlqRetentionPayload(
+  draft: DlqRetentionDraft
+): ConfigValidation<Pick<DlqConfig, 'maxAge' | 'maxEntries'>> {
+  const maxEntries = toSafeWhole(draft.maxEntries, 1);
+  if (maxEntries === null) return { ok: false, error: 'Keep at least 1 failed job.' };
+  const raw = draft.days.trim();
+  if (raw === '') return { ok: true, value: { maxAge: null, maxEntries } };
+  const maxAge = Math.round(Number(raw) * DAY_MS);
+  if (!Number.isSafeInteger(maxAge) || maxAge < 1) {
+    return { ok: false, error: 'Days must be a number above 0, or blank to keep them for ever.' };
+  }
+  return { ok: true, value: { maxAge, maxEntries } };
+}
+
 export type MutableDlqConfig = Pick<
   DlqConfig,
   'autoRetry' | 'autoRetryInterval' | 'maxAutoRetries'

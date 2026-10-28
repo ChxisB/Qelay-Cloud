@@ -29,6 +29,7 @@
     { "path": "packages/sdk" },
     { "path": "packages/maintenance" },
     { "path": "packages/telemetry" },
-    { "path": "packages/control-api" }
+    { "path": "packages/control-api" },
+    { "path": "packages/ingest" }
   ]
 }

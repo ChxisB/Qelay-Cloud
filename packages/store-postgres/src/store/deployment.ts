@@ -33,6 +33,8 @@ export interface DoorbellHealth {
   readonly oldestNotRungAgeMs: number | null;
   /** The queue is paused, so the tick does not ring it. Its claimable jobs are held on purpose. */
   readonly paused: boolean;
+  /** The queue is outside its run window (DESIGN.md D17), so the tick does not ring it either: held on purpose. */
+  readonly windowClosed: boolean;
   /** At least one count stopped at the cap. */
   readonly capped: boolean;
 }
@@ -99,7 +101,10 @@ export const DOORBELL_HEALTH = `
        WHERE job.namespace = $1 AND job.queue = $2 AND job.rung_at IS NULL AND job.state IN ${PENDING}
          AND job.run_at <= $3 AND job.created_at <= $3 - $4::bigint) AS oldest_not_rung,
     EXISTS (SELECT 1 FROM qcloud_queue_state state
-            WHERE state.namespace = $1 AND state.queue = $2 AND state.paused) AS paused`;
+            WHERE state.namespace = $1 AND state.queue = $2 AND state.paused) AS paused,
+    EXISTS (SELECT 1 FROM qcloud_queue_state state
+            WHERE state.namespace = $1 AND state.queue = $2 AND state.window_from IS NOT NULL
+              AND NOT (state.window_from <= $3 AND $3 < state.window_until)) AS window_closed`;
 
 interface HealthRow {
   readonly claimable: number;
@@ -107,6 +112,7 @@ interface HealthRow {
   readonly re_ring_due: number;
   readonly oldest_not_rung: number | string | bigint | null;
   readonly paused: boolean;
+  readonly window_closed: boolean;
 }
 
 function nonNegative(name: string, value: number | undefined, fallback: number): number {
@@ -156,6 +162,7 @@ async function doorbellHealth(
         oldestNotRungAgeMs:
           row.oldest_not_rung === null ? null : Math.max(0, now - Number(row.oldest_not_rung)),
         paused: row.paused,
+        windowClosed: row.window_closed,
         capped: row.claimable >= cap || row.not_rung >= cap || row.re_ring_due >= cap,
       });
     }

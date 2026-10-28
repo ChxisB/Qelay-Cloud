@@ -1,5 +1,6 @@
-# The control plane on AWS: the Control API and the panel as ECS Fargate services behind one load balancer, and the
-# migration as a one-off task. Read README.md first, and ../README.md for the data plane. It sits beside the data
+# The control plane on AWS: the Control API and the panel as ECS Fargate services behind one load balancer (and, when
+# asked for, the inbound listener, ingest.tf), and the migration as a one-off task. Read README.md first, and
+# ../README.md for the data plane. It sits beside the data
 # plane (`../example`), not inside it: the data plane is applied once and rarely, the control plane every time a build
 # is released, and the two have different owners. They meet at the values listed under "From the data plane" in
 # variables.tf.
@@ -34,24 +35,35 @@ locals {
     var.database_tls_env,
   )
 
+  # The inbound listener is opt-in (ingest.tf): every count and name below that depends on it is zero or unused without it.
+  ingest           = var.ingest != null
+  ingest_instances = local.ingest ? var.ingest.instances : 0
+
+  # Autoscaling (autoscaling.tf) moves a service between its minimum (api_instances, ingest.instances) and these. The
+  # connection budget and the subnet room are counted at the maximum, because that is what can run.
+  api_max_instances    = coalesce(var.api_max_instances, var.api_instances)
+  ingest_max_instances = local.ingest ? coalesce(var.ingest.max_instances, var.ingest.instances) : 0
+  cluster_name         = element(split("/", var.cluster_arn), 1)
+
   log_groups = {
     api     = "/qcloud/${var.name}/api"
     panel   = "/qcloud/${var.name}/panel"
     migrate = "/qcloud/${var.name}/migrate"
+    ingest  = "/qcloud/${var.name}/ingest"
   }
 
   oidc_authority = coalesce(var.oidc_authority, var.oidc_issuer)
 
   # Written from the account and the name, like the data plane's, so its queue policies can admit this role before it
   # exists (additional_principal_arns), and the policies below can name it in a plan.
-  role_arn = { for role in ["api-task", "api-execution", "panel-execution", "migrate-execution"] : role => "arn:${local.partition}:iam::${var.account_id}:role/${var.name}-${role}" }
+  role_arn = { for role in ["api-task", "api-execution", "panel-execution", "migrate-execution", "ingest-execution"] : role => "arn:${local.partition}:iam::${var.account_id}:role/${var.name}-${role}" }
 
   # Every task takes an address from a private subnet, and a rollover leaves the stopped tasks' interfaces for a
   # while, so twice the count is the working figure. The data plane counted its own; these are ours (the API, the
-  # panel and one migration task). Derived from the counts, not measured on Fargate.
+  # panel, the ingest when there is one, and one migration task). Derived from the counts, not measured on Fargate.
   subnet_prefix   = tonumber(split("/", var.vpc_cidr)[1]) + 4
   subnet_usable   = pow(2, 32 - local.subnet_prefix) - 5 # AWS reserves five addresses of every subnet
-  tasks_total     = var.data_plane_tasks + var.api_instances + var.panel_instances + 1
+  tasks_total     = var.data_plane_tasks + local.api_max_instances + local.ingest_max_instances + var.panel_instances + 1
   subnet_required = 2 * local.tasks_total
 }
 
@@ -72,12 +84,24 @@ resource "terraform_data" "inputs" {
       error_message = "private_subnet_ids and availability_zones must list the same zones, in the same order."
     }
     precondition {
-      condition     = var.api_instances + 2 <= var.budgeted_control_processes
-      error_message = "The connection budget counts ${var.budgeted_control_processes} control processes (two overlapping ticks and each API task): ${var.api_instances + 2} would run. Raise the data plane's control_processes, or lower api_instances."
+      condition     = local.api_max_instances + local.ingest_max_instances + 2 <= var.budgeted_control_processes
+      error_message = "The connection budget counts ${var.budgeted_control_processes} control processes (two overlapping ticks, each API task and each ingest task, at the most autoscaling can reach): ${local.api_max_instances + local.ingest_max_instances + 2} would run. Raise the data plane's control_processes, or lower api_max_instances, ingest.max_instances or the minimums."
+    }
+    precondition {
+      condition     = local.api_max_instances >= var.api_instances && local.ingest_max_instances >= local.ingest_instances
+      error_message = "api_max_instances must be at least api_instances, and ingest.max_instances at least ingest.instances."
     }
     precondition {
       condition     = var.api_pool_size <= var.budgeted_control_pool_size
       error_message = "The connection budget counts ${var.budgeted_control_pool_size} connections per control process; api_pool_size is ${var.api_pool_size}. Raise the data plane's control_pool_size, or lower api_pool_size."
+    }
+    precondition {
+      condition     = local.ingest ? var.ingest.pool_size <= var.budgeted_control_pool_size : true
+      error_message = "The connection budget counts ${var.budgeted_control_pool_size} connections per control process; ingest.pool_size is ${local.ingest ? var.ingest.pool_size : 0}. Raise the data plane's control_pool_size, or lower ingest.pool_size."
+    }
+    precondition {
+      condition     = local.ingest ? length(distinct([var.api_hostname, var.panel_hostname, var.ingest.hostname])) == 3 : true
+      error_message = "api_hostname, panel_hostname and ingest.hostname must be three different names: the load balancer routes by host name."
     }
     precondition {
       condition     = var.alb_idle_timeout_seconds >= 2 * var.event_heartbeat_seconds

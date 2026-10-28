@@ -21,6 +21,7 @@ import { ConnectionPreview } from './ConnectionPreview';
 import { addressOf } from './destinationFields';
 import { DestinationPicker } from './DestinationPicker';
 import { Step, type StepNumber, stepOf } from './FormStep';
+import { SourcePicker } from './SourcePicker';
 
 const OWN = ['Webhook address', 'Another queue'] as const;
 const SAVED = 'Saved destination';
@@ -31,9 +32,9 @@ const DESTINATION: Record<(typeof OWN)[number], WebhookDestination> = {
 };
 
 /**
- * The new connection form, in four steps: where the events come from (a queue's job events), where they go
- * (an address of yours, a saved destination, or a job in another queue), what is sent and how it is signed,
- * then Save. A queue route has no address and no secret. `onAccepted` gets the server's reply, to find the
+ * The new connection form, in four steps: which inbound source it reads, where the requests go (an address
+ * of yours, a saved destination, or a job in a queue), what is sent and how it is signed, then Save. A queue
+ * route has no address and no secret. `onAccepted` gets the server's reply, to find the
  * new id in.
  */
 export function ConnectionForm({
@@ -53,7 +54,7 @@ export function ConnectionForm({
   const [url, setUrl] = useState('');
   const [target, setTarget] = useState('');
   const [savedId, setSavedId] = useState('');
-  const [queue, setQueue] = useState('');
+  const [source, setSource] = useState('');
   const [secret, setSecret] = useState('');
   // A generated secret is shown once, so it can be copied to the receiver. Stored ones never are.
   const [revealed, setRevealed] = useState(false);
@@ -63,6 +64,7 @@ export function ConnectionForm({
   const [busy, setBusy] = useState(false);
   // An older server has no saved destinations, and a deployment with none has nothing to choose from.
   const saved = usePolledData(() => bq.destinations(), []).data ?? [];
+  const sources = usePolledData(() => bq.sources(), []).data ?? [];
   const kinds: readonly Kind[] = saved.length > 0 ? [...OWN, SAVED] : OWN;
   const chosen =
     kind === SAVED ? saved.find((destination) => destination.id === savedId) : undefined;
@@ -88,9 +90,10 @@ export function ConnectionForm({
     setErr(null);
     setRuleError(null);
     if (destination === null) return setErr({ step: 2, msg: 'Choose a saved destination.' });
-    const typed = rulesOf(rules);
+    // A batch is for an http destination: one left on from before the choice changed is not sent.
+    const typed = rulesOf(toQueue ? { ...rules, batchOn: false } : rules);
     if (!typed.ok) return setRuleError({ field: typed.field, msg: typed.msg });
-    const built = buildWebhookBody(chosen?.url ?? url, rules.events, queue, secret, {
+    const built = buildWebhookBody(chosen?.url ?? url, source, secret, {
       destination,
       target: chosen ? (chosen.target ?? '') : target,
     });
@@ -147,33 +150,17 @@ export function ConnectionForm({
       <ol className="m-0 flex max-w-3xl list-none flex-col p-0">
         <Step n={1} title="Source">
           <div className="max-w-md">
-            <Field
-              label={toQueue ? 'From queue' : 'From queue (optional)'}
-              hint={
-                toQueue
-                  ? 'The queue whose job events start this route.'
-                  : 'Leave blank to hear about every queue.'
-              }
-            >
-              <Input
-                value={queue}
-                onInput={(event) => setQueue(event.currentTarget.value)}
-                name="webhook-queue"
-                maxLength={256}
-                autoComplete="off"
-                placeholder={toQueue ? 'orders' : 'All queues'}
-              />
-            </Field>
+            <SourcePicker sources={sources} value={source} onChange={setSource} />
           </div>
         </Step>
         <Step n={2} title="Destination">
           <div>
-            <p className="mb-1 text-[13px] font-bold leading-5 text-fg">Send events to</p>
+            <p className="mb-1 text-[13px] font-bold leading-5 text-fg">Send requests to</p>
             <SegmentedControl
               options={kinds}
               value={kind}
               onChange={setKind}
-              label="Where the events go"
+              label="Where the requests go"
               asWritten
             />
           </div>
@@ -181,10 +168,7 @@ export function ConnectionForm({
             {kind === SAVED ? (
               <DestinationPicker destinations={saved} value={savedId} onChange={setSavedId} />
             ) : toQueue ? (
-              <Field
-                label="To queue"
-                hint="Each event adds one job to this queue. A loop is refused."
-              >
+              <Field label="To queue" hint="Each request adds one job to this queue.">
                 <Input
                   value={target}
                   onInput={(event) => setTarget(event.currentTarget.value)}
@@ -195,10 +179,7 @@ export function ConnectionForm({
                 />
               </Field>
             ) : (
-              <Field
-                label="URL"
-                hint="Qelay sends a request to this address when an event happens."
-              >
+              <Field label="URL" hint="Qelay sends each request it accepts to this address.">
                 <Input
                   value={url}
                   onInput={(event) => setUrl(event.currentTarget.value)}
@@ -218,6 +199,7 @@ export function ConnectionForm({
             fields={rules}
             onChange={changeRule}
             errors={ruleError ? { [ruleError.field]: ruleError.msg } : {}}
+            {...(destination && { destination })}
           />
           {destination === 'http' && (
             <div className="max-w-xl">
@@ -271,7 +253,7 @@ export function ConnectionForm({
         </Step>
       </ol>
       <ConnectionPreview
-        queue={queue}
+        source={sources.find((one) => one.id === source)?.name ?? ''}
         destination={destination}
         address={chosen ? addressOf(chosen) : toQueue ? target : url}
         signed={secret !== ''}

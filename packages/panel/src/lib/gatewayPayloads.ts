@@ -1,4 +1,4 @@
-import type { WebhookDedupeFull } from './bq/gatewayTypes';
+import type { WebhookBatchFull, WebhookDedupeFull, WebhookScheduleFull } from './bq/gatewayTypes';
 import type { WebhookStatsBucketFull, WebhookStatsFull } from './bq/types';
 import type { WebhookFull } from './bqTypes';
 import {
@@ -27,6 +27,9 @@ type RouteFields = Pick<
   | 'description'
   | 'delayMs'
   | 'dedupe'
+  | 'schedule'
+  | 'nextSendAt'
+  | 'batch'
   | 'pausedBy'
   | 'destinationId'
 >;
@@ -43,6 +46,24 @@ function dedupeOf(value: unknown): WebhookDedupeFull | null | undefined {
     stringList(dedupe.fields, 5, 16) &&
     dedupe.fields.length > 0
     ? { windowMs: dedupe.windowMs, fields: dedupe.fields }
+    : undefined;
+}
+
+/** A schedule as the server holds it, or null for none. */
+function scheduleOf(value: unknown): WebhookScheduleFull | null | undefined {
+  if (value === null) return null;
+  const schedule = record(value);
+  return schedule && text(schedule.cron, 200) && text(schedule.timezone, 64)
+    ? { cron: schedule.cron, timezone: schedule.timezone }
+    : undefined;
+}
+
+/** A batch as the server holds it, or null for none. */
+function batchOf(value: unknown): WebhookBatchFull | null | undefined {
+  if (value === null) return null;
+  const batch = record(value);
+  return batch && count(batch.maxEvents) && batch.maxEvents >= 1 && count(batch.maxBytes)
+    ? { maxEvents: batch.maxEvents, maxBytes: batch.maxBytes }
     : undefined;
 }
 
@@ -64,6 +85,9 @@ export function routeFields(webhook: Record<string, unknown>): RouteFields | nul
   const description = webhook.description ?? null;
   const delayMs = webhook.delayMs ?? null;
   const dedupe = dedupeOf(webhook.dedupe ?? null);
+  const schedule = scheduleOf(webhook.schedule ?? null);
+  const nextSendAt = webhook.nextSendAt ?? null;
+  const batch = batchOf(webhook.batch ?? null);
   // A server before `pausedBy` paused only for failing: an off route with a reason was that.
   const pausedBy =
     webhook.pausedBy ?? (webhook.enabled === false && reason !== null ? 'failures' : null);
@@ -82,6 +106,9 @@ export function routeFields(webhook: Record<string, unknown>): RouteFields | nul
     !(description === null || multilineText(description, 5_000)) ||
     !(delayMs === null || count(delayMs)) ||
     dedupe === undefined ||
+    schedule === undefined ||
+    !(nextSendAt === null || timestamp(nextSendAt)) ||
+    batch === undefined ||
     (pausedBy !== null && pausedBy !== 'operator' && pausedBy !== 'failures') ||
     !(destinationId === null || text(destinationId, 1_024))
   ) {
@@ -100,6 +127,9 @@ export function routeFields(webhook: Record<string, unknown>): RouteFields | nul
     description,
     delayMs,
     dedupe,
+    schedule,
+    nextSendAt,
+    batch,
     pausedBy,
     destinationId,
   };

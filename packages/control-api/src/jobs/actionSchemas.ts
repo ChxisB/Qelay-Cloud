@@ -1,3 +1,5 @@
+import type { QueueRunWindowInput } from '@qelay-cloud/core';
+import { MAX_DLQ_RETRY } from '@qelay-cloud/store-postgres';
 import { z } from 'zod';
 import { ApiError } from '../errors';
 
@@ -97,6 +99,15 @@ export const obliterateBody = z
 /** Purging a DLQ deletes its jobs for good, so it takes the queue's name like drain does. */
 export const purgeDlqBody = z.strictObject({ confirm: z.string().optional() }).optional();
 
+/** `POST /queues/:queue/dlq/retry`: up to `limit` (default and most 500) entries, oldest failure first, optionally one `reason`. */
+export const retryDlqBody = z
+  .strictObject({
+    confirm: z.string().optional(),
+    limit: z.number().int().min(1).max(MAX_DLQ_RETRY).optional(),
+    reason: z.enum(['explicit_fail', 'max_attempts_exceeded', 'timeout', 'stalled']).optional(),
+  })
+  .optional();
+
 /** The panel sends `{ config }`; Qelay also takes the settings bare, so both are accepted. */
 const unwrapConfig = (value: unknown): unknown =>
   typeof value === 'object' && value !== null && 'config' in value
@@ -119,8 +130,8 @@ export const stallConfigBody = z.preprocess(
 );
 
 /**
- * `PUT /queues/:queue/dlq-config`. Retention (`maxAge`, `maxEntries`) and auto-retry are closed, as the
- * panel shows them: a value equal to the current one is a no-op, a different one is 501.
+ * `PUT /queues/:queue/dlq-config`. Retention (`maxAge`, `maxEntries`) is saved; the route checks the values.
+ * Auto-retry stays closed: a value equal to the current one is a no-op, `autoRetry: true` is 501.
  */
 export const dlqConfigBody = z.preprocess(
   unwrapConfig,
@@ -133,17 +144,33 @@ export const dlqConfigBody = z.preprocess(
   })
 );
 
+/**
+ * `PUT /queues/:queue/policy`. Any object: the store checks it with the rules of the job options and refuses a
+ * setting it does not have by name (400 `unsupported_option`), so the message names the field. `{}` removes the policy.
+ */
+export const queuePolicyBody = z.record(z.string(), z.unknown());
+
+/**
+ * `PUT /queues/:queue/run-window`. Any plain object: the store checks the fields and names the one it refuses (400
+ * `unsupported_option`), so the type here is only the shape the store takes.
+ */
+export const runWindowBody = z.custom<QueueRunWindowInput>(
+  (value) => typeof value === 'object' && value !== null && !Array.isArray(value),
+  'must be an object with cron, durationMs and optional timezone'
+);
+
 /** 400 `confirmation_required` unless `confirm` is exactly the queue's name. */
 export function requireConfirmation(
   queue: string,
   confirm: string | undefined,
-  action: string
+  action: string,
+  effect = 'deletes jobs for good'
 ): void {
   if (confirm === queue) return;
   throw new ApiError(
     400,
     'confirmation_required',
-    `${action} deletes jobs for good: send "confirm" with the queue's name to proceed`,
+    `${action} ${effect}: send "confirm" with the queue's name to proceed`,
     { required: 'confirm', equals: 'the queue name' }
   );
 }

@@ -4,7 +4,7 @@ import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
 import type { WebhookDeliveryFull } from '@/lib/bq';
 import type { WebhookFull } from '@/lib/bqTypes';
 import { formatRelativeTime } from '@/lib/format';
-import { attemptSummary, EVENT_WORDS, isOnHold, routeName } from './model';
+import { attemptSummary, EVENT_WORDS, isOnHold, requestLabel, routeName } from './model';
 
 /**
  * The events of one page. `arrival` says where a row rises as it mounts (`useRowArrivals`): the first load in a
@@ -30,7 +30,7 @@ export function EventsTable({
           <tr>
             <Th>Status</Th>
             <Th>Event</Th>
-            <Th>Job</Th>
+            <Th>Request</Th>
             <Th>To</Th>
             <Th>Attempts</Th>
             <Th right>When</Th>
@@ -58,10 +58,10 @@ export function EventsTable({
                     size="sm"
                     variant="ghost"
                     aria-pressed={item.id === selected}
-                    aria-label={`Open event ${item.queue} / ${item.jobId}`}
+                    aria-label={`Open event ${requestLabel(item)}`}
                     onClick={() => onToggle(item.id)}
                   >
-                    {item.queue} / {item.jobId}
+                    {requestLabel(item)}
                   </Button>
                 </Td>
                 <Td className="max-w-[14rem] truncate font-mono text-[13px] text-muted">

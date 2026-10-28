@@ -64,6 +64,7 @@ export function queue(
       reRingDue: 0,
       oldestNotRungAgeMs: null,
       paused: false,
+      windowClosed: false,
       capped: false,
       ...store,
     },

@@ -50,6 +50,7 @@ describeDb('tick: the composed pass', () => {
       'recover',
       'retention',
       'ringQuery',
+      'windows',
     ]);
     expect(Object.values(stepMs ?? {}).every((ms) => Number.isInteger(ms) && ms >= 0)).toBe(true);
   });
@@ -115,7 +116,7 @@ describeDb('tick: the composed pass', () => {
       expect(report.rings.map((ring) => ring.bell.jobId).sort()).toEqual([dead.id, due!].sort());
       expect((await readJob(t, due!))?.state).toBe('delayed');
       // A skipped step has no timing.
-      expect(Object.keys(report.stepMs ?? {}).sort()).toEqual(['recover', 'ringQuery']);
+      expect(Object.keys(report.stepMs ?? {}).sort()).toEqual(['recover', 'ringQuery', 'windows']);
     });
 
     test('skipUpkeep leaves out the retention steps and keeps the rest', async () => {
@@ -130,6 +131,7 @@ describeDb('tick: the composed pass', () => {
         'promote',
         'recover',
         'ringQuery',
+        'windows',
       ]);
     });
 

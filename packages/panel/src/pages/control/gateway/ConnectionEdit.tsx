@@ -82,7 +82,12 @@ export function ConnectionEdit({
           void save();
         }}
       >
-        <ConnectionFields fields={fields} onChange={change} errors={errors} />
+        <ConnectionFields
+          fields={fields}
+          onChange={change}
+          errors={errors}
+          destination={route.destination}
+        />
         {preview !== '' && (
           <div>
             <p className="mb-1 text-[13px] font-bold text-fg">What Save sends</p>

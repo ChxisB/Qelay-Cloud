@@ -10,7 +10,6 @@ import { useCanOperate } from '@/lib/capabilities/useCapabilities';
 import {
   FLOW_COMPLETED_REQUEUE_UNAVAILABLE,
   FLOW_DELETION_UNAVAILABLE,
-  FLOW_DLQ_RETRY_UNAVAILABLE,
 } from '@/lib/flowMutationSafety';
 import { actionGates } from '@/lib/jobActions';
 import { PROMOTE_THIS_JOB } from '../jobsPro/promoteConfirm';
@@ -64,7 +63,8 @@ export function parseFailureStack(
 }
 
 const SWITCHED_OFF: Record<string, string> = {
-  failed: 'Retrying, cancelling and deleting this job from here is switched off on this server.',
+  failed:
+    'Retry a failed job from the Dead letter queue page. Cancelling and deleting it from here is switched off on this server.',
   completed:
     'Running this job again, cancelling it and deleting it from here is switched off on this server.',
   active: "This job is running now, so apart from its progress it can't be changed from here.",
@@ -76,13 +76,11 @@ const ACTIVE_REASON =
 /** Says once what is switched off for this job; the exact reasons are behind "Why?". */
 function UnavailableNote({ state }: { state?: string }) {
   const reason =
-    state === 'failed'
-      ? FLOW_DLQ_RETRY_UNAVAILABLE
-      : state === 'completed'
-        ? FLOW_COMPLETED_REQUEUE_UNAVAILABLE
-        : state === 'active'
-          ? ACTIVE_REASON
-          : null;
+    state === 'completed'
+      ? FLOW_COMPLETED_REQUEUE_UNAVAILABLE
+      : state === 'active'
+        ? ACTIVE_REASON
+        : null;
   return (
     <div role="note">
       <p className="text-[13px] text-muted">

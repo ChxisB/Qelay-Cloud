@@ -128,7 +128,6 @@ describe('classic API complete request surface', () => {
 
   test('keeps flow-unsafe compatibility mutations fail-closed and builds SSE URLs only', () => {
     expect(() => api.retryCompleted('orders')).toThrow('flow dependency registration');
-    expect(() => api.retryDlq('orders')).toThrow('atomic flow-safety precondition');
     expect(api.eventsUrl()).toBe('http://classic-api.test/events');
     expect(api.eventsUrl('orders')).toBe('http://classic-api.test/events/queues/orders');
     expect(requests).toEqual([]);

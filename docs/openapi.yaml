@@ -40,6 +40,8 @@ tags:
   - name: workflows
   - name: cron
   - name: webhooks
+  - name: sources
+  - name: requests
   - name: workers
   - name: events
   - name: metrics
@@ -925,29 +927,51 @@ paths:
         '504': { $ref: '#/components/responses/Timeout' }
   /queues/{queue}/dlq/retry:
     post:
-      tags: [unsupported]
-      summary: 'Not supported: retry every DLQ entry'
-      description: 'Always 501 `not_supported` with `details.capability` `dlq-retry`. Listed under `unsupported` by `GET /capabilities`, so a client leaves the control out.'
+      tags: [dlq]
+      summary: Put failed jobs back in the queue
+      description: 'Needs `confirm` equal to the queue name and the operator role. Retries the oldest failures first, up to `limit` (default and most 500) in one transaction, optionally only those that failed for one `reason`. A flow member and a job whose deduplication key a live job holds stay in the dead-letter queue and are not counted in `remaining`. `remaining` is what a repeat call would still retry, and `done` is true when it is 0. Each job is waiting again with no attempt used; nothing retries by itself (`dlq-auto-retry` stays unsupported).'
       operationId: retryDlq
       parameters:
         - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetryDlqBody' }
       responses:
-        '501': { $ref: '#/components/responses/NotSupported' }
+        '200':
+          description: How many went back and how many are left.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RetryDlqResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/Timeout' }
   /queues/{queue}/dlq/{jobId}/retry:
     post:
-      tags: [unsupported]
-      summary: 'Not supported: retry one DLQ entry'
-      description: 'Always 501 `not_supported` with `details.capability` `dlq-retry`.'
+      tags: [dlq]
+      summary: Put one failed job back in the queue
+      description: 'Operator role. `expectedVersion` fences the retry to the entry as it was read (409 `version_conflict`). A job that is not failed, for example because another caller retried it first, is 409 `job_state`. A flow member is 409 `flow_member` (retry the flow instead) and a job whose deduplication key a live job holds is 409 `duplicate_job`. Nothing is changed by a refusal.'
       operationId: retryDlqJob
       parameters:
         - { $ref: '#/components/parameters/Queue' }
         - { name: jobId, in: path, required: true, schema: { type: string, minLength: 1 } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetryJobBody' }
       responses:
-        '501': { $ref: '#/components/responses/NotSupported' }
+        '200':
+          description: The job is waiting again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -992,11 +1016,108 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/policy:
+    get:
+      tags: [queues]
+      summary: Retry policy of a queue
+      description: 'The attempts, backoff and timeout a job gets when it sets none of its own, or `null` when the queue has no policy. It is applied when a job is added: a job added before the policy was saved keeps what it had.'
+      operationId: getQueuePolicy
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: The policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueuePolicyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [queues]
+      summary: Set the retry policy of a queue
+      description: 'Replaces the whole policy; `{}` removes it. A job''s own `attempts`, `backoff` and `timeout` always win, each on its own. The bounds are those of the job options. A setting the policy does not have, including retry jitter (one switch for the whole service), is 400 `unsupported_option` naming it. A number `backoff` is stored as a fixed one.'
+      operationId: setQueuePolicy
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueuePolicy' }
+      responses:
+        '200':
+          description: The policy as stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueuePolicyResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /queues/{queue}/run-window:
+    get:
+      tags: [queues]
+      summary: Run window of a queue
+      description: 'When the queue may start jobs, or `null` when it has no window and runs at any time. `open` says whether it is inside the window now, and `opensAt` and `closesAt` are the interval that is open or the next one to open. The window is checked when a worker claims, and the tick rings the queue when it opens, so an opening is up to one tick interval late.'
+      operationId: getQueueRunWindow
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: The window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueRunWindowResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [queues]
+      summary: Set the run window of a queue
+      description: 'Replaces the window. Outside it a claim finds nothing and the jobs wait; a job that is running when the window closes finishes, and a retry or a delayed job waits for the next opening. A paused queue stays paused inside the window. The cron must fire at least once every 31 days, and `durationMs` is from 1 minute to 7 days. A field that is not valid is 400 `unsupported_option` naming it. Set it only after every process runs a release that knows windows: an older worker ignores it and claims at any time.'
+      operationId: setQueueRunWindow
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueRunWindow' }
+      responses:
+        '200':
+          description: The window as stored, with where it stands now.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueRunWindowResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [queues]
+      summary: Remove the run window of a queue
+      description: 'The queue runs at any time again. The next tick rings the jobs that were held.'
+      operationId: deleteQueueRunWindow
+      parameters:
+        - { $ref: '#/components/parameters/Queue' }
+      responses:
+        '200':
+          description: Removed (also when there was none).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueRunWindowResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
   /queues/{queue}/dlq-config:
     get:
       tags: [dlq]
       summary: Retention and auto-retry settings of the dead-letter queue
-      description: '`autoRetry` is always false. `autoRetryInterval` and `maxAutoRetries` are fixed values, shown so the panel''s form renders.'
+      description: '`maxAge` (ms, or null for no age limit) and `maxEntries` are the retention of the dead-letter queue. `autoRetry` is always false. `autoRetryInterval` and `maxAutoRetries` are fixed values, shown so the panel''s form renders.'
       operationId: getDlqConfig
       parameters:
         - { $ref: '#/components/parameters/Queue' }
@@ -1012,7 +1133,7 @@ paths:
     put:
       tags: [dlq]
       summary: Save the dead-letter queue's settings
-      description: 'Retention and auto-retry are closed. A value equal to the current one is accepted (the form sends the whole object); a different `maxAge` or `maxEntries` is 501 `dlq-retention`, `autoRetry: true` is 501 `dlq-auto-retry`, and a different `autoRetryInterval` or `maxAutoRetries` is 400 `unsupported_option`.'
+      description: 'Saves `maxAge` and `maxEntries` and audits the keys that changed. Lowering `maxEntries` deletes the oldest entries over the new limit at once, except jobs a live flow waits on. `autoRetry: true` is 501 `dlq-auto-retry`, and a different `autoRetryInterval` or `maxAutoRetries` is 400 `unsupported_option`. A value equal to the current one is accepted (the form sends the whole object).'
       operationId: setDlqConfig
       parameters:
         - { $ref: '#/components/parameters/Queue' }
@@ -1371,6 +1492,248 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/Timeout' }
+  /sources:
+    get:
+      tags: [sources]
+      summary: The inbound sources
+      description: |
+        Every source of the namespace, oldest first. A source is a URL that takes requests and hands each to the routes
+        (connections) that listen to it. Neither the URL token nor the secret is part of a source: they are shown once, by
+        the call that made them.
+      operationId: listSources
+      responses:
+        '200':
+          description: The sources.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourcesList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [sources]
+      summary: Register a source
+      description: |
+        Makes a source and answers once with its URL `token` (the address is the ingest's origin and `/s/<token>`) and, for a
+        source that verifies, its `secret`: the one in the body (16 to 256 characters), or one the store made. Both appear in
+        this response only and in no read, log or audit entry; the audit trail records the source's id. Verification is
+        `none` (anyone with the URL can post), `hmac` (a signature in `header`), `basic` (`username` and the secret as the
+        password) or `api_key` (the secret in `header`); it cannot be changed afterwards. A source that verifies needs the
+        deployment's `QCLOUD_WEBHOOK_KEY` (409 `webhook_key_missing` without it). Names are unique in the namespace (409
+        `source_name_taken`) and at most 100 sources are kept (409 `source_limit`).
+      operationId: createSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceCreate' }
+      responses:
+        '201':
+          description: Registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceIssuedEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /sources/{id}:
+    get:
+      tags: [sources]
+      summary: One source
+      operationId: getSource
+      parameters:
+        - { $ref: '#/components/parameters/SourceId' }
+      responses:
+        '200':
+          description: The source.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    patch:
+      tags: [sources]
+      summary: Rename a source or turn it on or off
+      description: A source that is off answers its URL with a 404, as one that does not exist. An empty body is 400.
+      operationId: updateSource
+      parameters:
+        - { $ref: '#/components/parameters/SourceId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourcePatch' }
+      responses:
+        '200':
+          description: The source after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [sources]
+      summary: Delete a source
+      description: |
+        Its stored requests go with it. Refused with 409 `source_in_use` (`details.routes`) while a route still listens to
+        it; delete or move those first. A leaked URL is fixed by rotating the token, not by deleting.
+      operationId: deleteSource
+      parameters:
+        - { $ref: '#/components/parameters/SourceId' }
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /sources/{id}/rotate-secret:
+    post:
+      tags: [sources]
+      summary: Rotate a source's secret
+      description: |
+        Gives the source a new secret: the `secret` in the body (16 to 256 characters), or a generated one returned once as
+        `data.secret`. The old secret keeps verifying beside the new one for 24 hours (`previousSecretUntil`), so the sender
+        can switch over without a rejected request. A source with no verification has no secret (400
+        `unsupported_option`). Needs `QCLOUD_WEBHOOK_KEY` (409 `webhook_key_missing`). The body may be left out.
+      operationId: rotateSourceSecret
+      parameters:
+        - { $ref: '#/components/parameters/SourceId' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                secret: { type: string, nullable: true, minLength: 16, maxLength: 256, description: 'The new secret; omit to have one generated.' }
+      responses:
+        '200':
+          description: The source after the change, and the generated secret if there is one.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceIssuedEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /sources/{id}/rotate-token:
+    post:
+      tags: [sources]
+      summary: Give a source a new URL
+      description: |
+        Makes a new URL token, returned once as `data.token`. The old URL stops working at once (it answers 404): this is
+        how a leaked URL is fixed. The senders must be given the new one.
+      operationId: rotateSourceToken
+      parameters:
+        - { $ref: '#/components/parameters/SourceId' }
+      responses:
+        '200':
+          description: The source, and its new token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceIssuedEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /requests:
+    get:
+      tags: [requests]
+      summary: The requests the sources took
+      description: |
+        Newest first, a page at a time by keyset: `next` goes back in as `before`, so a request that arrives meanwhile moves
+        no page. A summary holds no headers, query or body (`bodyBytes` is the size). A request that did not pass the
+        source's verification is kept with its `cause` and no body (`status: rejected`), within a per-minute cap per source;
+        the ones over the cap are counted in the source's `rejectedDropped`. Retention removes old requests.
+      operationId: listRequests
+      parameters:
+        - { name: source, in: query, schema: { type: string, minLength: 1 }, description: 'Only this source''s requests.' }
+        - { name: status, in: query, schema: { type: string, enum: [accepted, rejected] } }
+        - { name: before, in: query, schema: { type: string, pattern: '^[1-9][0-9]{0,15}$' }, description: 'The `next` of the page before.' }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200':
+          description: A page of requests.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RequestsList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /requests/{id}:
+    get:
+      tags: [requests]
+      summary: One request whole
+      description: |
+        The request as it was stored: its headers (the values of `authorization`, `cookie`, `proxy-authorization`,
+        `set-cookie` and the source's own verification header are `[redacted]`), query, body, and the deliveries it made,
+        newest first, a replay's included. The body is what a stranger sent, so a `viewer` does not get it (`body` is null and
+        `bodyRedacted` true).
+      operationId: getRequest
+      parameters:
+        - { $ref: '#/components/parameters/RequestId' }
+      responses:
+        '200':
+          description: The request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RequestEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+  /requests/{id}/replay:
+    post:
+      tags: [requests]
+      summary: Send a stored request again
+      description: |
+        Makes new deliveries of the request for the source's routes as they are now: a route added since gets one, a deleted
+        route does not, a changed filter or shape applies, and the dedupe is skipped because the operator asked. The
+        deliveries are queued and sent by the next tick (202). A receiver that already had the request gets it again. A
+        rejected request kept no body: 409 `request_not_replayable`. A replay in the same millisecond as the accept or an
+        earlier replay of the same request makes nothing (`deliveries: 0`).
+      operationId: replayRequest
+      parameters:
+        - { $ref: '#/components/parameters/RequestId' }
+      responses:
+        '202':
+          description: Queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReplayEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
   /workers:
     get:
       tags: [workers]
@@ -1426,20 +1789,18 @@ paths:
       tags: [webhooks]
       summary: Register a webhook
       description: |
-        Registers a route (`docs/event-gateway.md`): the events listed, optionally from one queue, delivered to a
-        `destination`. `http` (the default) POSTs to `url`; `queue` adds a job to `target`, a queue of this namespace,
-        needs a source `queue`, and has no address. A `queue` route that would make a loop is 409 `route_cycle`, and one
-        that would make a chain longer than 5 routes is 409 `route_chain_too_long` (`details.limit`); nothing is
-        saved. An `http` route's address is checked against the
+        Registers a route (`docs/event-gateway.md`): the requests an inbound `source` (`/sources`) accepts, delivered to a
+        `destination`. `source` is required (400 `unsupported_option` for `source`, also for an unknown one). `http` (the
+        default) POSTs to `url`; `queue` adds a job to `target`, a queue of this namespace, and has no address. An
+        `http` route's address is checked against the
         deployment's policy (https only, and no loopback, private, link-local or metadata destination, unless the
         deployment runs in development mode): a refusal is 400 with the rule as `error.code` (`invalid_url`,
         `scheme_not_allowed`, `credentials_not_allowed`, `host_not_allowed`). The name is not resolved here; the sender
         checks what it resolves to at every attempt. A `secret` (16 to 256 characters) signs each delivery
         (`docs/webhooks.md`) and needs the deployment's `QCLOUD_WEBHOOK_KEY` (409 `webhook_key_missing` without it).
         With the key and no `secret` given, one is generated and returned once as `data.secret`; a secret you gave is
-        never returned. Without the key the webhook is unsigned. At most 100 webhooks (409 `webhook_limit`). A `filter` or `shape` needs the delivery
-        writer switched on (`qcloud-tick webhook-writer on`); without it the call is 400 `unsupported_option` for
-        `writer`.
+        never returned. Without the key the webhook is unsigned. At most 100 webhooks (409 `webhook_limit`). A `filter`,
+        `shape`, `delayMs`, `dedupe`, `schedule` or `batch` that is not valid is 400 `unsupported_option` naming which.
       operationId: createWebhook
       requestBody:
         required: true
@@ -1462,9 +1823,10 @@ paths:
   /webhooks/preview:
     post:
       tags: [webhooks]
-      summary: Try a filter and a shape on an event
+      summary: Try a filter and a shape on a request
       description: |
-        Evaluates a webhook's `filter` and `shape` against one made-up event and answers what would be sent. Nothing
+        Evaluates a webhook's `filter` and `shape` against one made-up request (`method`, `headers`, `query`, `body`) and
+        answers what would be sent. Nothing
         is saved, queued or sent. A filter or shape that is not valid is 400 `unsupported_option` naming which
         (`filter` or `shape`) and the first fault.
       operationId: previewWebhook
@@ -1655,10 +2017,8 @@ paths:
       description: |
         Changes the name, the `url` (an `http` destination) or the `target` (a `queue` one); an address of the other kind is
         400 `unsupported_option`, and an empty body is 400. A new address is copied to every connection made from the
-        destination in the same transaction, so they all follow; a `queue` address that would make a loop is 409
-        `route_cycle` and one that would make a chain longer than 5 routes is 409 `route_chain_too_long`, with nothing
-        changed. A connection that was paused for failing stays paused. Operator only; the audit entry holds the id and no
-        address.
+        destination in the same transaction, so they all follow. A connection that was paused for failing stays paused.
+        Operator only; the audit entry holds the id and no address.
       operationId: updateWebhookDestination
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, minLength: 1 } }
@@ -1721,11 +2081,10 @@ paths:
       tags: [webhooks]
       summary: Edit a webhook
       description: |
-        Changes the name, description, events and rules the body names; a key that is absent is left alone, and `null`
-        clears a name, description, filter, shape, delay or dedupe (`events` cannot be empty). The source queue, the
-        destination, the address and the secret are not editable here: delete and add, or rotate the secret. A `filter`,
-        `shape`, `delayMs` or `dedupe` needs the delivery writer on, as at creation (400 `unsupported_option`). An empty
-        body is 400. Operator only; the audit entry holds the webhook's id and no value.
+        Changes the name, description, source and rules the body names; a key that is absent is left alone, and `null`
+        clears a name, description, filter, shape, delay, dedupe, schedule or batch. The destination, the address and the secret are not
+        editable here: delete and add, or rotate the secret. A value that is not valid is 400 `unsupported_option`
+        naming which. An empty body is 400. Operator only; the audit entry holds the webhook's id and no value.
       operationId: updateWebhook
       parameters:
         - { $ref: '#/components/parameters/WebhookId' }
@@ -2132,6 +2491,49 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '504': { $ref: '#/components/responses/Timeout' }
+  /backup-policy:
+    get:
+      tags: [deployment]
+      summary: How the operator says this database is backed up
+      description: |
+        Qelay takes no backups and runs no restore. This is the operator's declaration of who does: `provider` (the managed
+        database's own backups, for example Cloud SQL or RDS point-in-time recovery), `external` (their own tooling, named in
+        `tool`, with an optional `location`) or `none`. `policy` is `null` while nobody has said; `GET /deployment` warns for
+        that and for `none`. Qelay does not check the declaration against the database.
+      operationId: getBackupPolicy
+      responses:
+        '200':
+          description: The declaration, or `null`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupPolicyEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    put:
+      tags: [deployment]
+      summary: Declare how this database is backed up
+      description: |
+        Replaces the declaration. `external` needs a `tool`; `provider` and `none` carry neither `tool` nor `location`
+        (400 `invalid_request` otherwise). Operator only, and audited.
+      operationId: setBackupPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackupPolicyInput' }
+      responses:
+        '200':
+          description: The declaration after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupPolicySetEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504': { $ref: '#/components/responses/Timeout' }
   /ping:
     get:
       tags: [health]
@@ -2482,6 +2884,16 @@ components:
       in: path
       required: true
       schema: { type: string, minLength: 1 }
+    SourceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+    RequestId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[1-9][0-9]{0,15}$' }
     CronName:
       name: name
       in: path
@@ -2544,7 +2956,7 @@ components:
         The job or queue is not in a state the action applies to (`job_state`, `flow_protected`), or the job has moved on
         since the `expectedVersion` the caller read (`version_conflict`), or an event position is past the end of the
         journal (`cursor_ahead`), or a flow action does not apply (`flow_changed`, `flow_active`, `flow_not_retryable`,
-        `flow_not_stuck`, `flow_too_large`), or a webhook action does not apply (`webhook_limit`, `webhook_key_missing`, `webhook_disabled`, `delivery_not_failed`), or a destination action does not apply (`destination_limit`, `destination_name_taken`, `destination_in_use`, `route_cycle`, `route_chain_too_long`), or a workflow action does not apply (`version_conflict`, `execution_terminal`,
+        `flow_not_stuck`, `flow_too_large`), or a webhook action does not apply (`webhook_limit`, `webhook_key_missing`, `webhook_disabled`, `delivery_not_failed`), or a destination action does not apply (`destination_limit`, `destination_name_taken`, `destination_in_use`), or a workflow action does not apply (`version_conflict`, `execution_terminal`,
         `execution_state`, `workflow_progressing`, `signal_rejected`). Nothing was changed.
       content:
         application/json:
@@ -2671,7 +3083,7 @@ components:
           type: array
           description: Actions that exist in the panel and are closed here (they answer 501 `not_supported`), so a client leaves the control out.
           items: { type: string }
-          example: [job-fail, job-discard, job-retry, job-move-to-delayed, dlq-retry, dlq-auto-retry, dlq-retention]
+          example: [job-fail, job-discard, job-retry, job-move-to-delayed, dlq-auto-retry]
         principal:
           type: object
           description: The caller's own role. A client leaves out the controls the role may not use; the server still decides.
@@ -3148,6 +3560,26 @@ components:
       additionalProperties: false
       properties:
         confirm: { type: string, description: Must equal the queue's name. }
+    RetryJobBody:
+      type: object
+      additionalProperties: false
+      properties:
+        expectedVersion: { type: integer, minimum: 0, description: The `version` of the entry as it was read; a stale one is 409 `version_conflict`. }
+    RetryDlqBody:
+      type: object
+      additionalProperties: false
+      properties:
+        confirm: { type: string, description: Must equal the queue's name. }
+        limit: { type: integer, minimum: 1, maximum: 500, description: At most this many, oldest failure first. Default 500. }
+        reason: { type: string, enum: [explicit_fail, max_attempts_exceeded, timeout, stalled], description: Only entries that failed for this reason. }
+    RetryDlqResult:
+      type: object
+      required: [ok, count, remaining, done]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        count: { type: integer, minimum: 0, description: Jobs put back in the queue by this call. }
+        remaining: { type: integer, minimum: 0, description: Entries a repeat call would still retry. }
+        done: { type: boolean, description: True when `remaining` is 0. }
     CleanBody:
       type: object
       additionalProperties: false
@@ -3572,6 +4004,59 @@ components:
         stallInterval: { type: integer, description: The lease length in ms. }
         maxStalls: { type: integer, minimum: 0, description: A job that stalls more often than this fails. }
         gracePeriod: { type: integer, enum: [0] }
+    QueuePolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        attempts: { type: integer, minimum: 1 }
+        backoff:
+          description: 'A fixed delay in milliseconds, or an object. Stored as an object.'
+          oneOf:
+            - { type: integer, minimum: 0 }
+            - type: object
+              additionalProperties: false
+              required: [type, delay]
+              properties:
+                type: { type: string, enum: [fixed, exponential] }
+                delay: { type: integer, minimum: 0 }
+                maxDelay: { type: integer, minimum: 0, maximum: 86400000 }
+        timeout: { type: integer, minimum: 1 }
+    QueuePolicyResponse:
+      type: object
+      required: [ok, policy]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        policy:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/QueuePolicy' }
+    QueueRunWindow:
+      type: object
+      additionalProperties: false
+      required: [cron, durationMs]
+      properties:
+        cron: { type: string, maxLength: 256, description: 'Five or six fields, or a shortcut such as `@daily`. When it fires, the window opens.' }
+        durationMs: { type: integer, minimum: 60000, maximum: 604800000, description: How long the window stays open, in milliseconds. }
+        timezone: { type: string, minLength: 1, maxLength: 256, default: UTC, description: An IANA zone name. }
+    QueueRunWindowState:
+      allOf:
+        - { $ref: '#/components/schemas/QueueRunWindow' }
+        - type: object
+          required: [timezone, open, opensAt, closesAt]
+          properties:
+            timezone: { type: string }
+            open: { type: boolean, description: Whether now is inside the window. }
+            opensAt: { type: integer, description: Epoch milliseconds the interval opens. }
+            closesAt: { type: integer, description: Epoch milliseconds the interval closes. }
+    QueueRunWindowResponse:
+      type: object
+      required: [ok, runWindow]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        runWindow:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/QueueRunWindowState' }
     StallConfigResponse:
       type: object
       required: [ok, config]
@@ -3757,7 +4242,7 @@ components:
         removed: { type: boolean }
     Webhook:
       type: object
-      required: [id, destination, url, urlRedacted, target, destinationId, events, queue, filter, shape, name, description, delayMs, dedupe, signed, enabled, createdAt, lastTriggered, successCount, failureCount, consecutiveFailures, alertLevel, disabledReason, disabledAt, pausedBy, previousSecretUntil]
+      required: [id, destination, url, urlRedacted, target, destinationId, source, filter, shape, name, description, delayMs, dedupe, schedule, nextSendAt, batch, signed, enabled, createdAt, lastTriggered, successCount, failureCount, consecutiveFailures, alertLevel, disabledReason, disabledAt, pausedBy, previousSecretUntil]
       properties:
         id: { type: string }
         destination: { type: string, enum: [http, queue], description: '`http` POSTs each delivery to `url`; `queue` adds a job to `target`.' }
@@ -3765,14 +4250,16 @@ components:
         urlRedacted: { type: boolean }
         target: { type: string, nullable: true, description: 'The queue a `queue` route adds jobs to (shown in full to a `viewer`); null for `http`.' }
         destinationId: { type: string, nullable: true, description: 'The saved destination the address was copied from; null when it was given directly. A change to the destination reaches this webhook.' }
-        events: { type: array, items: { $ref: '#/components/schemas/WebhookEvent' } }
-        queue: { type: string, nullable: true, description: 'Only events of this queue are sent; null for every queue.' }
-        filter: { type: object, nullable: true, additionalProperties: true, description: 'Only events it lets through are sent (`docs/webhooks.md`); null sends every event of `events`.' }
-        shape: { type: object, nullable: true, additionalProperties: true, description: 'The body template; null sends the default body.' }
+        source: { type: string, nullable: true, description: 'The inbound source (`/sources`) whose requests the route delivers. Null only for a route left over from the removed job events, which is off.' }
+        filter: { type: object, nullable: true, additionalProperties: true, description: 'Only requests it lets through are sent (`docs/webhooks.md`); null sends every request.' }
+        shape: { type: object, nullable: true, additionalProperties: true, description: 'The body template; null sends the request as it came, with its content type.' }
         name: { type: string, nullable: true, description: 'What the operator calls it; null when unnamed.' }
         description: { type: string, nullable: true }
-        delayMs: { type: integer, nullable: true, description: 'Each delivery is due this long after its event; null sends at once.' }
+        delayMs: { type: integer, nullable: true, description: 'Each delivery is due this long after its request; null sends at once.' }
         dedupe: { $ref: '#/components/schemas/WebhookDedupe', nullable: true }
+        schedule: { $ref: '#/components/schemas/WebhookSchedule', nullable: true }
+        nextSendAt: { type: integer, nullable: true, description: 'When the schedule next fires (epoch ms); null without a schedule.' }
+        batch: { $ref: '#/components/schemas/WebhookBatch', nullable: true }
         signed: { type: boolean, description: 'Whether deliveries carry a signature. The secret itself is never returned.' }
         enabled: { type: boolean }
         createdAt: { type: integer }
@@ -3836,68 +4323,233 @@ components:
           required: [destinations]
           properties:
             destinations: { type: array, items: { $ref: '#/components/schemas/Destination' } }
-    WebhookEvent:
-      type: string
-      enum: [job.pushed, job.started, job.completed, job.failed, job.progress]
+    Source:
+      type: object
+      required: [id, name, enabled, verification, signed, previousSecretUntil, rejectedDropped, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        enabled: { type: boolean, description: 'A source that is off answers its URL with a 404.' }
+        verification:
+          type: object
+          required: [kind, header, username]
+          properties:
+            kind: { type: string, enum: [none, hmac, basic, api_key] }
+            header: { type: string, nullable: true, description: '`hmac`: the header that carries the signature. `api_key`: the header that carries the key.' }
+            username: { type: string, nullable: true, description: '`basic`: the user name; the secret is the password.' }
+        signed: { type: boolean, description: 'Whether there is a secret. The secret itself is never returned.' }
+        previousSecretUntil: { type: integer, nullable: true, description: 'While a rotated-out secret still verifies beside the new one: when it stops.' }
+        rejectedDropped: { type: integer, description: 'Rejected requests counted and not stored, for being over the per-minute cap.' }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+    SourceCreate:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 80, description: 'Unique in the namespace; not blank.' }
+        verification:
+          type: object
+          required: [kind]
+          additionalProperties: false
+          description: 'Default `none`.'
+          properties:
+            kind: { type: string, enum: [none, hmac, basic, api_key] }
+            header: { type: string, nullable: true, maxLength: 64, description: 'Required for `hmac` and `api_key`.' }
+            username: { type: string, nullable: true, maxLength: 128, description: 'Required for `basic`.' }
+        secret: { type: string, nullable: true, minLength: 16, maxLength: 256, description: 'Write-only. Omit to have one generated; refused for `none`.' }
+        enabled: { type: boolean, default: true }
+    SourcePatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 80 }
+        enabled: { type: boolean }
+    SourceEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [source]
+          properties:
+            source: { $ref: '#/components/schemas/Source' }
+    SourceIssuedEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [source]
+          properties:
+            source: { $ref: '#/components/schemas/Source' }
+            token: { type: string, description: 'The URL token (the address is `/s/<token>` on the ingest): present when the call made one (create, rotate-token), and shown only in this response.' }
+            secret: { type: string, description: 'The secret the store generated: present only when none was given, and shown only in this response.' }
+    SourcesList:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [sources]
+          properties:
+            sources: { type: array, items: { $ref: '#/components/schemas/Source' } }
+    InboundRequest:
+      type: object
+      required: [id, sourceId, receivedAt, method, contentType, status, cause, bodyBytes]
+      properties:
+        id: { type: string }
+        sourceId: { type: string }
+        receivedAt: { type: integer }
+        method: { type: string, enum: [POST, PUT, PATCH, DELETE] }
+        contentType: { type: string, nullable: true }
+        status: { type: string, enum: [accepted, rejected] }
+        cause: { type: string, nullable: true, description: 'Why a rejected request was refused; null for an accepted one. A fixed sentence, never what was sent.' }
+        bodyBytes: { type: integer, nullable: true, description: 'The stored body''s size; null for a rejected request, which keeps none.' }
+    InboundRequestDetail:
+      type: object
+      required: [id, sourceId, receivedAt, method, contentType, status, cause, bodyBytes, headers, query, body, bodyRedacted, deliveries]
+      properties:
+        id: { type: string }
+        sourceId: { type: string }
+        receivedAt: { type: integer }
+        method: { type: string, enum: [POST, PUT, PATCH, DELETE] }
+        contentType: { type: string, nullable: true }
+        status: { type: string, enum: [accepted, rejected] }
+        cause: { type: string, nullable: true, description: 'Why a rejected request was refused; null for an accepted one.' }
+        bodyBytes: { type: integer, nullable: true, description: 'The stored body''s size; null for a rejected request, which keeps none.' }
+        headers: { type: object, additionalProperties: { type: string }, description: 'At most 64 pairs of 2,048 characters. Credential headers are `[redacted]`.' }
+        query: { type: object, additionalProperties: { type: string } }
+        body:
+          type: object
+          nullable: true
+          description: 'Null for a rejected request, and for a `viewer` (`bodyRedacted`).'
+          required: [encoding, data, bytes]
+          properties:
+            encoding: { type: string, enum: [utf8, base64], description: '`base64` when the bytes are not text.' }
+            data: { type: string }
+            bytes: { type: integer }
+        bodyRedacted: { type: boolean, description: 'True when the request has a body this caller is not shown.' }
+        deliveries:
+          type: array
+          description: 'Newest first, at most 200.'
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/WebhookDelivery' }
+              - type: object
+                required: [via]
+                properties:
+                  via: { type: string, enum: [http, queue], description: 'The route''s destination.' }
+    RequestsList:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [requests, next]
+          properties:
+            requests: { type: array, items: { $ref: '#/components/schemas/InboundRequest' } }
+            next: { type: string, nullable: true, description: 'The `before` of the next page; null at the end.' }
+    RequestEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [request]
+          properties:
+            request: { $ref: '#/components/schemas/InboundRequestDetail' }
+    ReplayEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [routes, deliveries]
+          properties:
+            routes: { type: integer, description: 'Routes the source has now.' }
+            deliveries: { type: integer, description: 'Deliveries made; a filter drops some.' }
     WebhookCreate:
       type: object
-      required: [events]
       additionalProperties: false
       properties:
         destination: { type: string, enum: [http, queue], default: http }
         url: { type: string, maxLength: 2048, description: 'Required for an `http` route; refused for a `queue` route.' }
-        target: { type: string, nullable: true, maxLength: 256, description: 'Required for a `queue` route (with `queue`, the source): the queue a job is added to.' }
+        target: { type: string, nullable: true, maxLength: 256, description: 'Required for a `queue` route: the queue a job is added to.' }
         destinationId: { type: string, nullable: true, maxLength: 256, description: 'Takes the kind and address from a saved destination (`/webhooks/destinations`), so `destination`, `url` and `target` are not given with it (400 `unsupported_option` for `destinationId`, also for an unknown id).' }
-        events: { type: array, minItems: 1, maxItems: 5, items: { $ref: '#/components/schemas/WebhookEvent' } }
-        queue: { type: string, nullable: true, maxLength: 256 }
+        source: { type: string, maxLength: 256, description: 'Required: the inbound source whose requests the route delivers (`/sources`). 400 `unsupported_option` for `source` when it is missing or unknown.' }
         secret: { type: string, nullable: true, minLength: 16, maxLength: 256, description: 'Signs each delivery. Write-only.' }
         enabled: { type: boolean, default: true }
-        filter: { type: object, nullable: true, additionalProperties: true, description: 'Which events are sent; the grammar is in `docs/webhooks.md`. Needs the delivery writer on.' }
-        shape: { type: object, nullable: true, additionalProperties: true, description: 'The body template; the grammar is in `docs/webhooks.md`. Needs the delivery writer on.' }
+        filter: { type: object, nullable: true, additionalProperties: true, description: 'Which requests are sent; the grammar is in `docs/webhooks.md`.' }
+        shape: { type: object, nullable: true, additionalProperties: true, description: 'The body template; the grammar is in `docs/webhooks.md`.' }
         name: { type: string, nullable: true, maxLength: 80, description: 'Blank or null: none.' }
         description: { type: string, nullable: true, maxLength: 500 }
-        delayMs: { type: integer, nullable: true, minimum: 1000, maximum: 3600000, description: 'Needs the delivery writer on.' }
+        delayMs: { type: integer, nullable: true, minimum: 1000, maximum: 3600000 }
         dedupe: { $ref: '#/components/schemas/WebhookDedupe', nullable: true }
+        schedule: { $ref: '#/components/schemas/WebhookSchedule', nullable: true }
+        batch: { $ref: '#/components/schemas/WebhookBatch', nullable: true }
     WebhookDedupe:
       type: object
       required: [windowMs, fields]
       additionalProperties: false
-      description: 'Drops an event whose chosen fields repeat inside the window; the first one goes. Needs the delivery writer on.'
+      description: 'Drops a request whose chosen fields repeat inside the window; the first one goes.'
       properties:
         windowMs: { type: integer, minimum: 1000, maximum: 86400000 }
-        fields: { type: array, minItems: 1, items: { type: string, enum: [event, queue, jobId, state, error] } }
+        fields: { type: array, minItems: 1, items: { type: string, maxLength: 64 }, description: 'Document paths (`docs/webhooks.md`), for example `body.id` or `headers.x-event`.' }
+    WebhookSchedule:
+      type: object
+      required: [cron, timezone]
+      additionalProperties: false
+      description: 'Holds the route''s deliveries until the cron next fires, then sends them. A delivery is due at the first fire at or after its request plus `delayMs`. The expression must fire, with at most 31 days between two fires (400 `unsupported_option` for `schedule` otherwise). Either destination.'
+      properties:
+        cron: { type: string, maxLength: 200, description: 'Five or six fields, or a shortcut such as `@daily`. `0 0 * * *` is every midnight.' }
+        timezone: { type: string, maxLength: 64, default: UTC, description: 'An IANA zone name such as `Europe/London`; the fire time follows its daylight saving. Optional on a request, always present in a response.' }
+    WebhookBatch:
+      type: object
+      required: [maxEvents, maxBytes]
+      additionalProperties: false
+      description: 'Sends the route''s due deliveries as one signed request, `{ batchId, count, events: [{ id, receivedAt, body }] }` with `X-Webhook-Event: webhook.batch`. `http` routes only (400 `unsupported_option` for `batch` on a `queue` route). A batch counts as one request toward the route''s rate limit.'
+      properties:
+        maxEvents: { type: integer, minimum: 1, maximum: 500, default: 100, description: 'Most events in one request.' }
+        maxBytes: { type: integer, minimum: 1024, maximum: 1048576, default: 262144, description: 'Stop adding events once their bodies reach this many bytes; the first event always goes. Optional on a request, always present in a response.' }
     WebhookPatch:
       type: object
       minProperties: 1
       additionalProperties: false
-      description: 'The keys present are set; `null` clears all but `events`.'
+      description: 'The keys present are set; `null` clears all but `source`.'
       properties:
         name: { type: string, nullable: true, maxLength: 80 }
         description: { type: string, nullable: true, maxLength: 500 }
-        events: { type: array, minItems: 1, maxItems: 5, items: { $ref: '#/components/schemas/WebhookEvent' } }
-        filter: { type: object, nullable: true, additionalProperties: true, description: 'Needs the delivery writer on.' }
-        shape: { type: object, nullable: true, additionalProperties: true, description: 'Needs the delivery writer on.' }
-        delayMs: { type: integer, nullable: true, minimum: 1000, maximum: 3600000, description: 'Needs the delivery writer on.' }
+        source: { type: string, maxLength: 256, description: 'Moves the route to another source.' }
+        filter: { type: object, nullable: true, additionalProperties: true }
+        shape: { type: object, nullable: true, additionalProperties: true }
+        delayMs: { type: integer, nullable: true, minimum: 1000, maximum: 3600000 }
         dedupe: { $ref: '#/components/schemas/WebhookDedupe', nullable: true }
+        schedule: { $ref: '#/components/schemas/WebhookSchedule', nullable: true }
+        batch: { $ref: '#/components/schemas/WebhookBatch', nullable: true }
     WebhookPreviewRequest:
       type: object
-      required: [event]
+      required: [request]
       additionalProperties: false
       properties:
         filter: { type: object, nullable: true, additionalProperties: true }
         shape: { type: object, nullable: true, additionalProperties: true }
-        event:
+        request:
           type: object
-          required: [event, queue, jobId]
           additionalProperties: false
+          description: 'What a rule reads (`docs/webhooks.md`). Leave `body` out for a request that was not JSON.'
           properties:
-            event: { $ref: '#/components/schemas/WebhookEvent' }
-            queue: { type: string, minLength: 1, maxLength: 256 }
-            jobId: { type: string, minLength: 1, maxLength: 256 }
-            occurredAt: { type: integer, minimum: 0, description: 'Epoch milliseconds; the time of the call when omitted.' }
-            state: { type: string, nullable: true, maxLength: 64 }
-            error: { type: string, nullable: true, maxLength: 4096 }
-            progress: { type: number, nullable: true }
+            method: { type: string, minLength: 1, maxLength: 16, description: 'POST when omitted.' }
+            headers: { type: object, additionalProperties: { type: string }, description: 'Lower-case names.' }
+            query: { type: object, additionalProperties: { type: string } }
+            body: { description: 'The parsed JSON body.' }
     WebhookPreviewEnvelope:
       type: object
       required: [ok, data]
@@ -3911,8 +4563,8 @@ components:
               type: object
               required: [matches, body, error]
               properties:
-                matches: { type: boolean, description: 'Whether the filter lets the event through.' }
-                body: { type: string, nullable: true, description: 'The bytes that would be sent (without the default body''s `id`); null when the filter excludes the event or the shaped body is too large.' }
+                matches: { type: boolean, description: 'Whether the filter lets the request through.' }
+                body: { type: string, nullable: true, description: 'The bytes that would be sent (without the default body''s `id`); null when the filter excludes the request or the shaped body is too large.' }
                 error: { type: string, nullable: true, description: 'Why there is no body, when the filter let the event through.' }
     WebhookEnvelope:
       type: object
@@ -3961,15 +4613,15 @@ components:
         durationMs: { type: integer }
         statusCode: { type: integer, nullable: true, description: 'The receiver''s status; null when none came back.' }
         error: { type: string, nullable: true, description: 'A short reason in words; never an address.' }
+        batchId: { type: string, description: 'Set when the attempt went out in a batch (`X-Webhook-Id` of that request); absent when it was sent alone.' }
     WebhookDelivery:
       type: object
-      required: [id, webhookId, event, queue, jobId, routedJobId, occurredAt, status, attempts, nextAttemptAt, lastStatusCode, lastError, history, createdAt, finishedAt]
+      required: [id, webhookId, event, requestId, routedJobId, occurredAt, status, attempts, nextAttemptAt, lastStatusCode, lastError, history, createdAt, finishedAt, batchId]
       properties:
         id: { type: string, description: 'Also the `X-Webhook-Id` header: a receiver dedupes on it.' }
         webhookId: { type: string }
-        event: { type: string, description: 'A `WebhookEvent`, or `webhook.test`.' }
-        queue: { type: string }
-        jobId: { type: string, description: 'The job whose event this delivers.' }
+        event: { type: string, description: '`request.received`, or `webhook.test`.' }
+        requestId: { type: string, nullable: true, description: 'The inbound request this delivers (`/requests/{id}`); null for a test delivery.' }
         routedJobId: { type: string, nullable: true, description: 'The job a delivered `queue` route added to its target queue; null for an `http` route and until delivered.' }
         occurredAt: { type: integer }
         status: { type: string, enum: [pending, sending, delivered, failed] }
@@ -3980,6 +4632,7 @@ components:
         history: { type: array, items: { $ref: '#/components/schemas/WebhookAttempt' } }
         createdAt: { type: integer }
         finishedAt: { type: integer, nullable: true }
+        batchId: { type: string, nullable: true, description: 'The batch the latest attempt went out in (a request carrying many deliveries; the `X-Webhook-Id` of that request); null when it was sent alone.' }
     DeliveryEnvelope:
       type: object
       required: [ok, data]
@@ -4244,7 +4897,7 @@ components:
         source: { type: string, description: 'For example `cloud-monitoring`, `postgres-counts`, `memory`, `unavailable`.' }
     DoorbellHealthRow:
       type: object
-      required: [queue, claimable, notRung, reRingDue, oldestNotRungAgeMs, paused, capped]
+      required: [queue, claimable, notRung, reRingDue, oldestNotRungAgeMs, paused, windowClosed, capped]
       properties:
         queue: { type: string }
         claimable: { type: integer, description: 'Jobs a worker could claim now, counted up to a cap.' }
@@ -4252,6 +4905,7 @@ components:
         reRingDue: { type: integer, description: 'Claimable jobs whose last bell is old enough that the tick rings them again. Large and normal while a queue has more jobs than workers.' }
         oldestNotRungAgeMs: { type: integer, nullable: true }
         paused: { type: boolean }
+        windowClosed: { type: boolean, description: 'The queue is outside its run window: its jobs are held on purpose and the tick does not ring them until it opens.' }
         capped: { type: boolean, description: 'A count stopped at its cap: read it as "this many or more".' }
     TransportQueueStats:
       type: object
@@ -4307,11 +4961,48 @@ components:
         reason: { type: string, nullable: true, enum: [not_supported, unreachable, null] }
         items: { type: array, items: { $ref: '#/components/schemas/DeadLetterItem' } }
         timestamp: { type: integer }
+    BackupPolicy:
+      type: object
+      required: [mechanism, tool, location, updatedBy, updatedAt]
+      properties:
+        mechanism: { type: string, enum: [provider, external, none] }
+        tool: { type: string, nullable: true, description: 'Set for `external` only.' }
+        location: { type: string, nullable: true, description: 'Where the copies land. `external` only, optional.' }
+        updatedBy: { type: string, description: 'The principal that last declared it.' }
+        updatedAt: { type: integer }
+    BackupPolicyInput:
+      type: object
+      required: [mechanism]
+      additionalProperties: false
+      properties:
+        mechanism: { type: string, enum: [provider, external, none] }
+        tool: { type: string, nullable: true, maxLength: 200, description: 'Required for `external` (not blank), refused otherwise.' }
+        location: { type: string, nullable: true, maxLength: 500, description: 'Optional for `external`, refused otherwise.' }
+    BackupPolicyEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [policy]
+          properties:
+            policy: { $ref: '#/components/schemas/BackupPolicy', nullable: true }
+    BackupPolicySetEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [policy]
+          properties:
+            policy: { $ref: '#/components/schemas/BackupPolicy' }
     DeploymentWarning:
       type: object
       required: [code, severity, message]
       properties:
-        code: { type: string, description: 'Stable: for example `tick_stale`, `tick_late`, `schema_ahead`, `doorbells_overdue`, `dev_token_enabled`.' }
+        code: { type: string, description: 'Stable: for example `tick_stale`, `tick_late`, `schema_ahead`, `doorbells_overdue`, `dev_token_enabled`, `backup_undeclared`, `backup_none`.' }
         severity: { type: string, enum: [warning, critical] }
         message: { type: string }
     DeploymentResponse:

@@ -19,7 +19,6 @@ interface Gate {
 const GATES: readonly Gate[] = [
   { paths: ['/server'], hidden: 'serverControl', name: 'Server control' },
   { paths: ['/database'], hidden: 'sqliteDatabase', name: 'The SQLite database browser' },
-  { paths: ['/s3'], hidden: 's3Backup', name: 'S3 backup' },
   { paths: ['/fleet'], hidden: 'fleet', name: 'Fleet' },
   { paths: ['/flows'], feature: 'flows', name: 'Job flows' },
   { paths: ['/workflows'], feature: 'workflows', name: 'Workflows' },

@@ -11,6 +11,7 @@ export const GUARDED_ROOTS = [
   'packages/store-postgres/src',
   'packages/maintenance/src',
   'packages/control-api/src',
+  'packages/ingest/src',
 ] as const;
 
 export interface Violation {

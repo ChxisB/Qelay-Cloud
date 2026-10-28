@@ -39,6 +39,7 @@ None of these thresholds has met a real cloud.
 | Control API, a 5xx | `request failed` with `requestId`, `route`, `code` and the failure's class and message |
 | Tick, `run` | the run's report as one JSON line on stdout: counts only, and `ok` |
 | Tick, an error | `{"level":"error","step":…,"error":…}` on stderr, with every credential of the environment removed |
+| Ingest | `{"level":"info","msg":"listening"|"draining"}` at start and stop; `{"level":"error","msg":"lookup failed"|"accept failed"|"reject failed","error":<the error's name>}` at most once in ten seconds; `failed` with a redacted error when the process stops. **No line per request**: a request's path holds its token, so the ingest logs none. The platform does: Cloud Run's request log and a load balancer's access log hold the full path, and so the token ([known issues](known-issues.md), row 12). Read access to those logs is read access to the sources |
 | SDK | whatever your `logger.warn(message, context)` receives: ids, queue names, counts, attempts, error text |
 
 Rules the code keeps, and a test enforces (`test/observability/logs.test.ts`, which scans every log call and sends a canary
@@ -95,7 +96,7 @@ Metrics reach you only through a sink you pass. `Queue` and `Worker` take `metri
 | `qcloud.tick.ok` | gauge, 0 or 1 | The last pass finished its work (every bell rung and recorded, store reachable) |
 | `qcloud.tick.recovered`, `promoted`, `cron_fired`, `expired` | gauge | What the last pass did |
 | `qcloud.tick.rings.due`, `.rung`, `.deferred`, `.rejected`, `.unreachable`, `.unmarked`, `.skipped` | gauge | The ring step of the last pass |
-| `qcloud.tick.webhooks.*`, `qcloud.tick.workflows.*` | gauge | The webhook sender and the workflow sweep. `webhooks.written` is the delivery rows the writer made in a pass; `webhooks.writer_gaps` is 1 when retention pruned events the writer had not read; `webhooks.paused` is the webhooks a pass paused after repeated failed deliveries |
+| `qcloud.tick.webhooks.*`, `qcloud.tick.workflows.*` | gauge | The webhook sender and the workflow sweep. `webhooks.paused` is the webhooks a pass paused after repeated failed deliveries |
 | `qcloud.tick.more_work` | gauge, 0 or 1 | A step hit its batch size: another pass would find more |
 | `qcloud.tick.jobs.completed_total`, `qcloud.tick.jobs.failed_total` | gauge | Lifetime counts; a rising `failed_total` is the dead-letter queue growing |
 
@@ -126,6 +127,9 @@ Be exact about the gaps:
   gives a name differs by exporter; the Terraform takes the name you give it, and nothing here has checked a real one.
 - **No exporter has been run.** The adapters are tested against the OpenTelemetry API and its in-memory SDK. OTLP export to a
   collector was never exercised.
+- **The ingest exports no metrics and has no alert.** Its answers are counted by the load balancer (5xx for a database that is
+  down, 429 for the rate limits) and its stored requests by the panel's Requests tab and `GET /requests`. A 5xx alert on the
+  ingest's route is the one to add; it was not built.
 - **No dashboard** is shipped. The alerts are the contract; the panel and `GET /deployment` are the picture.
 - **No alert has fired on a real cloud.** The thresholds are defaults, unproven against real load. Two depend on cloud behaviour
   not yet seen: a Cloud Run service at zero instances (the idle-workers alert) and a log-based signal that is absent for a day

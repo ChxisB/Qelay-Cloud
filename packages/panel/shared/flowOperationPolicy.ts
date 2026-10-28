@@ -10,9 +10,10 @@
  * inspect reverse dependencies or make either transition conditional on the state
  * that the dashboard read. Discard also bypasses terminal flow-failure resolution
  * and accepts a job that became active after the snapshot, which can strand its
- * parent while the worker continues external side effects. DLQ retry is also
- * unavailable: a read followed by retry is subject to id-reuse TOCTOU, and the
- * endpoint has no atomic generation/topology precondition. Completed requeue is
+ * parent while the worker continues external side effects. `retryDlq` stays off
+ * here because a failed job is retried from the Dead letter queue page, not from
+ * the job's action rail: that call carries the version the page read and the
+ * server refuses a stale one, a flow member and a duplicate. Completed requeue is
  * unavailable because Qelay does not rebuild a child's dependency registration.
  *
  * Active state transitions are deliberately absent. Qelay removes

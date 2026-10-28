@@ -3,13 +3,7 @@ import { describeDb } from '../../../test/support/db';
 import { resetTables } from '../../store-postgres/test/finishHelpers';
 import type { TestStore } from '../../store-postgres/test/storeHelpers';
 import { openTestStore } from '../../store-postgres/test/storeHelpers';
-import {
-  addHook,
-  event,
-  journal,
-  KEY,
-  rawDeliveries,
-} from '../../store-postgres/test/webhookHelpers';
+import { addHook, KEY, rawDeliveries, sendAll } from '../../store-postgres/test/webhookHelpers';
 import { noTelemetry } from '../src/telemetry';
 import { resolveWebhookConfig } from '../src/webhookConfig';
 import { pooledSending, runWebhookLoop } from '../src/webhookLoop';
@@ -35,9 +29,9 @@ describeDb('webhook sender process: the loop on a real store and real sockets', 
       for (const name of ['a', 'b', 'c']) {
         await addHook(t, { url: `http://127.0.0.1:${receiver.port}/${name}` });
       }
-      await journal(
+      await sendAll(
         t,
-        Array.from({ length: 20 }, (_, n) => event('pushed', 'q', `j${n}`))
+        Array.from({ length: 20 }, (_, n) => ({ n }))
       );
       const config = resolveWebhookConfig(
         { concurrency: 8, perDestination: 4, ratePerMinute: 100_000, idleMs: 20 },

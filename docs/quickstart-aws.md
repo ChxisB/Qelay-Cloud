@@ -159,5 +159,6 @@ terraform -chdir=infra/aws/control-plane destroy -var-file=my.tfvars
 ## Where to go next
 
 - [Operations](operations.md): connection budget, the tick, upgrades, rolling back.
+- [Production settings](production.md): the tick, retries, run windows, batches and retention to start with.
 - [AWS deployment runbook](runbooks/deploy-aws.md): what differs from GCP, rotating the database secret, rolling back.
 - [Quickstart: GCP](quickstart-gcp.md): the same thing on Pub/Sub.

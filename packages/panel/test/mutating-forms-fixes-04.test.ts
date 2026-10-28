@@ -99,26 +99,25 @@ describe('Webhooks', () => {
   test('the registered URL is the validated (trimmed) string', () => {
     const r = buildWebhookBody(
       '  https://example.com/hook \n',
-      ['job.failed'],
-      ' q ',
+      ' src_1 ',
       ' a-secret-of-16-chars '
     );
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.body.url).toBe('https://example.com/hook');
-      expect(r.body.queue).toBe('q');
+      expect(r.body.source).toBe('src_1');
       expect(r.body.secret).toBe('a-secret-of-16-chars');
     }
   });
 
-  test('a non-http URL or no event is refused', () => {
-    expect(buildWebhookBody('example.com/hook', ['job.failed'], '', '').ok).toBe(false);
-    expect(buildWebhookBody('ftp://example.com', ['job.failed'], '', '').ok).toBe(false);
-    expect(buildWebhookBody('https://example.com', [], '', '').ok).toBe(false);
-    expect(buildWebhookBody('https://user:password@example.com', ['job.failed'], '', '').ok).toBe(
-      false
-    );
-    expect(buildWebhookBody('https://example.com', ['job.failed'], 'bad queue', '').ok).toBe(false);
+  test('a non-http URL, no source or a bad target queue is refused', () => {
+    expect(buildWebhookBody('example.com/hook', 'src_1', '').ok).toBe(false);
+    expect(buildWebhookBody('ftp://example.com', 'src_1', '').ok).toBe(false);
+    expect(buildWebhookBody('https://example.com', '  ', '').ok).toBe(false);
+    expect(buildWebhookBody('https://user:password@example.com', 'src_1', '').ok).toBe(false);
+    expect(
+      buildWebhookBody('', 'src_1', '', { destination: 'queue', target: 'bad queue' }).ok
+    ).toBe(false);
     expect(displayWebhookUrl('https://user:password@example.com/hook')).not.toContain('password');
   });
 });

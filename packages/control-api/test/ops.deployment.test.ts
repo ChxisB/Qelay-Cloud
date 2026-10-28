@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { budget, LATEST_VERSION } from '@qelay-cloud/store-postgres';
 import { describeDb } from '../../../test/support/db';
 import { enqueueN } from '../../store-postgres/test/storeHelpers';
+import type { Wire } from './deploymentHarness';
 import { deploymentHarness } from './deploymentHarness';
 import type { JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
@@ -15,6 +16,8 @@ describeDb('GET /deployment', () => {
   afterAll(() => f.drop());
   beforeEach(() => f.reset());
   const { open, deployment, codes, tickedAgo } = deploymentHarness(() => f);
+  const only = (body: Wire, code: string) =>
+    body.warnings.filter((warning: Wire) => warning.code === code);
 
   test('reports the build, the schema against what the code expects, and the database', async () => {
     const body = await deployment(
@@ -215,12 +218,67 @@ describeDb('GET /deployment', () => {
       );
     });
 
+    test('jobs held by a pause or a closed run window are not an overdue doorbell', async () => {
+      await enqueueN(f.store, 2, {}, 'a');
+      await enqueueN(f.store, 3, {}, 'paused');
+      await enqueueN(f.store, 4, {}, 'closed');
+      await f.store.pause('paused');
+      // The test clock reads 08:00 UTC, so a window that opened at 03:00 for an hour has closed.
+      const hour = { cron: '0 3 * * *', durationMs: 3_600_000, timezone: 'UTC' };
+      await f.store.queues.setRunWindow('closed', hour);
+      f.t.clock.advance(70_000);
+      const body = await deployment(open({}, { readiness: tickedAgo(1_000) }));
+      expect(body.doorbells).toMatchObject({ notRung: 2, queuesScanned: 3 });
+      expect(body.doorbells.oldestNotRungAgeMs).toBe(70_000);
+    });
+
     test('says when it looked at some queues and not all of them', async () => {
       for (const queue of ['a', 'b', 'c']) await enqueueN(f.store, 1, {}, queue);
       const body = await deployment(
         open({ deployment: { maxQueues: 2 } }, { readiness: tickedAgo(1_000) })
       );
       expect(body.doorbells).toMatchObject({ queuesScanned: 2, partial: true });
+    });
+  });
+
+  describe('timing', () => {
+    const route = async (spec: Record<string, unknown>) => {
+      const source =
+        (await f.store.sources.list())[0] ?? (await f.store.sources.create({ name: 's' }, 't'));
+      await f.store.webhooks.create(
+        { url: 'https://hooks.example.com/in', source: source.id, ...spec },
+        't'
+      );
+    };
+    const nightly = { cron: '0 0 * * *', timezone: 'UTC' };
+    const hour = { cron: '0 3 * * *', durationMs: 3_600_000, timezone: 'UTC' };
+
+    test('a scheduled route and a closed window with no tick are named, and a running tick clears them', async () => {
+      await route({ schedule: nightly });
+      await enqueueN(f.store, 2, {}, 'closed');
+      // The test clock reads 08:00 UTC, so a window that opened at 03:00 for an hour has closed.
+      await f.store.queues.setRunWindow('closed', hour);
+      const stopped = await deployment(open({}, { readiness: tickedAgo(null) }));
+      expect(codes(stopped)).toEqual(
+        expect.arrayContaining(['schedule_without_sender', 'window_without_tick'])
+      );
+      const running = await deployment(open({}, { readiness: tickedAgo(1_000) }));
+      expect(codes(running)).not.toContain('schedule_without_sender');
+      expect(codes(running)).not.toContain('window_without_tick');
+    });
+
+    test('a short delay is named only once the tick period is declared, and a disabled route is not counted', async () => {
+      await route({ delayMs: 5_000 });
+      await route({ delayMs: 5_000, enabled: false });
+      await route({ delayMs: 90_000 });
+      const declared = await deployment(
+        open({ deployment: { tickIntervalMs: 60_000 } }, { readiness: tickedAgo(1_000) })
+      );
+      expect(only(declared, 'delay_finer_than_tick')).toEqual([
+        expect.objectContaining({ message: expect.stringContaining('1 route(s)') }),
+      ]);
+      const silent = await deployment(open({}, { readiness: tickedAgo(1_000) }));
+      expect(codes(silent)).not.toContain('delay_finer_than_tick');
     });
   });
 });

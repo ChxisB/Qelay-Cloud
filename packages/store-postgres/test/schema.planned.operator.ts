@@ -55,6 +55,17 @@ export const PLANNED_OPERATOR: readonly Planned[] = [
     avoid: ['qcloud_jobs_state_idx'],
   },
   {
+    // The selection of `retryDlqMany` (and the shape of the purge and the listing of the DLQ): the failed rows of one queue
+    // come from the state index and are sorted by failure time, a cost that follows the size of the DLQ, which an operator
+    // call reads whole anyway. The unfiltered plan is the one tested; `reason` and the flow and dedup checks only narrow it.
+    query: 'dlq retry: the oldest failed jobs of a queue, locking what it takes',
+    sql: `SELECT job.id FROM qcloud_jobs AS job
+          WHERE job.namespace = 'ns' AND job.queue = 'q' AND job.state = 'failed'
+          ORDER BY job.completed_at ASC NULLS FIRST, job.id ASC LIMIT 500
+          FOR UPDATE OF job SKIP LOCKED`,
+    index: 'qcloud_jobs_state_idx',
+  },
+  {
     query: 'job details: one job by id',
     sql: JOB_DETAILS,
     params: ['ns', 'j1'],

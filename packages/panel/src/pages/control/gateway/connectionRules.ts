@@ -1,4 +1,5 @@
 import type { WebhookFull } from '@/lib/bqTypes';
+import { cronLabel, inZone } from './sendRules';
 
 // The three numbers below are the deployment defaults of docs/webhooks.md (QCLOUD_WEBHOOK_MAX_ATTEMPTS and
 // _BASE_DELAY_MS, _RATE_PER_MINUTE, _DISABLE_AFTER). No read returns them, so a deployment that sets its own
@@ -35,6 +36,18 @@ export function spanWords(ms: number): string {
         : ['second', 1_000];
   const n = ms / size;
   return `${n} ${unit}${n === 1 ? '' : 's'}`;
+}
+
+function batchCard(route: WebhookFull): RuleCard {
+  const batch = route.batch;
+  return {
+    name: 'Batch',
+    editable: true,
+    on: batch !== null,
+    summary: batch
+      ? `Events due together go out as one request of up to ${batch.maxEvents} events or ${batch.maxBytes / 1_024} KiB, and are retried together.`
+      : 'Off: each event is sent in its own request.',
+  };
 }
 
 /** What an event goes through on its way out, in order: the connection's rules as cards. */
@@ -74,6 +87,19 @@ export function ruleCards(route: WebhookFull): RuleCard[] {
         ? `Each event waits ${spanWords(route.delayMs)} before it is sent.`
         : 'Off: an event is sent as soon as it happens.',
     },
+    {
+      name: 'Schedule',
+      editable: true,
+      on: route.schedule !== null,
+      summary: route.schedule
+        ? `${cronLabel(route.schedule.cron)}, in ${route.schedule.timezone}. ${
+            route.nextSendAt === null
+              ? 'It has no next send time.'
+              : `Next send ${inZone(route.nextSendAt, route.schedule.timezone)}.`
+          }`
+        : 'Off: an event is sent as soon as it is due.',
+    },
+    ...(route.destination === 'http' ? [batchCard(route)] : []),
     {
       name: 'Rate limit',
       editable: false,

@@ -1,7 +1,8 @@
 # Runbook: the tick has stopped
 
 **Alert.** GCP: "<name>: tick not running" (the scheduler job logged no attempt) or "<name>: tick calls failing". AWS: `<name>-tick-stalled`.
-Panel and `GET /deployment`: warning `tick_stale`, `tick_never_ran` or `tick_late`.
+Panel and `GET /deployment`: warning `tick_stale`, `tick_never_ran` or `tick_late`, and with it `schedule_without_sender` (a route
+holds events for its schedule) or `window_without_tick` (a queue is outside its run window and nothing opens it).
 
 **What is safe.** Nothing is lost: every job is a row in Postgres. Workers keep taking the bells that were already rung and
 `add` keeps ringing. What stops is the repair work: lost bells are not rung again, a crashed worker's jobs stay active until
@@ -45,7 +46,8 @@ retention does not run, webhooks are not sent. It is safe to run the tick by han
 
 ## Verify
 
-`GET /deployment` shows `tick.state` `ok` with a small `ageMs`, and the `doorbells_overdue` warning is gone. The alert closes
+`GET /deployment` shows `tick.state` `ok` with a small `ageMs`, and the `doorbells_overdue`, `schedule_without_sender` and `window_without_tick` warnings are gone. Events a scheduled route held
+are sent at its next fire, or at once if the fire has passed (they expire 24 hours after it). The alert closes
 by itself once a tick succeeds.
 
 ## Escalate

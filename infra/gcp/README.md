@@ -17,7 +17,7 @@ reserve for an explicit go-ahead (decision D9). What was and was not run is list
 | `example/` | A complete environment. Copy it, or call the modules from your own root. |
 | `example/ci.tfvars.example` | The values of a fictional project, used by `bun run check:terraform`. Not a real environment. |
 | `example/backend.tf.example` | A GCS backend with a partial configuration. |
-| `control-plane/` | The Control API, the panel and the migration job, a separate root that takes this one's `control_plane_inputs` output. Runbook: [docs/runbooks/deploy-gcp.md](../../docs/runbooks/deploy-gcp.md). |
+| `control-plane/` | The Control API, the panel, the optional inbound listener (`ingest`) and the migration job, a separate root that takes this one's `control_plane_inputs` output. Runbook: [docs/runbooks/deploy-gcp.md](../../docs/runbooks/deploy-gcp.md). |
 | `modules/network` | VPC, subnet, and the private services peering Cloud SQL needs. |
 | `modules/database` | Cloud SQL instance, database, user and generated password. |
 | `../modules/budget` | The connection budget (below), shared with `infra/aws`. Refuses a plan that cannot fit. |
@@ -101,7 +101,7 @@ organisation enables APIs elsewhere.
 | `tick_command` | null | Overrides the tick image's entrypoint (the Control API's image needs it; see Quick start). |
 | `worker_services` | `{ worker = { max_instances = 10 } }` | `min_instances` 1 (the pool's count at creation, and the autoscaler's floor), `max_instances` required (the budget counts it; only the autoscaler enforces it), `pool_size` 2, `listen_connections` 0, `cpu` 1, `memory` 512Mi, `env`, `autoscaling` null (`{ queue, backlog_per_instance = 10 }` adds the autoscaler). |
 | `autoscaler_image` | CREMA 1.3 | The image of the autoscaler service. **Pin a digest for anything that lives:** the service may update the pools (`run.developer`), so a tag that moves is a way to run code as the workers. |
-| `control_processes`, `control_pool_size` | 3, 2 | Other processes that hold a pool: the tick and each Control API instance at its `api_max_instances` (the control plane's plan refuses more). The panel holds no connection. |
+| `control_processes`, `control_pool_size` | 3, 2 | Other processes that hold a pool: the tick, each Control API instance at its `api_max_instances` and each ingest instance at its `ingest.max_instances` (the control plane's plan refuses more). The panel holds no connection. Deploying the ingest adds its instances: raise this by `ingest.max_instances`. |
 | `database_tier` | `db-custom-1-3840` | Machine tier. The database is the cost floor. |
 | `database_edition` | `ENTERPRISE` | `ENTERPRISE_PLUS` needs a `db-perf-optimization` tier and is what managed pooling runs on. |
 | `database_session_timeouts` | `{ statement_ms = 30000, lock_ms = 5000, idle_in_transaction_ms = 30000 }` | Server-wide `statement_timeout`, `lock_timeout` and `idle_in_transaction_session_timeout`, in milliseconds, 0 = off. The migrator lifts the statement timeout for its own transaction, so a slow index build is bounded only by its own deadline. Whether the cloud accepts all three flags was not run (`terraform plan` only). |
@@ -204,10 +204,12 @@ Things that are deliberately absent:
 - **The control plane's identities** are in `control-plane/`, not here: `<name>-api` (publish to the bells topic, pull from
   the dead-letter subscriptions only, read its two secrets, and read Pub/Sub metrics through one custom role holding the
   single permission `monitoring.timeSeries.list`, the only project-level grant anywhere), `<name>-migrate` (read the direct
-  URL and the CA) and `<name>-panel` (no grants). `allUsers` holds `run.invoker` on the API and the panel, by design: the
-  application checks the token, and `/health` is the only route without one.
+  URL and the CA), `<name>-panel` (no grants) and, when `ingest` is set, `<name>-ingest` (read the database secrets and the
+  webhook key; no Pub/Sub role, since it stores what it is sent and rings nothing). `allUsers` holds `run.invoker` on the API,
+  the panel and the ingest, by design: the application checks the token (the API) or the source's address and verification
+  (the ingest), and `/health` and the ingest's `/healthz` are the only routes without one.
 
-The webhook key is read by the tick account (the tick, the loop and the sender) and by the control plane's API account, and by no worker account: a job's code cannot read the key that seals webhook secrets. It is a Terraform `random_id`, so it is in the state, like the database password. Back the state up: a lost key leaves every stored webhook secret unreadable until each is rotated.
+The webhook key is read by the tick account (the tick, the loop and the sender), by the control plane's API account and by the ingest's account, and by no worker account: a job's code cannot read the key that seals webhook secrets. It is a Terraform `random_id`, so it is in the state, like the database password. Back the state up: a lost key leaves every stored webhook secret unreadable until each is rotated.
 
 The tick's URL is public, because Cloud Scheduler calls it from outside the VPC, but it accepts only an OIDC token
 issued for the scheduler service account: Cloud Run IAM checks `run.invoker`, and the application checks the audience

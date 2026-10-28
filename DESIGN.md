@@ -36,9 +36,14 @@ Sources studied: `qelay` (`../qelay`, about 97k lines of TypeScript, MIT) and
 | D6 | Flows run on Postgres dependency tables, not Step Functions or Cloud Workflows. | Proposed |
 | D7 | Panel is copied and diverges (it is pinned to Qelay 2.9.11 contracts), not consumed as a dependency. | Proposed |
 | D10 | **Scale out by namespace, with an explicit map** (`QCLOUD_SHARDS`), one Postgres per shard. A namespace never spans databases. No hashing, no cross-shard queries. | Decided (review R21) |
-| D11 | **A webhook is an event-gateway route** (section 6): a source (one queue's job events), rules and a destination, an HTTPS URL or a queue. No route, no effect. No inbound sources, no user code. | **Decided** (owner, 2026-10-21) |
-| D12 | **Inbound HTTP sources** for the event gateway: a public ingest URL per source that stores the request, then fans it out as events to routes (section 6). A separate ingest service, never the Control API or the tick. Needs its own security review, rate limits and `infra/`. | **Proposed** (owner direction 2026-10-21; design not signed off) |
-| D13 | **The gateway console gets a name, rules you can edit, delay and dedupe, issue state, reusable destinations and grouped counts** (section 6). All declarative, no user code, no new source. | **Decided** (owner, 2026-10-21: "implement the new features and ui changes, no need to ask") |
+| D11 | **A webhook is an event-gateway route** (section 6): a source, rules and a destination, an HTTPS URL or a queue. No route, no effect. No user code. (Its source was one queue's job events; D14 replaces that with an inbound source.) | **Decided** (owner, 2026-10-21); source superseded by D14 |
+| D12 | **Inbound HTTP sources** for the event gateway: a public ingest URL per source that stores the request, then fans it out as events to routes (section 6). A separate ingest service, never the Control API or the tick. Needs its own security review, rate limits and `infra/`. | **Decided** (owner, 2026-10-23: approved as written) |
+| D13 | **The gateway console gets a name, rules you can edit, delay and dedupe, issue state, reusable destinations and grouped counts** (section 6). All declarative, no user code, no new source. | **Decided** (owner, 2026-10-21: "implement the new features and ui changes, no need to ask"); its job-event wording is superseded by D14 |
+| D14 | **The gateway carries what it is sent.** Its only source is an inbound request; the job events (`job.pushed`, `job.started`, `job.completed`, `job.failed`, `job.progress`), the delivery writer and the route loop check are removed. With no `shape` the destination gets the request body unchanged (section 6). | **Decided** (owner, 2026-10-23: "the event gateway should just process what has been sent to it and send it to the destination") |
+| D15 | **A route can send at a set time and in batches** (section 6): a `schedule` (cron and time zone) holds a route's events until the next fire, and a `batch` sends many events in one signed request. Both are data on the route. | **Decided** (owner, 2026-10-23) |
+| D16 | **DLQ retry is reopened.** One failed job, or a bounded set, goes back on the queue, guarded by its `version`; DLQ retention is settable through the API. No auto-retry. Reverses the Phase 0 closure of task 14 (k). | **Decided** (owner, 2026-10-23) |
+| D17 | **A queue carries its own retry policy and run window** (section 6): default attempts, backoff and timeout for jobs that set none, and hours inside which workers may claim. | **Decided** (owner, 2026-10-23) |
+| D18 | **Backups are declared, not run** (section 6): the operator says how the database is backed up (`provider`, `external` with a named tool, or `none`), the Control API records it, the panel shows it on a Backups page, and the Deployment view warns while it is missing or `none`. Qelay takes no backup and checks none. Replaces the S3 backup page. | **Decided** (owner, 2026-10-25) |
 
 The numbering above is this document's. The build plan's `CURRENT.md` has its own list (D1-D12) of decisions
 that are the user's call, and its D1 (worker hosting) and D2 (doorbell granularity) are section 10's open
@@ -259,7 +264,7 @@ each look their namespace up and open that one database.
 | Workers page | Postgres heartbeats | - | - | `workers.ts` |
 | Metrics | Postgres buckets + cloud metrics | Cloud Monitoring | CloudWatch | `qelay_metric_*` |
 | Webhooks | Postgres config + deliveries, sent by the tick | - | - | `qcloud_webhooks`, `qcloud_deliveries` (before migration 13 `qcloud_webhook_deliveries`), `webhookSender.ts` (task 52; upstream `webhookManager.ts` was in-memory) |
-| Process start/stop/restart, SQLite inspector, S3 backup, Fleet | n/a | dropped | dropped | n/a (replaced by managed backups and deploy status) |
+| Process start/stop/restart, SQLite inspector, S3 backup, Fleet | n/a | dropped | dropped | n/a (the S3 backup is replaced by a declaration of how the database is backed up, D18; and deploy status) |
 
 ## 5. Packages
 
@@ -390,7 +395,7 @@ and what was decided where it left room:
   are bounded: each stops at a time budget and answers `done: false` so the caller asks again. A job action takes an
   optional `expectedVersion`; a stale one is 409 and nothing changes. Optional because the panel does not send one
   today (task 34 adapts it).
-- **Closed in v1, as "Parity first" says:** retrying a failed job (DLQ retry, task 14 (k)), `fail`, `discard`,
+- **Closed in v1, as "Parity first" says** (DLQ retry was reopened by D16, 2026-10-23): retrying a failed job (DLQ retry, task 14 (k)), `fail`, `discard`,
   `move-to-wait`, `move-to-delayed`, and changing `lifo`. They answer 501 `not_supported` with the capability name.
 - **Payloads** carry the tagged encoding (`bigint`, `date`, `bytes`, `map`, `set`, `-0`, `undefined`) and a
   `truncated` marker over a byte budget; a decoded payload round-trips through add and edit.
@@ -426,7 +431,7 @@ audited. What the design asked for, and what was decided where it left room:
   client, `Bun.serve` `idleTimeout` 255 s (its maximum), and the panel treats 45 s of silence as a dead link. Cloud Run's
   request timeout must be at least 10 minutes (its maximum is 60), and an ALB's idle timeout at least 30 s (its default is
   60 s); the 15 s heartbeat keeps both busy.
-- **Closed in v1, as "Parity first" says:** DLQ retry (task 14 (k)) and a change to DLQ retention or auto-retry through the
+- **Closed in v1, as "Parity first" says** (DLQ retry and retention were reopened by D16, 2026-10-23; auto-retry stays closed): DLQ retry (task 14 (k)) and a change to DLQ retention or auto-retry through the
   API answer 501 naming the action (`dlq-retry`, `dlq-auto-retry`, `dlq-retention`; the SDK still sets `maxAge` and
   `maxEntries`). The stall settings other than `maxStalls` describe how a lease works and are 400 when a save changes
   them. The server-process pages (`/gc`, `/heapstats`, `/prometheus`) answer 501 `serverControl`.
@@ -442,7 +447,8 @@ audited. What the design asked for, and what was decided where it left room:
 `qcloud_webhook_deliveries`; partitioned by day in migration 13 as `qcloud_deliveries`) and sent by a step of the tick, after
 the store's own work and the ringing. What was decided where the design left room:
 
-- **A writer, not the trigger, can make the deliveries (migration 14, review F7).** The trigger cannot apply a per-webhook
+- **A writer, not the trigger, can make the deliveries (migration 14, review F7).** *History: D14 removed both, with the job
+  events they served (migration 21); deliveries are made by the accept of an inbound request.* The trigger cannot apply a per-webhook
   filter or shape, and a shaped body must be the same bytes on every retry. A row in `qcloud_webhook_writers` moves a
   namespace to a writer that reads the journal after a cursor, matches each event with the enabled webhooks (`filter`, `shape`,
   `active_from`), renders the body once into `qcloud_deliveries.body` and moves the cursor, in one transaction. The trigger
@@ -458,7 +464,7 @@ the store's own work and the ringing. What was decided where the design left roo
   partitioned: its retention is a cap per queue, not an age, and its readers need one ordered key. See docs/limits.md,
   "Webhook deliveries by day".
 
-- **Deliveries are made in the job's transaction.** A trigger on `qcloud_events` inserts one delivery per enabled webhook
+- **Deliveries are made in the job's transaction.** *History: D14 removed this trigger in migration 21.* A trigger on `qcloud_events` inserts one delivery per enabled webhook
   that matches the event, so a job and its deliveries commit together and a webhook sees only events committed after it
   was registered. Only pushed, pulled, completed, failed and progress have a webhook name (`job.pushed` ... `job.progress`).
   The trigger costs the job path about 1.1x on claim and complete and 1.6x on enqueue with nine delivery rows per job.
@@ -487,7 +493,8 @@ the store's own work and the ringing. What was decided where the design left roo
 - **Volume:** the sender is operator-scale. Fan-out to third parties belongs in a separate SDK-run delivery queue, not the
   tick. A `queue` destination (D11 below) writes a job row in the same database, so it is operator-scale too.
 
-**Event gateway (D11, decided 2026-10-21; built in the event-gateway plan, tasks 08 to 12).** Asked for on 2026-10-21 with Hookdeck as the reference. A webhook
+**Event gateway (D11, decided 2026-10-21; built in the event-gateway plan, tasks 08 to 12).** *History: D14 (below) removed
+this section's queue source, its loop check and the job events; read it for how the routes, kinds and destinations came to be.* Asked for on 2026-10-21 with Hookdeck as the reference. A webhook
 is already a Hookdeck connection with one fixed source, so this changes the words and adds a destination kind; it renames
 no table and no route.
 
@@ -524,7 +531,8 @@ no table and no route.
 - **What is added beside it:** bulk retry of failed events (one operator action over a status filter, bounded by the store's delivery page limit), and the panel's Event gateway
   page takes the place of the Webhooks page, with the same routes under it.
 
-**Gateway features (D13, decided 2026-10-21; plan `.claude/.planning/gateway-features/`).** The console Hookdeck-style work
+**Gateway features (D13, decided 2026-10-21; plan `.claude/.planning/gateway-features/`).** *History: D14 moved delay and
+dedupe from the delivery writer to the accept transaction and made dedupe fields request paths.* The console Hookdeck-style work
 (plan gateway-ui) stopped at five proposals, G1 to G5; the owner approved all of them. Each keeps D11's rule: declarative
 data only, no code runs, and no route means no effect. Migrations 17 to 19 are all forward-only and safe with old workers:
 nullable or defaulted columns and new tables.
@@ -559,13 +567,13 @@ nullable or defaulted columns and new tables.
 - **Grouped counts**: `GET /webhooks/stats?groupBy=webhook` answers the same window with one entry per route (outcome counts and
   a trend, no latency) in one read, for the list.
 
-**Inbound sources (D12, Proposed; plan `.claude/.planning/inbound-sources/`).** Asked for on 2026-10-21 so the console can
-match Hookdeck: a third party (Stripe, Shopify, an internal service) posts to a Qelay URL and the request becomes events.
-The owner's direction is decided; the design below is not, and nothing is built before it is signed off.
+**Inbound sources (D12, decided 2026-10-23, approved as written; plan `.claude/.planning/inbound-sources/`).** Asked for on
+2026-10-21 so the console can match Hookdeck: a third party (Stripe, Shopify, an internal service) posts to a Qelay URL and
+the request becomes events.
 
 - **Words.** A **source** has a public URL and a verification rule. A **request** is one stored inbound HTTP call. A route's
-  source is either one queue's job events (D11) or one inbound source. An event is a delivery of a request or of a job
-  event to a route, with attempts, as today.
+  source is one inbound source (D14 removed the other kind, one queue's job events). An event is a delivery of a request to
+  a route, with attempts, as today.
 - **A separate ingest service.** The Control API is operator-scale and authenticated; the tick is a scheduled job. A public
   endpoint at third-party volume is neither. The ingest is its own process (Cloud Run service on GCP, a container on AWS)
   that only validates, stores and answers. It never runs a route, never calls the destination and never reads job state.
@@ -576,15 +584,137 @@ The owner's direction is decided; the design below is not, and nothing is built 
   store, then one event row per enabled route of the source, in one transaction, then the configured synchronous answer.
   A request that fails a check is stored as `rejected` with a cause (so it is visible), up to a cap per source per minute so
   an attacker cannot fill the table.
-- **Event body.** The request's body, headers and query are what a route's `filter` and `shape` see, in place of the seven
-  fields of a job event. The shape renderer already works on a JSON object; a non-JSON body is passed as text.
-- **Storage and retention.** Bodies are capped (256 KB default) and pruned by the same maintenance retention as deliveries.
+- **Event body.** The request's body, headers and query are what a route's `filter` and `shape` see. With no `shape` the
+  destination gets the request body unchanged, with its content type; a `shape` rewrites it to JSON (D14).
+- **Storage and retention.** Bodies are capped (256 KB) and pruned by the same maintenance retention as deliveries.
   Secrets are not stored in clear text and are never returned by the API (shown once, as the webhook secret is now).
-- **Not in D12.** JavaScript transforms, delay, dedupe, delivery groups, a CLI destination, replay of an arbitrary request to
-  another source (replay to the same routes is in). Each is its own decision.
-- **Gates it passes through:** a migration (20 or later; 17 to 19 are D13's), new Control API routes and openapi, a new service under `packages/` and
+- **No dependency.** The ingest is `Bun.serve` in `packages/ingest`; it imports the store and core only, never a transport
+  or the sender (`bun run architecture` checks it). There is no Stripe preset: a generic HMAC covers it.
+- **Not in D12.** JavaScript transforms, delivery groups, a CLI destination, replay of an arbitrary request to another source
+  (replay to the same routes is in). Each is its own decision. Delay and dedupe, which D12 first left out, are D13's and stay
+  (D14).
+- **Gates it passes through:** a migration, new Control API routes and openapi, a new service under `packages/` and
   `infra/` (plan only; `terraform apply` needs the owner), a security review of the ingest path, a load check against
-  the connection budget, and a real-cloud run that only the owner can authorise (D9).
+  the connection budget, and a real-cloud run that only the owner can authorise (D9). The first four were approved on
+  2026-10-23; the real-cloud run was not and is not part of the build.
+
+**The gateway carries what it is sent (D14, decided 2026-10-23).** The owner asked, after seeing "Events to send" on a
+connection: should the event be what was sent to the gateway, transformed, and the processed event what reaches the
+destination? A request `{ "id": 500, "name": "chris" }` with no transform arrives as `{ "id": 500, "name": "chris" }`. The five
+fixed events only made sense while the thing entering the gateway was always a job event with seven fixed fields. They are
+removed, and so is what existed only for them. Nothing in 1.0.0 was released, so this is one forward migration, not the
+two-release removal CLAUDE.md asks of a shipped release.
+
+- **Source.** The only source of a route is an inbound source. A request is one event for each of its source's routes that
+  accepts it, made in the accept transaction. There is no journal cursor, no delivery writer to switch on and nothing for the
+  tick to scan; the tick's sender delivers.
+- **The event document.** What `filter`, `shape` and `dedupe` see is `{ method, headers, query, body }`, read by a dotted path
+  (`body.id`, `headers.x-github-event`, `query.page`). `body` exists when the request was JSON. A non-JSON body is passed
+  through whole and cannot be addressed. Paths are data: they walk own properties of plain objects and arrays, never
+  `__proto__`, `constructor` or `prototype`.
+- **Order** for a route: pause mode, `filter`, `dedupe`, `shape`, `delay`, then the sender's rate limit, retry schedule and
+  auto-pause, unchanged. Pause holds and disable ignores, as in D13.
+- **Dedupe is atomic.** Several ingest processes run at once, so the old single writer that made the cursor version exact no
+  longer exists. One upsert per key (`INSERT ... ON CONFLICT DO UPDATE ... WHERE until <= now`) decides who goes; a loser
+  is dropped, not recorded. The window starts at the first request and a repeat does not extend it.
+- **The body.** No `shape`: the destination gets the request bytes with the request's content type. A `shape`: JSON, as now.
+  A `queue` destination adds a job whose `data` is the parsed body (the text for a non-JSON body).
+- **Headers are stored redacted.** `authorization`, `cookie`, `proxy-authorization`, `set-cookie` and the source's own
+  verification header are kept as `[redacted]`; at most 64 headers of 2 KB.
+- **No route can loop**, because a job a route adds makes no event. The loop check, `route_cycle`, `route_chain_too_long` and
+  `MAX_ROUTE_CHAIN` (D11) are deleted, not made optional.
+- **Routes from before D14** listened to a queue. Migration 21 keeps them, disabled with the reason "its source, a queue's job
+  events, was removed"; the operator picks a source and enables them. Nothing is deleted, and old deliveries stay readable.
+- **Supersedes** in D11: the queue source, the loop check and "an event is a job event". In D13: the writer as the home of
+  delay and dedupe, the five dedupe fields and "a source stays a queue". Those paragraphs are kept above as history.
+
+**Send schedule and batch (D15, decided 2026-10-23; plan `.claude/.planning/production-features/`).** The owner asked, after
+a review of what changes when a Pub/Sub system moves here, for events that go "at midnight each night" and for many events in
+one request. Both are rules on a route, applied by the two places that already own time and sending.
+
+- **Schedule.** `schedule: { cron, timezone? }`, a 5 or 6 field expression or a shortcut, an IANA zone (default UTC), checked
+  by the store's own cron parser. A delivery is due at the first fire at or after `now + delayMs`. It is the same
+  `next_attempt_at` the writer sets today, so the sender, its rate limit and its retry schedule are unchanged. A retry after a
+  failure follows the retry schedule, not the cron. A schedule that never fires, or whose consecutive fires are more than 31
+  days apart (`@monthly` is the longest allowed), is refused when the route is saved: events held for longer than that are
+  far more likely a mistyped cron than a wish. The 24-hour delivery expiry counts from `next_attempt_at`, so a delivery held
+  for a week is not expired before it fires. If the schedule cannot be read when a request arrives (a zone name the host's
+  database no longer knows), the delivery is due at once, as it would be with no schedule: it is never dropped or held for good.
+- **Batch.** `batch: { maxEvents, maxBytes }` on an `http` route (a `queue` route adds one job per event already, so it is
+  refused). The sender takes up to `maxEvents` due deliveries of the route, stopping at `maxBytes`, and sends **one** signed
+  request: `{ batchId, count, events: [{ id, receivedAt, body }] }`. A JSON body is nested as JSON, other text is a string and
+  bytes are `{ base64 }`. `batchId` is a hash of the sorted event ids, so a retry of the same members has the same id and the
+  receiver can de-duplicate on it.
+- **A batch is delivered or retried as a whole.** A 2xx marks every member delivered; anything else is one failed attempt for
+  each, with one shared retry delay (one jitter draw) so the members come back together. A partial-success answer is not read.
+  One batch request counts once against the route's rate, not once per event.
+- **What batching does not do on its own:** gather. Events are grouped only when they are due together. Without a `schedule`
+  (or a `delayMs`), deliveries are due at once and the tick sends whatever is there, so a batch route wants a schedule.
+- **Old ticks** ignore both fields and send each event alone at its due time: add such a route only after every tick runs this
+  release (the note D13 gave for delay and dedupe).
+
+**DLQ retry reopened (D16, decided 2026-10-23).** Task 14 (k) closed retry in Phase 0 until a `version` precondition and an
+entry fence existed. Both are cheap here: the DLQ is the queue's `failed` jobs, `retry-dlq` is already a legal transition
+(`failed` to ready), and every job row has a `version`.
+
+- **Retry one.** `retryDlq(queue, jobId, { expectedVersion? })`: lock the row, require `state = 'failed'` and the version when
+  given, set the ready state with `attempts = 0`, clear the error and entry, bump `version`, journal `retried`, ring after
+  commit. A second retry, or a retry that lost a race with a purge, finds no failed row and changes nothing (a typed reason,
+  not an error). A job that belongs to a flow is refused (`flow_member`): the flow's own `retry-failed` is the way.
+- **Retry a set.** At most 500 failed jobs of a queue in **one** store call and one transaction, oldest failure first,
+  optionally by failure reason. It is one transaction, not a loop under the action budget like purge: 500 row updates are
+  bounded, so `remaining` and `done` carry the "stopped at the limit" signal and the caller repeats. Rows another
+  transaction holds are skipped (`SKIP LOCKED`), not waited for.
+- **What retry refuses (typed, nothing changes).** `not_found`, `not_failed`, `version`, `flow_member` (any job with a
+  `parent_id`, even if the parent is gone, and any parent: the flow's own `retry-failed` is the way) and `duplicate`: a live
+  job holds the same deduplication key, so a second waiting copy would break the key's meaning. A set skips flow members and
+  duplicates and does not count them in `remaining`; of two failed jobs that share a key only the oldest goes back.
+- **What retry keeps.** The attempt history of the failed rounds stays on the job (`dlq_retry_state`), so attempt numbers
+  repeat across rounds and the next entry shows both. A job's `ttl` still counts from `created_at`, so a retried job whose
+  ttl has passed expires. A dedup-key race with a concurrent enqueue surfaces as a driver unique violation, not a typed
+  refusal (a `shortcut:` in the store).
+- **Retention** (`maxAge`, `maxEntries`) is settable through the API, as the SDK already could, and audited by key.
+  Lowering `maxEntries` deletes the oldest entries over the limit in the same transaction, so the panel warns before it
+  saves. The reason it was closed (a delete that ignores a flow parent) no longer applies: retention, `purgeDlq` and
+  `purgeExpiredDlq` skip a job a live flow parent waits on (`hasLiveConsumer`).
+- **Not reopened:** auto-retry. A loop that re-queues what keeps failing turns one bad deploy into a storm; an operator or a
+  script calls retry, with a limit. `dlq-auto-retry` stays unsupported.
+- **Supersedes** the two "Closed in v1" notes of tasks 31 and 32 for `dlq-retry` and `dlq-retention` (kept above as history).
+  `job-retry` of a single job outside the DLQ stays closed.
+
+**A queue's policy and run window (D17, decided 2026-10-23).** The Pub/Sub subscription's retry policy lived in Terraform,
+once for every message. A queue gets the same, and a nightly queue gets hours.
+
+- **Policy.** `{ attempts, backoff, timeout }` on the queue's state row, checked by `validateJobOptions`. It is applied at
+  **enqueue**: a job that sets none of these gets the queue's, and the job row stores what it got. A job's own option always
+  wins, and a policy applies to jobs added after it is saved. The claim and fail paths read nothing new.
+- **Run window.** `{ cron, durationMs, timezone? }`. Outside the window a claim returns nothing, as for a paused queue; a job
+  already running is never interrupted. The window is stored as the interval `[window_from, window_until]` that contains now
+  or comes next, so the claim compares two integers and parses no cron. The tick moves the interval on, from
+  `nextFire(cron, now - duration)`, so the opening is as late as the tick is (limits.md section 1). A pause still wins over
+  an open window. A queue with no window is claimed exactly as before.
+- **No bell is spent on a closed queue.** The ring query skips a closed queue as it skips a paused one, and an enqueue into a
+  closed queue leaves the job unrung. A bell rung before the close is old by the opening, so the ring query's stale branch
+  rings it again, and an unrung job is rung then: no marker column is needed. The Deployment view does not count a
+  paused queue or a closed window as an overdue doorbell. A window saved on a queue is a window for the whole namespace's
+  workers only once every process runs a release that has the check; an older worker claims at any time.
+- **Delays and retries** keep their meaning: a delayed or retrying job becomes ready at its time and waits for the window.
+
+**Backups are declared, not run (D18, decided 2026-10-25).** A GCP deployment backs up with Cloud SQL, an AWS one with RDS,
+and an operator may run pgBackRest, Barman or a `pg_dump` job of their own. The S3 backup page assumed none of that, so it is gone.
+
+- **The declaration.** One row per namespace in `qcloud_backup_policy` (migration 25): `mechanism` is `provider` (the managed
+  service's backups and point-in-time recovery), `external` (tooling outside Qelay; `tool` is required, `location` is optional,
+  free text, never a credential) or `none`. Table CHECKs refuse a `tool` or `location` on any other mechanism.
+- **Written by an operator, read by anyone.** `PUT /backup-policy` is a write route (operator only, audited by mechanism alone,
+  never the tool or location text); `GET /backup-policy` returns `{ policy: null }` while nobody has declared.
+- **Qelay checks nothing.** It does not look for the backup, its age or its restorability. A declaration is what the operator
+  said, with who said it and when. A restore test stays the operator's job.
+- **Two warnings** on `GET /deployment` and the panel's Home and Deployment pages: `backup_undeclared` and `backup_none`, both
+  severity `warning`. `provider` and `external` raise none. They do not colour the health strip.
+- **Terraform is not wired in.** The Cloud SQL and RDS retention settings in `infra/` are not read into the declaration.
+- **Panel.** `/backups` is the fifth Health tab. `/s3` redirects to it. The old S3 page and its client code are unrouted and
+  left in the tree for a later deletion.
 
 ## 7. Cloud specifics
 

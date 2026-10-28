@@ -8,6 +8,8 @@ import type { Runtime } from './runtime';
 import { openRuntime } from './runtime';
 import { within } from './timing';
 import { emitIsolated, TypedEmitter } from './typedEmitter';
+import type { ProcessingPlan } from './workerBatch';
+import { planProcessing } from './workerBatch';
 import {
   CLAIM_ERROR_RETRY_MS,
   NO_SLOT_RETRY_MS,
@@ -17,6 +19,9 @@ import {
 import { DrainWatch } from './workerDrain';
 import { createRunHooks } from './workerHooks';
 import type {
+  BatchProcessor,
+  BatchWorkerOptions,
+  JobWorkerOptions,
   Processor,
   ResolvedWorkerOptions,
   WorkerCloseOptions,
@@ -51,7 +56,7 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
   readonly id: string;
   readonly #rt: Runtime;
   readonly #options: ResolvedWorkerOptions;
-  readonly #processor: Processor<T, R>;
+  readonly #plan: ProcessingPlan<T, R>;
   readonly #registry: WorkerRegistry;
   readonly #drain: DrainWatch;
   readonly #hooks: RunHooks;
@@ -65,15 +70,22 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
   #processed = 0;
   #failed = 0;
 
+  /** With `batch` the processor takes up to `size` jobs at once: see `BatchProcessor`. */
+  constructor(name: string, processor: BatchProcessor<T, R>, options: BatchWorkerOptions);
   /** Opens nothing until `run()`, which `autorun` (default) calls from here. Throws `UnsupportedOptionError` for an option this package does not support. */
-  constructor(name: string, processor: Processor<T, R>, options: WorkerOptions) {
+  constructor(name: string, processor: Processor<T, R>, options: JobWorkerOptions);
+  constructor(
+    name: string,
+    processor: Processor<T, R> | BatchProcessor<T, R>,
+    options: WorkerOptions
+  ) {
     super();
     if (typeof processor !== 'function')
       throw new TypeError('Worker: the processor must be a function');
     this.#options = resolveWorkerOptions(options);
     this.#rt = openRuntime(name, options, runtimeOptions(this.#options));
     this.name = name;
-    this.#processor = processor;
+    this.#plan = planProcessing(processor, this.#options);
     this.id = `${hostname().slice(0, 100)}-${process.pid}-${randomUUID().slice(0, 8)}`;
     const { group } = this.#options;
     this.#pump = new Pump({
@@ -90,7 +102,7 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
       id: this.id,
       name: this.#options.workerName,
       queue: name,
-      concurrency: Math.min(this.#options.concurrency, 1_000_000),
+      concurrency: Math.min(this.#plan.slots, 1_000_000),
       intervalMs: this.#options.heartbeatInterval,
       stats: () => ({
         activeJobs: this.#runs.size,
@@ -198,7 +210,8 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
   /** How many bells the transport may deliver right now: the free slots, none when paused or closing. */
   #capacity(): number {
     if (this.#paused || this.#closing !== null) return 0;
-    return Math.max(0, this.#options.concurrency - this.#runs.size - this.#pump.reserved);
+    const free = Math.max(0, this.#plan.slots - this.#runs.size - this.#pump.reserved);
+    return free < this.#plan.floor ? 0 : free;
   }
 
   /**
@@ -229,7 +242,7 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
     const run = new JobRun(
       {
         rt: this.#rt,
-        processor: this.#processor as Processor,
+        processor: this.#plan.run as Processor,
         hooks: this.#hooks,
         leaseMs: this.#rt.store.leaseMs,
       },
@@ -261,6 +274,7 @@ export class Worker<T = unknown, R = unknown> extends TypedEmitter<WorkerEvents<
 
   async #shutdown(graceMs: number, timeout: number): Promise<void> {
     this.#drain.cancel();
+    this.#plan.flush(); // a short batch runs now, inside the grace, instead of waiting out maxWaitMs
     const subscription = this.#subscription;
     this.#subscription = null;
     await shutdownWorker({

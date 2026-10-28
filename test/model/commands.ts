@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import type { CommandName, ModelCommand } from './command';
 import { ConcurrentTicksCommand, UpsertCronCommand } from './commands-cron';
+import { RetryDlqCommand } from './commands-dlq';
 import type { LeaseOp } from './commands-jobs';
 import { ClaimCommand, CompleteManyCommand, EnqueueCommand, LeaseCommand } from './commands-jobs';
 import {
@@ -99,6 +100,9 @@ const GENERATORS: Record<Exclude<CommandName, 'zombie'>, fc.Arbitrary<ModelComma
   promote: operator('promote'),
   changePriority: operator('changePriority'),
   cancel: operator('cancel'),
+  retryDlq: fc
+    .tuple(pick, fc.boolean(), fault)
+    .map(([index, any, ring]) => new RetryDlqCommand(index, any, ring)),
   tick: fc.constant(null).map(() => new TickCommand()),
   recover: fc.constant(null).map(() => new RecoverCommand()),
   crash: worker.map((who) => new CrashCommand(who)),

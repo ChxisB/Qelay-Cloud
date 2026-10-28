@@ -1,5 +1,13 @@
-import type { DlqConfig, DlqEntryFull, DlqStatsFull, StallConfig } from '../bqTypes';
-import { queueHttpPathSegment } from '../upstreamPaths';
+import type {
+  DlqConfig,
+  DlqEntryFull,
+  DlqStatsFull,
+  QueuePolicy,
+  QueueRunWindow,
+  QueueRunWindowInput,
+  StallConfig,
+} from '../bqTypes';
+import { opaqueHttpPathSegment, queueHttpPathSegment } from '../upstreamPaths';
 import { BULK_TIMEOUT_MS, body, bulkBody, srv } from './transport';
 
 export const queueApi = {
@@ -72,24 +80,47 @@ export const queueApi = {
         'DLQ auto-retry is unavailable: Qelay does not rebuild flow dependency registration.'
       );
     }
-    if (config.maxAge !== undefined || config.maxEntries !== undefined) {
-      throw new TypeError(
-        'DLQ retention is read-only: maxAge/maxEntries can destructively expire or evict flow jobs without an atomic dependency check.'
-      );
-    }
     return srv(`/queues/${queueHttpPathSegment(queue)}/dlq-config`, body('PUT', { config }));
   },
+  getQueuePolicy: (queue: string) =>
+    srv<{ ok: boolean; policy: QueuePolicy | null }>(
+      `/queues/${queueHttpPathSegment(queue)}/policy`
+    ),
+  /** Replaces the whole policy; `{}` removes it. */
+  setQueuePolicy: (queue: string, policy: QueuePolicy) =>
+    srv<{ ok: boolean; policy: QueuePolicy | null }>(
+      `/queues/${queueHttpPathSegment(queue)}/policy`,
+      body('PUT', policy)
+    ),
+  getRunWindow: (queue: string) =>
+    srv<{ ok: boolean; runWindow: QueueRunWindow | null }>(
+      `/queues/${queueHttpPathSegment(queue)}/run-window`
+    ),
+  setRunWindow: (queue: string, window: QueueRunWindowInput) =>
+    srv<{ ok: boolean; runWindow: QueueRunWindow | null }>(
+      `/queues/${queueHttpPathSegment(queue)}/run-window`,
+      body('PUT', window)
+    ),
+  clearRunWindow: (queue: string) =>
+    srv(`/queues/${queueHttpPathSegment(queue)}/run-window`, { method: 'DELETE' }),
   dlq: (queue: string, limit = 100, offset = 0) =>
     srv<{ ok: boolean; entries: DlqEntryFull[]; total: number }>(
       `/queues/${queueHttpPathSegment(queue)}/dlq?limit=${limit}&offset=${offset}`
     ),
   dlqStats: (queue: string) =>
     srv<{ ok: boolean; stats: DlqStatsFull }>(`/queues/${queueHttpPathSegment(queue)}/dlq/stats`),
-  retryDlq: (_queue: string, _jobId?: string): never => {
-    throw new TypeError(
-      'DLQ retry is unavailable in Qelay because the endpoint has no atomic job-generation, state, or flow-topology precondition.'
-    );
-  },
+  /** Puts one failed job back in the queue. `expectedVersion` is the entry's `job.version` as the page read it. */
+  retryDlq: (queue: string, jobId: string, expectedVersion?: number) =>
+    srv<{ ok: boolean }>(
+      `/queues/${queueHttpPathSegment(queue)}/dlq/${opaqueHttpPathSegment(jobId)}/retry`,
+      body('POST', expectedVersion === undefined ? {} : { expectedVersion })
+    ),
+  /** Puts up to `limit` (at most 500) failed jobs back, oldest first. `remaining` is what another call would retry. */
+  retryDlqMany: (queue: string, options: { limit?: number; reason?: string } = {}) =>
+    srv<{ ok: boolean; count: number; remaining: number; done: boolean }>(
+      `/queues/${queueHttpPathSegment(queue)}/dlq/retry`,
+      body('POST', { confirm: queue, ...options })
+    ),
   purgeDlq: (queue: string) =>
     srv<{ ok: boolean; count: number }>(
       `/queues/${queueHttpPathSegment(queue)}/dlq/purge`,

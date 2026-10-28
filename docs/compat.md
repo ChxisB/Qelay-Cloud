@@ -80,7 +80,7 @@ Each refused option throws `UnsupportedOptionError(key, 'is a Qelay option and i
 | `remove(id)` / `removeAsync(id)` | Supported | `JobStateError` for an active job; `FlowProtectedError` for a job a live flow parent waits on. A missing job resolves. |
 | `getChildrenValues(id)` | Not supported | Read it through the job: `(await queue.getJob(id))?.getChildrenValues()`. See [`FlowProducer`](#flowproducer). |
 | `extendJobLock(id, token, duration)` | Not supported | A job's lease belongs to the `Worker` that holds it, which renews it by itself; a producer has no token. |
-| `retryJob(id)`, `retryJobs(opts?)` | Not supported | A failed job is retried by the store's retry rules (`attempts`, `backoff`) or lands in the DLQ. Manual retry of a failed job needs the version precondition of task 14 (k) and is a v1.1 candidate. |
+| `retryJob(id)`, `retryJobs(opts?)` | Not supported | A failed job is retried by the store's retry rules (`attempts`, `backoff`) or lands in the DLQ, and `retryDlq` or `retryDlqMany` puts it back from there (D16). A job that is not in the DLQ has nothing to retry. |
 
 ### Listing and counting
 
@@ -115,20 +115,25 @@ buttons send no confirmation yet and get 400 `confirmation_required` until task 
 | Method | Status | Notes |
 | ------ | ------ | ----- |
 | `setStallConfig(config)` / `getStallConfig()` (+ `Async`) | Differs | Only `maxStalls` is supported. Any other key throws `UnsupportedOptionError`. The default is 3. |
-| `setDlqConfig(config)` / `getDlqConfig()` (+ `Async`) | Differs | Only `maxEntries` and `maxAge`. `autoRetry`, `autoRetryInterval` and `maxAutoRetries` throw `UnsupportedOptionError`: DLQ retry is closed (see below). |
+| `setDlqConfig(config)` / `getDlqConfig()` (+ `Async`) | Differs | Only `maxEntries` and `maxAge`. `autoRetry`, `autoRetryInterval` and `maxAutoRetries` throw `UnsupportedOptionError`: auto-retry is closed (see below). |
 | `getDlq(filter?)` / `getDlqAsync` | Differs | `filter` is `{ limit?, offset? }` only; one page, oldest failure first. Upstream's `reason`, `olderThan`, `newerThan`, `retriable` and `expired` filters throw `UnsupportedOptionError`. |
 | `getDlqJobsAsync(count?)` | Differs | The failed jobs behind the first `count` entries. |
 | `getDlqStats()` / `getDlqStatsAsync` | Supported | |
 | `purgeDlq()` / `purgeDlqAsync` | Supported | Deletes every entry and its failed job; resolves with how many. |
 | `removeDlqJob(id)` / `removeDlqJobAsync` | Supported | Resolves `true` when an entry was removed. |
-| `retryDlq`, `retryDlqAsync`, `retryDlqByFilter`, `retryDlqByFilterAsync` | Not supported | **DLQ retry is closed, fail-closed**, as the Phase 0 gate decided (task 14 (k)): reopening it needs the `version` precondition and an entry fence, a v1.1 candidate. |
+| `setPolicy(policy)` / `getPolicy()` | New | The attempts, backoff and timeout a job of the queue gets when it sets none of its own (D17). Applied as the job is added, each setting on its own, so a job's own option wins and jobs already there keep what they have. `null` or `{}` removes the policy. Retry jitter is not part of it: it is one switch for the whole service. |
+| `setRunWindow(window)` / `getRunWindow()` | New | When the queue may start jobs (D17): `{ cron, durationMs, timezone? }`, for example `{ cron: '0 0 * * *', durationMs: 4 * 3_600_000, timezone: 'Europe/London' }` for midnight to 04:00. Outside it a claim finds nothing and the jobs wait; a running job finishes, and a retry or delayed job waits for the next opening. `null` removes the window, and `getRunWindow()` also says whether it is `open` and when it `opensAt` and `closesAt`. Opening is tick-bound: the queue is rung at the first tick after it opens, so allow one tick interval. Pausing still wins. Set it only after every process runs this release: an older worker ignores it. |
+| `retryDlq(id, options?)` | Differs | Puts one failed job back as waiting with no attempt used (D16). `options.expectedVersion` fences it to the entry as read. Resolves `{ ok: true }` or `{ ok: false, reason }` with `reason` one of `not_found`, `not_failed`, `version`, `flow_member`, `duplicate`: a refusal is an answer and changes nothing. A flow member is refused; retry the flow instead. |
+| `retryDlqMany({ limit, reason? })` | New | Retries up to `limit` (1 to 500) failed jobs of the queue, oldest failure first, optionally only those that failed for one `reason`, in one transaction. Resolves `{ retried, remaining }`; `remaining` is what a repeat call would still retry. Flow members and jobs whose deduplication key a live job holds are left in the DLQ and not counted. |
+| `retryDlqAsync`, `retryDlqByFilter`, `retryDlqByFilterAsync` | Not supported | `retryDlq` is already async. Upstream's filter (`olderThan`, `retriable`, and so on) is replaced by `retryDlqMany({ limit, reason })`. Nothing retries by itself: `autoRetry` stays closed. |
 | `retryCompleted`, `retryCompletedAsync` | Not supported | Same reason: re-running a finished job needs the same precondition. Add a new job instead. |
 
 **The Control API serves these too** (task 32), from the same store calls: `GET /queues/:q/dlq` (with `limit` and
 `offset`), `/dlq/stats`, `DELETE /queues/:q/dlq/:id`, `POST /queues/:q/dlq/purge` (`{ confirm: <queue name> }`, like
-drain), and `GET`/`PUT` on `/queues/:q/stall-config` and `/dlq-config`. What `Queue` refuses it refuses as well: a
-retry, a DLQ auto-retry and a change of DLQ retention answer 501 `not_supported` naming the action (`dlq-retry`,
-`dlq-auto-retry`, `dlq-retention`, all listed under `unsupported` in `GET /capabilities`), and a stall setting other
+drain), `GET`/`PUT` on `/queues/:q/stall-config` and `/dlq-config`, and the retry routes `POST /queues/:q/dlq/retry`
+(`{ confirm, limit?, reason? }`) and `POST /queues/:q/dlq/:id/retry` (`{ expectedVersion? }`). `PUT /dlq-config` saves
+`maxAge` and `maxEntries`. What `Queue` refuses it refuses as well: a DLQ auto-retry answers 501 `not_supported` naming the
+action (`dlq-auto-retry`, listed under `unsupported` in `GET /capabilities`), and a stall setting other
 than `maxStalls` is 400 `unsupported_option` unless it is sent back as read. Crons
 (`/crons`), workers (`/workers`), the event stream (`GET /events`), metrics and the operator audit log (`GET /audit`)
 are described in `packages/control-api/README.md`.
@@ -294,13 +299,13 @@ The connection options are a `Queue`'s, minus `defaultJobOptions`.
 | `closeTransport` | New | Close the transport together with the worker. Default false: the transport belongs to the caller. |
 | `claimAgain` | New | Default true. After a job ends and the last claim came back full, the worker claims again for its free slots without a bell, until a claim comes back short. False: only a bell starts a claim. |
 | `groupComplete` | New | `true` or `{ maxJobs?: number }` (1 to 1,000, default 100). Jobs that finish while another finish is being stored share one transaction. Off by default. |
+| `batch` | New | `{ size, maxWaitMs? }`: `size` 1 to 1,000, `maxWaitMs` 0 to 60,000 (default 1,000). The processor takes `jobs` (up to `size`, after at most `maxWaitMs` for a short batch) and returns nothing, or one entry per job, in order: an `Error` entry fails that job, anything else is its result. A throw fails every job, each by its own attempts and backoff; any other return fails them all. `concurrency` counts batches at once, so the worker holds up to `concurrency × size` jobs and claims only when a whole batch fits. Each job keeps its own lease and heartbeat while its batch fills; the completes share one transaction unless `groupComplete: false`. `close` runs a short batch inside the grace. |
 | `databaseUrl`, `database`, `transport`, `namespace`, `store`, `logger`, `metrics` | New | As on the `Queue`. |
 | `connection`, `host`, `port`, `embedded`, `dataPath`, `prefixKey` | Not supported | As on the `Queue`. |
 | `batchSize`, `pollTimeout`, `drainDelay` | Not supported | The worker waits for bells and does not poll. A bell claims as many jobs as the free slots allow. |
 | `useLocks`, `skipLockRenewal` | Not supported | A job is always leased and renewed. |
 | `skipStalledCheck`, `maxStalledCount` | Not supported | Recovery is the tick's, not the worker's. The limit is per queue: `queue.setStallConfig({ maxStalls })`. |
 | `limiter` | Not supported | A rate limit is the queue's and holds across workers: `queue.setGlobalRateLimit`. |
-| `batch` | Not supported | Batch processing is not supported. |
 | `removeOnComplete`, `removeOnFail` | Not supported | Give them to the job: `JobOptions.removeOnComplete`, `removeOnFail`. |
 
 ### Methods
@@ -453,7 +458,7 @@ parent that has been released.
 | Cancel a child | Releases its edge. The parent is rung by the next tick, not at once. |
 | Cancel or remove a parent | Deletes its edges and recorded failures. Its children keep running as plain jobs; their `parent_id` and `flow_root` stay until a new flow takes the parent's id, and that flow's `add` detaches them (their `parent_id` and `flow_root` are cleared and their `version` moves), so a reused custom id never shows an old child in `getFlow` or in the Control API's view. |
 | `remove`, `clean`, `drain`, `obliterate`, DLQ purge or eviction of a child | Refused (`FlowProtectedError`) or skipped while a parent in `waiting`, `prioritized`, `delayed`, `waiting-children` or `active` holds an edge to it. |
-| Retry a failed child from the DLQ, or with `Queue.retryJobs` | Not supported for any job (DLQ retry is closed, see [Configuration and the DLQ](#configuration-and-the-dlq)). A child that failed with no policy is retried through the flow instead (next table). |
+| Retry a failed child from the DLQ, or with `Queue.retryJobs` | `retryDlq` refuses a flow member (`flow_member`) and `retryDlqMany` leaves it in the DLQ; `Queue.retryJobs` is not supported (see [Configuration and the DLQ](#configuration-and-the-dlq)). A child that failed with no policy is retried through the flow instead (next table). |
 | `Queue.promoteJobs` on a `waiting-children` parent | Refused: only a `delayed` job that is not yet due can be promoted. A stuck parent is released through the flow (next table). |
 
 The Control API (`POST /flows/:id/actions`, the `operator` role, one audit row per call) is where an operator acts on a

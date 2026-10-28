@@ -4,7 +4,7 @@ import { describeDb } from '../../../test/support/db';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore } from './storeHelpers';
-import { addHook, CLAIM, event, journal, KEY, rawDeliveries } from './webhookHelpers';
+import { addHook, CLAIM, KEY, rawDeliveries, send } from './webhookHelpers';
 
 describeDb('webhooks: pause with hold or ignore', () => {
   let t: TestStore;
@@ -27,7 +27,7 @@ describeDb('webhooks: pause with hold or ignore', () => {
     const held = await t.store.webhooks.setEnabled(hook.id, false, 'hold');
     expect(held).toMatchObject({ enabled: false, disabledReason: WEBHOOK_HOLD_REASON });
     expect(held!.disabledAt).toBe(t.clock.now());
-    await journal(t, [event('pushed', 'q', 'j1')]);
+    await send(t, { id: 'j1' });
     expect(await rawDeliveries(t)).toHaveLength(1);
     expect(await t.store.webhooks.claimDue(CLAIM)).toEqual([]);
     const resumed = await t.store.webhooks.setEnabled(hook.id, true);
@@ -39,7 +39,7 @@ describeDb('webhooks: pause with hold or ignore', () => {
     const hook = await addHook(t);
     const off = await t.store.webhooks.setEnabled(hook.id, false);
     expect(off).toMatchObject({ enabled: false, disabledReason: null, disabledAt: null });
-    await journal(t, [event('pushed', 'q', 'j1')]);
+    await send(t, { id: 'j1' });
     expect(await rawDeliveries(t)).toHaveLength(0);
     await t.store.webhooks.setEnabled(hook.id, false, 'ignore');
     expect(await rawDeliveries(t)).toHaveLength(0);
@@ -70,11 +70,11 @@ describeDb('webhooks: pause with hold or ignore', () => {
   test('ignore on a held webhook ends the holding; the waiting deliveries stay', async () => {
     const hook = await addHook(t);
     await t.store.webhooks.setEnabled(hook.id, false, 'hold');
-    await journal(t, [event('pushed', 'q', 'j1')]);
+    const first = await send(t, { id: 'j1' });
     const off = await t.store.webhooks.setEnabled(hook.id, false, 'ignore');
     expect(off).toMatchObject({ enabled: false, disabledReason: null });
-    await journal(t, [event('pushed', 'q', 'j2')]);
-    expect((await rawDeliveries(t)).map((r) => r.job_id)).toEqual(['j1']);
+    await send(t, { id: 'j2' });
+    expect((await rawDeliveries(t)).map((r) => r.request_id)).toEqual([first]);
   });
 
   test('turning on ignores the mode', async () => {

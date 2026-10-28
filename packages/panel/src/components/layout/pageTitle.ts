@@ -17,6 +17,8 @@ const TITLES: Record<string, string> = {
   '/jobs/bulk-add': 'Bulk Add Jobs',
   '/job': 'Job Inspector',
   '/events-gateway': 'Event gateway',
+  '/events-gateway/sources': 'Gateway sources',
+  '/events-gateway/requests': 'Gateway requests',
   '/events-gateway/events': 'Gateway events',
   '/events-gateway/metrics': 'Gateway metrics',
   '/events-gateway/issues': 'Gateway issues',
@@ -26,11 +28,11 @@ const TITLES: Record<string, string> = {
   '/alerts': 'Alerts',
   '/transport': 'Job delivery',
   '/deployment': 'Deployment',
+  '/backups': 'Backups',
   '/benchmark': 'Benchmark',
   '/database': 'Database',
   '/mcp': 'MCP',
   '/usage': 'Usage',
-  '/s3': 'S3 Backup',
   '/settings': 'Settings',
 };
 

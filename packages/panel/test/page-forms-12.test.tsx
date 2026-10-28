@@ -118,17 +118,11 @@ describe('Connection form', () => {
       })
     );
 
-  test('event chips are a named group of toggles that start with completed and failed on', () => {
+  test('the source is a labelled choice, and there are no events to pick', () => {
     const host = form();
-    const group = host.querySelector('[role="group"][aria-labelledby="choices-events-to-send"]')!;
-    expect(host.querySelector('#choices-events-to-send')?.textContent).toBe('Events to send');
-    const chips = [...group.querySelectorAll('button')];
-    const on = chips.filter((b) => b.getAttribute('aria-pressed') === 'true');
-    expect(on.map((b) => b.textContent)).toEqual(['job.completed', 'job.failed']);
-    act(() => chips.find((b) => b.textContent === 'job.failed')!.click());
-    expect(chips.find((b) => b.textContent === 'job.failed')!.getAttribute('aria-pressed')).toBe(
-      'false'
-    );
+    const source = host.querySelector<HTMLSelectElement>('select[name="webhook-source"]')!;
+    expect(host.querySelector(`label[for="${source.id}"]`)?.textContent).toContain('Source');
+    expect(host.textContent).not.toContain('Events to send');
   });
 
   test('a bad URL is announced as an alert', async () => {

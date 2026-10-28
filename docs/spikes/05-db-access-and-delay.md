@@ -1,6 +1,6 @@
 # Spike 05: database access and delay precision
 
-- **Task:** [05](../../.claude/.planning/v1.0.0/05-spike-db-access-and-delay.md), run on 2026-10-13.
+- **Task:** 05, run on 2026-10-13.
 - **Spike code:** `packages/store-postgres/spike/db-access/` (deleted in task 20, see the [gate](06-phase0-gate.md), "The tick as built"), on top of the
   task 01 port and task 03's doorbell sweep. Task 06 promoted it, and task 11 moved it: the connection code is in
   [`src/connection/`](../../packages/store-postgres/src/connection/), the fault proxy and pooler helpers are in

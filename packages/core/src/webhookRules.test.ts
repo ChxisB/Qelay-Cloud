@@ -60,11 +60,10 @@ describe('delay', () => {
 });
 
 describe('dedupe', () => {
-  test('keeps the window and the fields in a fixed order, once each', () => {
-    expect(validateDedupe({ windowMs: 60_000, fields: ['error', 'queue', 'error'] })).toEqual({
-      windowMs: 60_000,
-      fields: ['queue', 'error'],
-    });
+  test('keeps the window and the paths sorted, once each', () => {
+    expect(
+      validateDedupe({ windowMs: 60_000, fields: ['body.error', 'body.queue', 'body.error'] })
+    ).toEqual({ windowMs: 60_000, fields: ['body.error', 'body.queue'] });
     expect(validateDedupe(null)).toBeNull();
   });
 
@@ -72,23 +71,34 @@ describe('dedupe', () => {
     refused(() => validateDedupe('yes'), 'dedupe');
     refused(() => validateDedupe({ windowMs: 60_000 }), 'dedupe');
     refused(() => validateDedupe({ windowMs: 60_000, fields: [] }), 'dedupe');
-    refused(() => validateDedupe({ windowMs: 60_000, fields: ['progress'] }), 'dedupe');
-    refused(() => validateDedupe({ windowMs: 60_000, fields: ['queue'], extra: 1 }), 'dedupe');
-    refused(() => validateDedupe({ windowMs: 999, fields: ['queue'] }), 'dedupe');
+    refused(() => validateDedupe({ windowMs: 60_000, fields: ['queue'] }), 'dedupe');
+    refused(() => validateDedupe({ windowMs: 60_000, fields: ['body.'] }), 'dedupe');
     refused(
-      () => validateDedupe({ windowMs: MAX_DEDUPE_WINDOW_MS + 1, fields: ['queue'] }),
+      () =>
+        validateDedupe({
+          windowMs: 60_000,
+          fields: ['body.a', 'body.b', 'body.c', 'body.d', 'body.e', 'body.f'],
+        }),
+      'dedupe'
+    );
+    refused(() => validateDedupe({ windowMs: 60_000, fields: ['body.id'], extra: 1 }), 'dedupe');
+    refused(() => validateDedupe({ windowMs: 999, fields: ['body.id'] }), 'dedupe');
+    refused(
+      () => validateDedupe({ windowMs: MAX_DEDUPE_WINDOW_MS + 1, fields: ['body.id'] }),
       'dedupe'
     );
   });
 
-  test('values are the same for equal events and differ when one chosen field does', () => {
-    const a = { event: 'job.failed', queue: 'q', jobId: 'j1', occurredAt: 1, error: 'boom' };
-    const b = { ...a, jobId: 'j2', occurredAt: 99 };
-    expect(dedupeValues(['queue', 'error'], a)).toBe(dedupeValues(['queue', 'error'], b));
-    expect(dedupeValues(['jobId'], a)).not.toBe(dedupeValues(['jobId'], b));
+  test('values are the same for equal requests and differ when one chosen path does', () => {
+    const a = { body: { queue: 'q', id: 'j1', error: 'boom' } };
+    const b = { body: { queue: 'q', id: 'j2', error: 'boom' } };
+    expect(dedupeValues(['body.queue', 'body.error'], a)).toBe(
+      dedupeValues(['body.queue', 'body.error'], b)
+    );
+    expect(dedupeValues(['body.id'], a)).not.toBe(dedupeValues(['body.id'], b));
     // A missing value is not the text "null".
-    expect(dedupeValues(['error'], { ...a, error: null })).not.toBe(
-      dedupeValues(['error'], { ...a, error: 'null' })
+    expect(dedupeValues(['body.error'], { body: {} })).not.toBe(
+      dedupeValues(['body.error'], { body: { error: 'null' } })
     );
   });
 

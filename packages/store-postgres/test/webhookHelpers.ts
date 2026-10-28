@@ -1,9 +1,5 @@
-import type { WebhookEvent } from '@qelay-cloud/core';
-import { WEBHOOK_EVENTS } from '@qelay-cloud/core';
-import { createMsgpackCodec } from '../src/codec';
-import type { StoreEvent } from '../src/store/events';
-import { journalRecorder } from '../src/store/journal';
 import type { WebhookIssued, WebhookSpec } from '../src/store/webhookTypes';
+import { post } from './inboundHelpers';
 import type { TestStore } from './storeHelpers';
 import { START } from './storeHelpers';
 
@@ -13,67 +9,60 @@ export const SECRET = 'whsec_0123456789abcdef0123456789abcdef';
 
 export const POLICY = { maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 60_000 };
 
-const recorder = journalRecorder({ namespace: 'test', codec: createMsgpackCodec() });
+/** The one source the routes of `addHook` listen to; made on first use (tests reset the tables between cases). */
+export async function hookSource(t: Pick<TestStore, 'store'>): Promise<string> {
+  const found = (await t.store.sources.list()).find((source) => source.name === 'hooks');
+  return found?.id ?? (await t.store.sources.create({ name: 'hooks' }, 'tester')).id;
+}
 
-/** Registers a webhook for every event unless told otherwise. */
-export function addHook(
+/** Registers a route of the hooks source unless told otherwise. */
+export async function addHook(
   t: Pick<TestStore, 'store'>,
   spec: Partial<WebhookSpec> = {}
 ): Promise<WebhookIssued> {
   return t.store.webhooks.create(
-    { url: 'https://hooks.example.com/in', events: [...WEBHOOK_EVENTS], ...spec },
+    { url: 'https://hooks.example.com/in', source: await hookSource(t), ...spec },
     'tester'
   );
 }
 
-/** Writes journal events as an operation would, one transaction, at the clock's time. */
-export async function journal(t: TestStore, events: readonly StoreEvent[]): Promise<void> {
-  await t.fresh.sql.begin((tx) => recorder.record(tx, events, t.clock.now()));
+/** One JSON request to the hooks source, as the ingest would hand it over: every route that passes makes a delivery. */
+export async function send(
+  t: Pick<TestStore, 'store'>,
+  body: unknown = { n: 1 },
+  extra: Parameters<typeof post>[1] = {}
+): Promise<string> {
+  const result = await t.store.sources.accept(await hookSource(t), post(body, extra));
+  if (result.outcome !== 'accepted') throw new Error(`not accepted: ${result.outcome}`);
+  return result.id;
 }
 
-/** As `journal`, but the transaction stays open (its events uncommitted) until `hold` settles. */
-export async function journalHeld(
-  t: TestStore,
-  events: readonly StoreEvent[],
-  hold: Promise<void>
+/** `send` for each body in turn. */
+export async function sendAll(
+  t: Pick<TestStore, 'store'>,
+  bodies: readonly unknown[]
 ): Promise<void> {
-  await t.fresh.sql.begin(async (tx) => {
-    await recorder.record(tx, events, t.clock.now());
-    await hold;
-  });
+  for (const body of bodies) await send(t, body);
 }
-
-export const event = (
-  type: StoreEvent['type'],
-  queue = 'q',
-  jobId = 'j1',
-  extra: Partial<StoreEvent> = {}
-): StoreEvent => ({ type, queue, jobId, state: 'waiting', ...extra });
 
 export interface RawDelivery {
   readonly id: string;
   readonly webhook_id: string;
   readonly event_name: string;
-  readonly queue: string;
-  readonly job_id: string;
+  readonly request_id: string | null;
   readonly status: string;
   readonly attempts: number;
   readonly attempt_base: number;
   readonly next_attempt_at: string | number;
-  readonly event_id: string | null;
 }
 
 export async function rawDeliveries(t: TestStore): Promise<RawDelivery[]> {
   return t.fresh.sql<RawDelivery[]>`
-    SELECT d.id::text AS id, d.webhook_id, d.event_name, d.queue, d.job_id, d.status, d.attempts,
-           d.attempt_base, d.next_attempt_at, d.event_id::text AS event_id
+    SELECT d.id::text AS id, d.webhook_id, d.event_name, d.request_id::text AS request_id, d.status, d.attempts,
+           d.attempt_base, d.next_attempt_at
     FROM qcloud_deliveries d ORDER BY d.id`;
 }
 
-export const names = async (t: TestStore): Promise<string[]> =>
-  (await rawDeliveries(t)).map((row) => row.event_name);
-
-export type { WebhookEvent };
 export { START };
 
 export const CLAIM = { limit: 50, leaseMs: 30_000, ratePerMinute: 1_000 };

@@ -115,7 +115,7 @@ describe('Events timeline', () => {
     const page = at(EVENTS, createElement(Events));
     await settle(30);
     expect(page.host.textContent).toContain('Timeline unavailable');
-    expect(page.host.textContent).toContain('job-9');
+    expect(page.host.textContent).toContain('Request 9');
     page.unmount();
   });
 
@@ -253,7 +253,7 @@ describe('Saved views', () => {
       serveGateway([route()], [delivery()]);
       const page = at(`${EVENTS}?route=hook-1`, createElement(Events));
       await settle(20);
-      expect(page.host.textContent).toContain('job-9');
+      expect(page.host.textContent).toContain('Request 9');
       setInput(nameInput(page.host), 'Anything');
       expect(buttonByText(page.host, 'Save view').disabled).toBe(true);
       expect(page.host.textContent).toContain('This browser blocks storage');

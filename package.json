@@ -10,7 +10,7 @@
     "lint": "oxlint .",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "architecture": "bun run scripts/check-file-size.ts && bun run scripts/check-transport-boundary.ts && bun run scripts/check-workflow-boundary.ts",
+    "architecture": "bun run scripts/check-file-size.ts && bun run scripts/check-transport-boundary.ts && bun run scripts/check-workflow-boundary.ts && bun run scripts/check-ingest-boundary.ts",
     "check:terraform": "bun run scripts/check-terraform-plan.ts && bun run scripts/check-terraform-plan-aws.ts && bun run scripts/check-terraform-control-plane.ts && bun run scripts/check-terraform-control-plane-aws.ts",
     "test": "bun test",
     "test:model": "bun test test/model",

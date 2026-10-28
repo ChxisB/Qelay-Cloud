@@ -16,8 +16,8 @@ installTestHooks();
 
 const HOME = '/events-gateway';
 const routes = () => [
-  route({ id: 'a', filter: { queue: 'emails' }, shape: { id: 'x' } }),
-  route({ id: 'b', destination: 'queue', url: '', target: 'refunds', queue: 'orders' }),
+  route({ id: 'a', filter: { 'body.kind': 'invoice' }, shape: { id: 'x' } }),
+  route({ id: 'b', destination: 'queue', url: '', target: 'refunds', source: 'orders-hook' }),
   route({ id: 'c', enabled: false, disabledReason: 'failing', url: 'https://other.test/x' }),
 ];
 const rows = (host: HTMLElement) => host.querySelectorAll('tbody tr').length;
@@ -69,14 +69,14 @@ describe('Connections view', () => {
     view.unmount();
   });
 
-  test('search narrows by destination and by queue, and the address keeps it', async () => {
+  test('search narrows by destination and by source, and the address keeps it', async () => {
     serveGateway(routes());
     const view = at(`${HOME}?view=table`, createElement(Connections));
     await settle(20);
     setInput(search(view.host), 'refunds');
     await settle(5);
     expect(rows(view.host)).toBe(1);
-    setInput(search(view.host), 'orders');
+    setInput(search(view.host), 'orders-hook');
     await settle(5);
     expect(rows(view.host)).toBe(1);
     view.unmount();

@@ -105,22 +105,26 @@ describeDb('game day: workers', () => {
       const { entries } = await api.get('/queues/jobs/dlq');
       expect(entries.map((e: any) => e.error)).toEqual(Array(4).fill('upstream API changed'));
       expect((await s.store.metrics.totals()).failed).toBe(4); // what the optional failed_total alert reads
-      expect((await api.call('POST', '/queues/jobs/dlq/retry')).status).toBe(501); // retry is not offered: the runbook says so
+      // Putting work back names the queue, so a stray call cannot do it.
+      expect((await api.call('POST', '/queues/jobs/dlq/retry')).status).toBe(400);
+      expect((await s.queue().getJobCounts()).failed).toBe(4);
 
-      // Fix the handler, add the work again from the entries' own data: new jobs, new ids.
+      // Fix the handler, then retry the entries the runbook way: the same jobs go back, nothing is added.
       await broken.close({ timeout: 1_000, graceMs: 0 });
       const ran = new Ledger();
       s.worker((job) => void ran.record(job.id, job.attemptsMade));
-      const again = [];
-      for (const entry of entries) {
-        const { job } = await api.get(`/jobs/${entry.job.id}`);
-        again.push(await s.queue().add(job.name, job.data, { jobId: `${job.id}-again` }));
-      }
+      expect(await api.post('/queues/jobs/dlq/retry', { confirm: 'jobs' })).toEqual({
+        ok: true,
+        count: 4,
+        remaining: 0,
+        done: true,
+      });
       await untilFinished(
         s,
-        again.map((job) => job.id)
+        jobs.map((job) => job.id)
       );
       expect(ran.total).toBe(4);
+      expect((await api.get('/queues/jobs/dlq/stats')).stats.total).toBe(0);
       expect((await s.store.metrics.totals()).failed).toBe(4); // stopped rising
     } finally {
       await s.drop();

@@ -215,3 +215,5 @@ jobs:
         run: |
           helm lint charts/qelay -f charts/qelay/ci/values.yaml
           helm template qelay charts/qelay -f charts/qelay/ci/values.yaml > /dev/null
+          helm lint charts/qelay -f charts/qelay/ci/values.yaml -f charts/qelay/ci/autoscaling.yaml
+          helm template qelay charts/qelay -f charts/qelay/ci/values.yaml -f charts/qelay/ci/autoscaling.yaml > /dev/null

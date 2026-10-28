@@ -1,10 +1,18 @@
-import type { DlqEntry } from '@qelay-cloud/core';
+import type {
+  DlqEntry,
+  DlqRetryManyOptions,
+  DlqRetryRefusal,
+  QueuePolicy,
+  QueueRunWindowInput,
+  QueueRunWindowState,
+} from '@qelay-cloud/core';
 import { UnsupportedOptionError } from '@qelay-cloud/core';
 import type { DlqStats, LogLevel, WorkerInfo } from '@qelay-cloud/store-postgres';
 import { DEFAULT_PAGE_SIZE } from '@qelay-cloud/store-postgres';
 import type { Job } from './job';
 import { fromDetails } from './job';
 import { addLog, ownedRecord } from './jobOps';
+import { ringAfterCommit } from './ring';
 import type { Runtime } from './runtime';
 
 /** Per-queue settings, the DLQ and the job logs. */
@@ -55,6 +63,20 @@ export async function setDlq(rt: Runtime, config: Partial<DlqConfig>): Promise<D
 export async function getDlq(rt: Runtime): Promise<DlqConfig> {
   return (await rt.store.queues.config(rt.name)).dlq;
 }
+
+export const getPolicy = (rt: Runtime): Promise<QueuePolicy | null> =>
+  rt.store.queues.policy(rt.name);
+
+export const setPolicy = (rt: Runtime, policy: QueuePolicy | null): Promise<QueuePolicy | null> =>
+  rt.store.queues.setPolicy(rt.name, policy);
+
+export const getRunWindow = (rt: Runtime): Promise<QueueRunWindowState | null> =>
+  rt.store.queues.runWindow(rt.name);
+
+export const setRunWindow = (
+  rt: Runtime,
+  window: QueueRunWindowInput | null
+): Promise<QueueRunWindowState | null> => rt.store.queues.setRunWindow(rt.name, window);
 
 /** One page of the DLQ, oldest failure first. The entry names the job: read it with `getJob`. */
 export async function dlqEntries(rt: Runtime, filter: DlqFilter = {}): Promise<DlqEntry[]> {
@@ -148,4 +170,31 @@ export async function clearLogs(rt: Runtime, id: string, keepLogs?: number): Pro
 /** The workers registered in the namespace that take jobs of this queue. */
 export async function queueWorkers(rt: Runtime): Promise<WorkerInfo[]> {
   return (await rt.store.workers.list()).filter((worker) => worker.queues.includes(rt.name));
+}
+
+/** What `Queue.retryDlq` answers: the job is waiting again, or why it was left where it was. */
+export type DlqRetryAnswer =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: DlqRetryRefusal };
+
+/** Puts one failed job of the queue back, with no attempt used, and rings its bell. See `StateStore.retryDlq`. */
+export async function retryDlq(
+  rt: Runtime,
+  id: string,
+  options?: { readonly expectedVersion?: number }
+): Promise<DlqRetryAnswer> {
+  const result = await rt.store.retryDlq(rt.name, id, options);
+  if (!result.ok) return result;
+  await ringAfterCommit(rt, result.rings);
+  return { ok: true };
+}
+
+/** Puts up to `limit` failed jobs back, oldest failure first. See `StateStore.retryDlqMany`. */
+export async function retryDlqMany(
+  rt: Runtime,
+  options: DlqRetryManyOptions
+): Promise<{ readonly retried: string[]; readonly remaining: number }> {
+  const result = await rt.store.retryDlqMany(rt.name, options);
+  await ringAfterCommit(rt, result.rings);
+  return { retried: [...result.retried], remaining: result.remaining };
 }

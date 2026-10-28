@@ -42,9 +42,9 @@ test('sends every removed classic path to its page, keeping the query string', a
     await expect(page.getByText('That page does not exist')).toHaveCount(0);
   }
 
-  // S3 backup belongs to a server that holds its own database; this deployment has none.
-  await navigateInApp(page, '/s3-classic', '/s3');
-  await expect(page.getByText('Not available in this deployment')).toBeVisible();
+  // The old S3 backup page became Backups, where the operator declares how the database is backed up.
+  await navigateInApp(page, '/s3-classic', '/backups');
+  await expect(page.locator('#main h1').first()).toHaveText('Backups');
 
   expectNoBrowserErrors(browserErrors);
 });

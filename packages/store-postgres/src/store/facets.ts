@@ -1,4 +1,10 @@
-import type { JobRecord, JobState } from '@qelay-cloud/core';
+import type {
+  JobRecord,
+  JobState,
+  QueuePolicy,
+  QueueRunWindowInput,
+  QueueRunWindowState,
+} from '@qelay-cloud/core';
 import type { CronRecord, CronSpec } from '../cron/types';
 import type { AuditEntry, AuditIntent, AuditPage, AuditQuery, AuditResult } from './audit';
 import {
@@ -27,6 +33,8 @@ import type { JobLogEntry, LogLevel } from './logs';
 import { addJobLog, clearJobLogs, listJobLogs } from './logs';
 import type { DlqConfigPatch, QueueConfig, StallConfigPatch } from './queueConfig';
 import { getQueueConfig, setDlqConfig, setStallConfig } from './queueConfig';
+import { getQueuePolicy, setQueuePolicy } from './queuePolicy';
+import { getRunWindow, setRunWindow } from './queueWindow';
 import type { DashboardTotals, JobStatePage, QueueSummaryPage } from './readModels';
 import {
   dashboardTotals,
@@ -105,12 +113,27 @@ export interface QueueApi {
   setStallConfig(queue: string, patch: StallConfigPatch): Promise<QueueConfig>;
   /** Patch: only the keys given change. Lowering `maxEntries` trims the DLQ in the same transaction. */
   setDlqConfig(queue: string, patch: DlqConfigPatch): Promise<QueueConfig>;
+  /** The retry policy, or null. See `queuePolicy.ts`. */
+  policy(queue: string): Promise<QueuePolicy | null>;
+  /** Replaces the retry policy; `null` or `{}` removes it. Applies to jobs added after it is saved. */
+  setPolicy(queue: string, policy: QueuePolicy | null): Promise<QueuePolicy | null>;
+  /** The run window and where it stands, or null. See `queueWindow.ts`. */
+  runWindow(queue: string): Promise<QueueRunWindowState | null>;
+  /** Replaces the run window; `null` removes it. The jobs of a closed queue wait for it to open. */
+  setRunWindow(
+    queue: string,
+    window: QueueRunWindowInput | null
+  ): Promise<QueueRunWindowState | null>;
 }
 
 export const queueApi = (ctx: StoreContext): QueueApi => ({
   config: (queue) => getQueueConfig(ctx, queue),
   setStallConfig: (queue, patch) => setStallConfig(ctx, queue, patch),
   setDlqConfig: (queue, patch) => setDlqConfig(ctx, queue, patch),
+  policy: (queue) => getQueuePolicy(ctx, queue),
+  setPolicy: (queue, policy) => setQueuePolicy(ctx, queue, policy),
+  runWindow: (queue) => getRunWindow(ctx, queue),
+  setRunWindow: (queue, window) => setRunWindow(ctx, queue, window),
 });
 
 /** What the panel's lists and dashboard read (`store.readModels`). Each call is one bounded query. */

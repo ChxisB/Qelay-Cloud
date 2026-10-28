@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/Button';
 import { StatusPill } from '@/components/ui/StatusBadge';
 import { Table, TableScroll, Td, Th, THead, Tr } from '@/components/ui/Table';
 import type { DlqEntryFull } from '@/lib/bqTypes';
@@ -6,14 +7,23 @@ import { cn } from '@/lib/cn';
 import { formatRelativeTime } from '@/lib/format';
 import { useFirstLoad } from '@/lib/useFirstLoad';
 
+/** A flow member goes back through its flow, never alone: the server refuses it (409 `flow_member`). */
+const inFlow = (entry: DlqEntryFull) => entry.job.parentId != null || entry.job.flowRoot != null;
+
 export function DlqProTable({
   entries,
   expanded,
   onToggle,
+  onRetry,
+  retrying,
 }: {
   entries: DlqEntryFull[];
   expanded: Set<string>;
   onToggle: (key: string) => void;
+  /** Absent when the caller may not retry or the server has closed it: the column is left out. */
+  onRetry?: (entry: DlqEntryFull) => void;
+  /** The id of the job being retried now. */
+  retrying?: string | null;
 }) {
   // The rows of the first load rise in a stagger; a row a poll adds later does not.
   const first = useFirstLoad(entries.length > 0);
@@ -27,6 +37,11 @@ export function DlqProTable({
             <Th>Reason</Th>
             <Th>Error</Th>
             <Th right>Entered</Th>
+            {onRetry && (
+              <Th right>
+                <span className="sr-only">Retry</span>
+              </Th>
+            )}
           </tr>
         </THead>
         <tbody>
@@ -65,6 +80,24 @@ export function DlqProTable({
                   )}
                 </Td>
                 <Td className="text-right text-muted">{formatRelativeTime(entry.enteredAt)}</Td>
+                {onRetry && (
+                  <Td className="text-right">
+                    {inFlow(entry) ? (
+                      <span className="text-xs text-muted" title="Retry the flow instead">
+                        In a flow<span className="sr-only">: retry the flow instead</span>
+                      </span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        aria-label={`Retry job ${entry.job.id}`}
+                        disabled={retrying != null}
+                        onClick={() => onRetry(entry)}
+                      >
+                        {retrying === entry.job.id ? 'Retrying…' : 'Retry'}
+                      </Button>
+                    )}
+                  </Td>
+                )}
               </Tr>
             );
           })}

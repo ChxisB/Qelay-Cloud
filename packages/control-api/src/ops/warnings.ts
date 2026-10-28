@@ -1,3 +1,4 @@
+import type { BackupMechanism } from '@qelay-cloud/store-postgres';
 import type { DeploymentResponse, DeploymentWarning } from '../opsTypes';
 import { spoken } from './tick';
 
@@ -9,8 +10,23 @@ type Parts = Pick<
   DeploymentResponse,
   'devToken' | 'schema' | 'database' | 'transport' | 'connections' | 'tick' | 'doorbells'
 > & {
+  /**
+   * What the tick has to do on time. Each count is null when it could not be read, and then says nothing.
+   * `tickIntervalMs` is what the deployer declared (the scheduler's period), or null.
+   */
+  readonly timing: {
+    readonly tickIntervalMs: number | null;
+    /** Enabled routes that hold their events for a schedule. */
+    readonly scheduledRoutes: number | null;
+    /** Enabled routes whose delay is shorter than the tick's period. */
+    readonly shortDelayRoutes: number | null;
+    /** Queues outside their run window now. */
+    readonly closedWindows: number | null;
+  };
   /** Webhooks failing (alert level 1 to 3) and paused, or null when they could not be read. */
   readonly webhooks: { readonly failing: number; readonly paused: number } | null;
+  /** What the operator declared for backups (D18): a mechanism, `undeclared`, or null when it could not be read. */
+  readonly backup: BackupMechanism | 'undeclared' | null;
 };
 
 /**
@@ -51,6 +67,34 @@ export function deploymentWarnings(parts: Parts): DeploymentWarning[] {
     );
   } else if (tick.state === 'unknown') {
     add('tick_unknown', 'warning', "Maintenance's state could not be read.");
+  }
+  // shortcut: sending turned off in the tick's own settings (QCLOUD_WEBHOOK_BATCH=0) is not visible here; only a tick that is not running is.
+  const noTick = tick.state === 'never' || tick.state === 'stale';
+  const { timing } = parts;
+  if (noTick && timing.scheduledRoutes !== null && timing.scheduledRoutes > 0) {
+    add(
+      'schedule_without_sender',
+      'warning',
+      `${timing.scheduledRoutes} route(s) hold events for a schedule, and the sender that releases them runs in maintenance, which is not running. Nothing is sent at the scheduled time.`
+    );
+  }
+  if (noTick && timing.closedWindows !== null && timing.closedWindows > 0) {
+    add(
+      'window_without_tick',
+      'warning',
+      `${timing.closedWindows} queue(s) are outside their run window, and maintenance, which rings them when it opens, is not running. Their jobs stay waiting after the window opens.`
+    );
+  }
+  if (
+    timing.tickIntervalMs !== null &&
+    timing.shortDelayRoutes !== null &&
+    timing.shortDelayRoutes > 0
+  ) {
+    add(
+      'delay_finer_than_tick',
+      'warning',
+      `${timing.shortDelayRoutes} route(s) delay events by less than the maintenance period (${spoken(timing.tickIntervalMs)}): they are sent up to one period late. Run maintenance more often, or set a longer delay.`
+    );
   }
   if (schema.state === 'ahead') {
     add(
@@ -112,6 +156,15 @@ export function deploymentWarnings(parts: Parts): DeploymentWarning[] {
       'warning',
       `${parts.webhooks.failing} webhook(s) have many failed deliveries in a row and will be paused if it continues.`
     );
+  }
+  if (parts.backup === 'undeclared') {
+    add(
+      'backup_undeclared',
+      'warning',
+      'No backup mechanism is declared. Say how this database is backed up on the Backups page, even if the answer is your own tooling.'
+    );
+  } else if (parts.backup === 'none') {
+    add('backup_none', 'warning', 'This database is declared as not backed up.');
   }
   if (parts.devToken) {
     add(

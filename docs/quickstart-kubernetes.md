@@ -74,6 +74,42 @@ workers:
     replicas: 2
 ```
 
+## 4. Scale it
+
+Everything is a fixed `replicas` until you turn autoscaling on, and the API, ingest, the webhook sender and every worker take
+the same two blocks:
+
+```yaml
+api:
+  resources: { requests: { cpu: 250m } }
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 6, targetCPU: 70 }
+  podDisruptionBudget: { enabled: true, maxUnavailable: 1 }
+database:
+  maxConnections: 200   # your server's max_connections: the render fails if the fleet at its largest needs more
+workers:
+  - name: orders
+    image: ghcr.io/me/orders-worker:1.2.3
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 20
+      triggers:           # KEDA (installed on the cluster): follow the backlog, not the CPU
+        - type: gcp-pubsub
+          metadata: { subscriptionName: "qcloud.default.sub.orders", mode: SubscriptionSize, value: "100" }
+```
+
+- **CPU** (a HorizontalPodAutoscaler) is right for the API and ingest, which answer requests. It needs `resources.requests.cpu`;
+  the render fails without it. A worker's CPU says little about its backlog, so give it `triggers`, a KEDA ScaledObject. On SQS
+  use `type: aws-sqs-queue` with `queueURL`, `queueLength` and `awsRegion` for the queue `qcloud-<namespace>__<queue>`. The
+  trigger's authentication (`authenticationRef`) is yours; the pods' own role is not used by KEDA.
+- **Connections are the ceiling.** Each pod holds `poolSize` connections, so `maxReplicas x poolSize` summed over the fleet plus 6
+  must fit `max_connections` ([operations](operations.md)). Set `database.maxConnections` and the render refuses a chart that
+  could outgrow it; behind a transaction pooler (`database.pooler: transaction`) the pooler's pool is the limit instead.
+- **The tick loop is not autoscaled.** One replica ticks at a time, the rest wait; more replicas buy failover, not speed. To
+  send more webhook deliveries, scale the sender, not the tick.
+- A **disruption budget** keeps a node drain from taking every replica at once. It is off by default because a single replica
+  with `minAvailable: 1` would block the drain.
+
 ## Upgrading and rolling back
 
 `helm upgrade qelay oci://ghcr.io/chxisb/charts/qelay --version X.Y.Z -f values.yaml` migrates first, and the new pods report
@@ -83,4 +119,5 @@ older build runs against the newer schema ([operations](operations.md#rolling-ba
 ## Next
 
 - [Operations](operations.md): connection budget, upgrading, backups.
+- [Production settings](production.md): the tick, retries, run windows, batches and retention to start with.
 - [Quickstart: GCP](quickstart-gcp.md) or [AWS](quickstart-aws.md): Terraform in place of Kubernetes.

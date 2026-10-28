@@ -18,14 +18,20 @@ coverage/
 *.tfstate.*
 crash.log
 *.tfvars
+*.tfplan
 
-# Claude Code local state
+# Debug logs from bun, npm and friends
+*.log
+
+# Claude Code local state and the agent's working notes. Only .claude/skills/ is committed.
 .claude/worktrees/
 .claude/settings.local.json
+.claude/.planning/
+.claude/completions/
+.claude/sessions/
 
 # Throwaway TLS certificate exported by the postgres-tls compose service
 test/support/pgbouncer/.tls/
-*.tfplan
 
 # Playwright output
 test-results/

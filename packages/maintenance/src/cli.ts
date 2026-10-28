@@ -18,7 +18,7 @@ import { runTicks } from './tick';
 import { resolveWebhookConfig } from './webhookConfig';
 import { pooledSending, runWebhookLoop } from './webhookLoop';
 
-export const USAGE = `usage: qcloud-tick [run | serve | loop | send | webhook-writer on|off|status]
+export const USAGE = `usage: qcloud-tick [run | serve | loop | send]
 
   run     one invocation of the tick, then exit (Cloud Run Jobs, ECS scheduled tasks).
           Prints the report as one JSON line. Exit 0 when every pass ran and every bell was rung and
@@ -32,10 +32,6 @@ export const USAGE = `usage: qcloud-tick [run | serve | loop | send | webhook-wr
   send    the webhook sender alone, as a long-running process: it keeps connections to receivers open,
           caches names and backs off from a receiver that is down (docs/webhooks.md). It does not
           tick, and runs until SIGTERM. Run it next to the tick, which keeps sending a few at a time.
-  webhook-writer on|off|status
-          switches who makes webhook deliveries: the job's own transaction (off, the default) or
-          the sender, from the event journal (on; needed for a webhook's filter and shape). Safe to
-          repeat, loses no event either way, and prints the state as one JSON line (docs/webhooks.md).
 
 Settings come from the environment: QCLOUD_DATABASE_URL (required), QCLOUD_NAMESPACE, or for
 many databases QCLOUD_SHARDS (namespace=shard pairs) with QCLOUD_SHARD_<NAME>_DATABASE_URL, and for loop
@@ -104,6 +100,9 @@ export function openRuntime(
       ...(settings.webhooks.keepMs === undefined
         ? {}
         : { webhookKeepMs: settings.webhooks.keepMs }),
+      ...(settings.completedRetentionMs === undefined
+        ? {}
+        : { completedRetentionMs: settings.completedRetentionMs }),
     }),
     transport,
   };
@@ -166,12 +165,9 @@ export async function main(
   } = {}
 ): Promise<number> {
   const command = argv[0] ?? 'run';
-  const action = argv[1];
   const known =
-    command === 'webhook-writer'
-      ? argv.length === 2 && (action === 'on' || action === 'off' || action === 'status')
-      : argv.length <= 1 &&
-        (command === 'run' || command === 'serve' || command === 'loop' || command === 'send');
+    argv.length <= 1 &&
+    (command === 'run' || command === 'serve' || command === 'loop' || command === 'send');
   if (!known) {
     io.err(USAGE);
     return 2;
@@ -185,20 +181,8 @@ export async function main(
     if (settings.shard !== undefined && command !== 'loop') {
       throw new UnsupportedOptionError(
         'QCLOUD_SHARD',
-        'is for loop only: run, serve, send and webhook-writer work on one namespace (QCLOUD_NAMESPACE)'
+        'is for loop only: run, serve and send work on one namespace (QCLOUD_NAMESPACE)'
       );
-    }
-    if (command === 'webhook-writer') {
-      sender = (options.openStore ?? openSenderStore)(settings);
-      const { webhooks } = sender;
-      const state =
-        action === 'on'
-          ? await webhooks.startWriter()
-          : action === 'off'
-            ? await webhooks.stopWriter()
-            : await webhooks.writerState();
-      io.out(JSON.stringify(state));
-      return 0;
     }
     if (command === 'send') {
       const webhooks = resolveWebhookConfig(settings.webhooks.sender, settings.webhooks.urlPolicy);

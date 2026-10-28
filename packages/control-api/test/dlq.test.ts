@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { describeDb } from '../../../test/support/db';
 import { claimOne } from '../../store-postgres/test/finishHelpers';
+import { addTree, failFor, fanOut } from '../../store-postgres/test/flowHelpers';
 import { enqueueN } from '../../store-postgres/test/storeHelpers';
 import type { JobsApi, JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
@@ -144,25 +145,118 @@ describeDb('dead-letter queue routes', () => {
     expect((await api.call('GET', '/queues/q/dlq')).body.total).toBe(1);
   });
 
-  test('retry is closed and the capabilities list says so', async () => {
+  /** The version of a DLQ entry, as the panel reads it and sends it back. */
+  const versionOf = async (id: string): Promise<number> => {
+    const { entries } = (await api.call('GET', '/queues/q/dlq')).body;
+    return entries.find((entry: { job: { id: string } }) => entry.job.id === id).job.version;
+  };
+
+  test('retrying one entry puts the job back as waiting, takes it off the DLQ and audits the route and id', async () => {
     const [id] = await failJobs(1);
-    const all = await api.call('POST', '/queues/q/dlq/retry');
-    expect(all).toMatchObject({
-      status: 501,
-      body: { error: { code: 'not_supported', details: { capability: 'dlq-retry' } } },
+    const answer = await api.call('POST', `/queues/q/dlq/${id}/retry`, {
+      expectedVersion: await versionOf(id!),
     });
-    const one = await api.call('POST', `/queues/q/dlq/${id}/retry`);
-    expect(one.status).toBe(501);
-    const capabilities = await api.call('GET', '/capabilities');
-    expect(capabilities.body.unsupported).toContain('dlq-retry');
+    expect(answer).toMatchObject({ status: 200, body: { ok: true } });
+    expect((await api.call('GET', '/queues/q/dlq')).body.total).toBe(0);
+    expect((await api.call('GET', `/jobs/${id}`)).body.job).toMatchObject({
+      state: 'waiting',
+      attempts: 0,
+    });
+    const [entry] = (await f.store.audit.list({ limit: 1 })).items;
+    expect(entry).toMatchObject({
+      action: 'POST /queues/:queue/dlq/:jobId/retry',
+      outcome: 'success',
+      status: 200,
+    });
+    expect(entry!.target).toContain(id!);
+    expect(JSON.stringify(entry)).not.toContain('boom');
+  });
+
+  test('a retry the job does not take is 4xx, names why and changes nothing', async () => {
+    const [id] = await failJobs(1);
+    const [waiting] = await enqueueN(f.store, 1, {}, 'q');
+    const version = await versionOf(id!);
+    const refused = async (job: string, body?: object) => {
+      const answer = await api.call('POST', `/queues/q/dlq/${job}/retry`, body);
+      return [answer.status, answer.body.error.code];
+    };
+    expect(await refused('nope')).toEqual([404, 'job_not_found']);
+    expect(await refused(id!, { expectedVersion: version + 1 })).toEqual([409, 'version_conflict']);
+    expect(await refused(waiting!)).toEqual([409, 'job_state']);
+    expect(await refused(id!, { expected: version })).toEqual([400, 'invalid_request']);
     expect((await api.call('GET', '/queues/q/dlq')).body.total).toBe(1);
+    // The first caller wins; the second finds a waiting job, not a failed one.
+    expect((await api.call('POST', `/queues/q/dlq/${id}/retry`)).status).toBe(200);
+    expect(await refused(id!)).toEqual([409, 'job_state']);
+  });
+
+  test('a flow member and a job whose dedup key is taken are 409 and stay in the DLQ', async () => {
+    await addTree(f.store, fanOut(1));
+    const child = await failFor(f.t, 'children');
+    const flow = await api.call('POST', `/queues/children/dlq/${child.id}/retry`);
+    expect(flow).toMatchObject({ status: 409, body: { error: { code: 'flow_member' } } });
+
+    const dedup = { deduplication: { id: 'k' } };
+    const job = await claimOne(f.t, { attempts: 1, ...dedup }, 'q', 'w');
+    await f.store.fail(job.lease, { message: 'boom', unrecoverable: true });
+    await f.store.enqueue([{ queue: 'q', data: 2, options: dedup }]);
+    const taken = await api.call('POST', `/queues/q/dlq/${job.id}/retry`);
+    expect(taken).toMatchObject({ status: 409, body: { error: { code: 'duplicate_job' } } });
+    expect((await api.call('GET', '/queues/q/dlq')).body.total).toBe(1);
+  });
+
+  test('retrying a set needs the queue name, stops at the limit, says what is left and takes a reason', async () => {
+    const ids = await failJobs(3);
+    for (const body of [undefined, {}, { confirm: 'other' }]) {
+      const answer = await api.call('POST', '/queues/q/dlq/retry', body);
+      expect(answer.body.error.code).toBe('confirmation_required');
+    }
+    expect((await api.call('GET', '/queues/q/dlq')).body.total).toBe(3);
+
+    const first = await api.call('POST', '/queues/q/dlq/retry', { confirm: 'q', limit: 2 });
+    expect(first.body).toEqual({ ok: true, count: 2, remaining: 1, done: false });
+    const left = (await api.call('GET', '/queues/q/dlq')).body.entries;
+    expect(left.map((entry: { job: { id: string } }) => entry.job.id)).toEqual([ids[2]]);
+
+    const none = await api.call('POST', '/queues/q/dlq/retry', { confirm: 'q', reason: 'timeout' });
+    expect(none.body).toEqual({ ok: true, count: 0, remaining: 0, done: true });
+    const rest = await api.call('POST', '/queues/q/dlq/retry', { confirm: 'q' });
+    expect(rest.body).toEqual({ ok: true, count: 1, remaining: 0, done: true });
+    expect((await api.call('GET', '/queues/q/counts')).body.counts.waiting).toBe(3);
+    const [entry] = (await f.store.audit.list({ limit: 1 })).items;
+    expect(entry).toMatchObject({ action: 'POST /queues/:queue/dlq/retry', status: 200 });
+  });
+
+  test('a set is limited to 1 to 500 and to the four reasons, and only that queue is retried', async () => {
+    await failJobs(1, 'other');
+    for (const body of [{ limit: 0 }, { limit: 501 }, { limit: 1.5 }, { reason: 'because' }]) {
+      const answer = await api.call('POST', '/queues/q/dlq/retry', { confirm: 'q', ...body });
+      expect(answer.status, JSON.stringify(body)).toBe(400);
+    }
+    const none = await api.call('POST', '/queues/q/dlq/retry', { confirm: 'q', limit: 500 });
+    expect(none.body).toEqual({ ok: true, count: 0, remaining: 0, done: true });
+    expect((await api.call('GET', '/queues/other/dlq')).body.total).toBe(1);
+  });
+
+  test('the capabilities no longer list retry or retention as closed, and still list auto-retry', async () => {
+    const { unsupported } = (await api.call('GET', '/capabilities')).body;
+    expect(unsupported).not.toContain('dlq-retry');
+    expect(unsupported).not.toContain('dlq-retention');
+    expect(unsupported).toContain('dlq-auto-retry');
   });
 
   test('a viewer reads the DLQ and cannot purge or retry', async () => {
     await failJobs(1);
     expect((await api.asViewer('GET', '/queues/q/dlq')).status).toBe(200);
     expect((await api.asViewer('GET', '/queues/q/dlq/stats')).status).toBe(200);
-    for (const path of ['/queues/q/dlq/purge', '/queues/q/dlq/retry']) {
+    const [id] = (await api.call('GET', '/queues/q/dlq')).body.entries.map(
+      (entry: { job: { id: string } }) => entry.job.id
+    );
+    for (const path of [
+      '/queues/q/dlq/purge',
+      '/queues/q/dlq/retry',
+      `/queues/q/dlq/${id}/retry`,
+    ]) {
       const answer = await api.asViewer('POST', path, { confirm: 'q' });
       expect(answer.status, path).toBe(403);
     }

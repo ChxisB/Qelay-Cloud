@@ -25,6 +25,7 @@ the go-ahead of decision D9. What was and was not run is at the end ([What has n
 | `<name>-api` | control plane | `qcloud-api serve` |
 | `<name>-panel` | control plane | the panel's static build and the server that makes `/config.json` |
 | `<name>-migrate` | control plane (Cloud Run Job) | `qcloud-api migrate`, once per release |
+| `<name>-ingest` | control plane, optional (`ingest = { image = … }`) | `qcloud-ingest`: the public `POST /s/<token>` of the event gateway. Stores and answers, calls no destination, has no Pub/Sub role |
 
 The control plane is a separate Terraform root. It is applied every release; the data plane rarely. They meet at one
 output, `control_plane_inputs`, which holds identifiers and secret references and never a secret value.
@@ -158,6 +159,9 @@ Order matters because the control plane reads what the data plane made.
      --build-arg COMMIT=$(git rev-parse HEAD) --build-arg VERSION=1.0.0 .
    docker build -f packages/panel/Dockerfile -t REGION-docker.pkg.dev/PROJECT/qcloud/panel:$(git rev-parse --short HEAD) \
      --build-arg COMMIT=$(git rev-parse HEAD) .
+   # only with the ingest:
+   docker build -f packages/ingest/Dockerfile -t REGION-docker.pkg.dev/PROJECT/qcloud/ingest:$(git rev-parse --short HEAD) \
+     --build-arg COMMIT=$(git rev-parse HEAD) --build-arg VERSION=1.0.0 .
    docker push ...    # then use IMAGE@sha256:<digest> in the variables
    ```
 
@@ -188,6 +192,14 @@ Order matters because the control plane reads what the data plane made.
 
    Then copy `ci.tfvars.example` to your own `*.tfvars` and set `api_image`, `panel_image`, the `oidc_*` values and
    `deployer_members`. `*.tfvars` and the handoff file are not committed.
+
+   **To take posts from outside (the event gateway's sources), add the ingest:** set `ingest = { image = "…" }` and, with the
+   edge, `edge.ingest_hostname` (a third name) and `edge.ingest_rate_limit_per_minute`, which is the only per-address limit; the
+   service's own limits are per instance. The data plane's `control_processes` must also count `ingest.max_instances`
+   (each instance holds `ingest.pool_size` connections); the control plane's plan refuses otherwise. The ingest needs the webhook
+   key (`webhooks = true` in the data plane) for a source that verifies. After the apply, `terraform output ingest_url` is the
+   base of every source's address (`<ingest_url>/s/<token>`); the panel shows only the `/s/<token>` part. Day-two trouble:
+   [inbound source trouble](inbound-source-trouble.md).
 4. **Plan, then apply the control plane.** `terraform -chdir=infra/gcp/control-plane plan` and read it: the two services,
    the job, three service accounts, bindings on resources (and one custom role with a single permission,
    `monitoring.timeSeries.list`, which is the only project-level grant: set `monitoring_read = false` to leave it out and

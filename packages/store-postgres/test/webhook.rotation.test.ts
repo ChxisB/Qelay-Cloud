@@ -5,7 +5,7 @@ import { WebhookKeyError } from '../src/errors';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore } from './storeHelpers';
-import { addHook, CLAIM, event, journal, KEY, outcome, POLICY, SECRET } from './webhookHelpers';
+import { addHook, CLAIM, KEY, outcome, POLICY, SECRET, send } from './webhookHelpers';
 
 describeDb('webhooks: rotating the secret', () => {
   let t: TestStore;
@@ -21,7 +21,7 @@ describeDb('webhooks: rotating the secret', () => {
 
   /** The secrets a freshly journalled event's delivery is claimed with, then recorded as sent. */
   const claimedSecrets = async (jobId: string) => {
-    await journal(t, [event('pushed', 'q', jobId)]);
+    await send(t, { id: jobId });
     const [claimed] = await t.store.webhooks.claimDue(CLAIM);
     await t.store.webhooks.record([outcome(claimed!, { ok: true })], POLICY);
     return { secret: claimed!.secret, previousSecret: claimed!.previousSecret };

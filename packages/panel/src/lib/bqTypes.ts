@@ -1,4 +1,9 @@
-import type { WebhookDedupeFull, WebhookPausedBy } from './bq/gatewayTypes';
+import type {
+  WebhookBatchFull,
+  WebhookDedupeFull,
+  WebhookPausedBy,
+  WebhookScheduleFull,
+} from './bq/gatewayTypes';
 
 export interface JobFull {
   id: string;
@@ -118,8 +123,8 @@ export interface WebhookFull {
   /** The queue a queue route adds jobs to; null for http. */
   target: string | null;
   urlRedacted: boolean;
-  events: string[];
-  queue: string | null;
+  /** The inbound source the route reads from; null for a route that lost its source and is disabled. */
+  source: string | null;
   /** Whether deliveries are signed. The secret itself is write-only: no response carries it. */
   signed: boolean;
   createdAt: number;
@@ -133,7 +138,7 @@ export interface WebhookFull {
   /** Set when the route was paused after repeated failures; it is then not enabled. */
   disabledReason: string | null;
   disabledAt: number | null;
-  /** Rules, as the server holds them: only events that pass `filter` go, in the shape `shape` says. */
+  /** Rules, as the server holds them: only requests that pass `filter` go, in the shape `shape` says. */
   filter: Record<string, unknown> | null;
   shape: Record<string, unknown> | null;
   /** What the operator calls it, and a note; null for none. */
@@ -142,6 +147,12 @@ export interface WebhookFull {
   /** A delivery is due this many ms after its event; null for at once. */
   delayMs: number | null;
   dedupe: WebhookDedupeFull | null;
+  /** Holds events until the cron's next fire (either destination); null for sending at once. */
+  schedule: WebhookScheduleFull | null;
+  /** When the schedule next fires, in epoch ms; null without a schedule. Computed by the server, which has the zone data. */
+  nextSendAt: number | null;
+  /** Sends due events as one request (http routes only); null for one request each. */
+  batch: WebhookBatchFull | null;
   /** Who paused a route that is off and collecting; null when running or disabled by hand (ignoring events). */
   pausedBy: WebhookPausedBy;
   /** The saved destination the address was copied from; null when it was given directly. */
@@ -211,6 +222,28 @@ export interface DlqConfig {
   maxAutoRetries: number;
   maxAge: number | null;
   maxEntries: number;
+}
+
+/** What a queue gives a job that sets none of its own. Times are milliseconds. */
+export interface QueuePolicy {
+  attempts?: number;
+  backoff?: { type: 'fixed' | 'exponential'; delay: number; maxDelay?: number };
+  timeout?: number;
+}
+
+/** What `PUT /queues/{queue}/run-window` takes. A missing zone is UTC. */
+export interface QueueRunWindowInput {
+  cron: string;
+  durationMs: number;
+  timezone?: string;
+}
+
+/** A queue's run window and where it stands now. `opensAt` and `closesAt` are epoch milliseconds. */
+export interface QueueRunWindow extends QueueRunWindowInput {
+  timezone: string;
+  open: boolean;
+  opensAt: number;
+  closesAt: number;
 }
 
 // ---- Control agent ----

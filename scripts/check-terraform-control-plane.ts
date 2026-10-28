@@ -20,6 +20,7 @@ import {
 } from './terraform-control-plane-assertions';
 import { checkGcpApiAlert } from './terraform-control-plane-alerts';
 import { checkEdge } from './terraform-control-plane-edge';
+import { checkIngest, checkIngestEdge } from './terraform-control-plane-ingest';
 import type { Plan } from './terraform-plan-model';
 import { Checks, get } from './terraform-plan-model';
 
@@ -168,14 +169,30 @@ try {
   checks.ok('edge plans', edge.plan !== null, edge.diagnostics);
   if (edge.plan !== null) checkEdge(edge.plan, checks, { apiHost: 'api.example.com', panelHost: 'qelay.example.com', limit: 900, apiTimeout: 900 });
   checks.ok('no load balancer unless asked for', base.plan !== null && base.plan.resource_changes.every((c) => !c.type.startsWith('google_compute_')));
+  checks.ok('no ingest unless asked for', base.plan !== null && base.plan.resource_changes.every((c) => !c.address.includes('ingest')));
+
+  // The opt-in ingest (inbound sources): its own service and account, and the connection budget counts its instances.
+  const ingestImage = 'europe-west2-docker.pkg.dev/qcloud-ci/qcloud/ingest:ci';
+  const ingestVar = `ingest={image="${ingestImage}"}`;
+  const withIngest = plan(CONTROL, 'ingest', ingestVar, 'budgeted_control_processes=5');
+  checks.ok('ingest plans', withIngest.plan !== null, withIngest.diagnostics);
+  if (withIngest.plan !== null) checkIngest(withIngest.plan, checks, FIXTURE, ingestImage);
+  const ingestEdge = plan(CONTROL, 'ingest-edge', ingestVar, 'budgeted_control_processes=5', 'edge={api_hostname="api.example.com",panel_hostname="qelay.example.com",ingest_hostname="in.example.com",ingest_rate_limit_per_minute=3000}');
+  checks.ok('ingest behind the edge plans', ingestEdge.plan !== null, ingestEdge.diagnostics);
+  if (ingestEdge.plan !== null) checkIngestEdge(ingestEdge.plan, checks, { ingestHost: 'in.example.com', limit: 3000 });
 
   // What must be refused, and why.
   const refusals: Array<[string, string[], RegExp]> = [
     ['an unknown exposure', ['exposure=iap'], /exposure must be/],
     ['an edge on a private deployment', ['exposure=private', 'edge={api_hostname="a.example.com",panel_hostname="b.example.com"}'], /Use one or the other/],
-    ['an edge with one host name for both', ['edge={api_hostname="a.example.com",panel_hostname="a.example.com"}'], /two different/],
+    ['an edge with one host name for both', ['edge={api_hostname="a.example.com",panel_hostname="a.example.com"}'], /different names/],
     ['more API instances than the connection budget counts', ['api_max_instances=3'], /connection budget counts/],
     ['a pool bigger than the budgeted one', ['api_pool_size=5'], /connections per control process/],
+    ['an ingest the connection budget does not count', ['ingest={image="x"}'], /connection budget counts/],
+    ['an ingest pool bigger than the budgeted one', ['ingest={image="x",max_instances=1,pool_size=5}', 'budgeted_control_processes=5'], /ingest\.pool_size is 5/],
+    ['an ingest behind an edge with no host name', ['ingest={image="x"}', 'budgeted_control_processes=5', 'edge={api_hostname="a.example.com",panel_hostname="b.example.com"}'], /needs edge\.ingest_hostname/],
+    ['an ingest host name with no ingest', ['edge={api_hostname="a.example.com",panel_hostname="b.example.com",ingest_hostname="c.example.com"}'], /nothing would answer/],
+    ['an ingest host name that is the API\'s', ['ingest={image="x"}', 'budgeted_control_processes=5', 'edge={api_hostname="a.example.com",panel_hostname="b.example.com",ingest_hostname="a.example.com"}'], /different names/],
     ['a request timeout that cuts streams', ['api_request_timeout_seconds=620'], /close a stream before Cloud Run/],
     ['a timeout past the platform maximum', ['api_request_timeout_seconds=7200'], /at most 3600/],
     ['a heartbeat longer than proxies keep an idle connection', ['event_heartbeat_seconds=120'], /between 15 and 60/],

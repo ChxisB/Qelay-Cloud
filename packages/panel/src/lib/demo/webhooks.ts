@@ -22,8 +22,7 @@ const DELIVERIES: readonly Json[] = [
     id: '3',
     webhookId: '',
     event: 'webhook.test',
-    queue: 'webhook-test',
-    jobId: 'webhook-test',
+    requestId: null,
     occurredAt: NOW - MINUTE,
     status: 'pending',
     attempts: 0,
@@ -37,9 +36,8 @@ const DELIVERIES: readonly Json[] = [
   {
     id: '2',
     webhookId: '',
-    event: 'job.failed',
-    queue: 'emails',
-    jobId: 'job-4821',
+    event: 'request.received',
+    requestId: '4821',
     occurredAt: NOW - 90 * MINUTE,
     status: 'failed',
     attempts: 3,
@@ -57,9 +55,8 @@ const DELIVERIES: readonly Json[] = [
   {
     id: '1',
     webhookId: '',
-    event: 'job.completed',
-    queue: 'emails',
-    jobId: 'job-4820',
+    event: 'request.received',
+    requestId: '4820',
     occurredAt: NOW - 120 * MINUTE,
     status: 'delivered',
     attempts: 3,
@@ -134,3 +131,12 @@ export function demoWebhookDeliveries(id: string, search: string): Json {
   );
   return { ok: true, data: { deliveries, next: null } };
 }
+
+/** The deliveries a request made, for `GET /requests/:id`: the demo's one route sends over HTTP. */
+export const demoRequestDeliveries = (requestId: string): Json[] =>
+  DELIVERIES.filter((row) => row.requestId === requestId).map((row) => ({
+    ...row,
+    webhookId: DEMO_WEBHOOK,
+    routedJobId: null,
+    via: 'http',
+  }));

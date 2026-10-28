@@ -1,5 +1,11 @@
 import { testDatabaseUrl } from '../../../test/support/db';
-import type { Processor, WorkerOptions } from '../src';
+import type {
+  BatchProcessor,
+  JobWorkerOptions,
+  Processor,
+  WorkerBatchOptions,
+  WorkerOptions,
+} from '../src';
 import { Worker } from '../src';
 import type { SdkFixture } from './support';
 import { NAMESPACE } from './support';
@@ -32,7 +38,7 @@ export function workerKit(fixture: () => SdkFixture) {
   const open: Worker<never, unknown>[] = [];
   const transports = new Set<{ tick(): void }>();
   let ticker: ReturnType<typeof setInterval> | null = null;
-  return {
+  const kit = {
     worker<T = unknown, R = unknown>(
       queue: string,
       processor: Processor<T, R>,
@@ -47,16 +53,30 @@ export function workerKit(fixture: () => SdkFixture) {
               namespace: NAMESPACE,
             }
           : {};
-      const worker = new Worker<T, R>(queue, processor, {
-        transport: f.transport,
-        heartbeatInterval: 0,
-        ...own,
-        ...extra,
-      } as WorkerOptions);
+      // `extra.batch` decides which of the two the processor is; the constructor's overloads cannot see through a spread.
+      const worker = new Worker<T, R>(
+        queue,
+        processor as Processor<T, R>,
+        {
+          transport: f.transport,
+          heartbeatInterval: 0,
+          ...own,
+          ...extra,
+        } as JobWorkerOptions
+      );
       open.push(worker as unknown as Worker<never, unknown>);
       transports.add((extra.transport as { tick(): void } | undefined) ?? f.transport);
       ticker ??= setInterval(() => transports.forEach((t) => t.tick()), 10);
       return worker;
+    },
+    /** A worker that runs `processor` over batches of up to `batch.size` jobs. */
+    batchWorker<T = unknown, R = unknown>(
+      queue: string,
+      processor: BatchProcessor<T, R>,
+      batch: WorkerBatchOptions,
+      extra: Partial<WorkerOptions> = {}
+    ): Worker<T, R> {
+      return kit.worker<T, R>(queue, processor as unknown as Processor<T, R>, { ...extra, batch });
     },
     async closeAll(): Promise<void> {
       if (ticker !== null) clearInterval(ticker);
@@ -67,4 +87,5 @@ export function workerKit(fixture: () => SdkFixture) {
       );
     },
   };
+  return kit;
 }

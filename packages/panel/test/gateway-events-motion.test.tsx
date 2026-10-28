@@ -17,8 +17,8 @@ installTestHooks();
 const EVENTS = '/events-gateway/events';
 const rows = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>('tbody tr')];
 const place = (row: HTMLElement) => row.style.getPropertyValue('--i');
-const opener = (host: HTMLElement, job: string) =>
-  host.querySelector<HTMLButtonElement>(`button[aria-label="Open event emails / ${job}"]`)!;
+const opener = (host: HTMLElement, request: string) =>
+  host.querySelector<HTMLButtonElement>(`button[aria-label="Open event Request ${request}"]`)!;
 const poll = async () => {
   act(() => document.dispatchEvent(new window.Event('visibilitychange')));
   await settle(30);
@@ -36,9 +36,9 @@ const wide = () => {
   };
 };
 const three = () => [
-  delivery({ id: '3', jobId: 'job-3' }),
-  delivery({ id: '2', jobId: 'job-2' }),
-  delivery({ id: '1', jobId: 'job-1' }),
+  delivery({ id: '3', requestId: '3' }),
+  delivery({ id: '2', requestId: '2' }),
+  delivery({ id: '1', requestId: '1' }),
 ];
 
 describe('Events screen: rows arrive', () => {
@@ -62,11 +62,11 @@ describe('Events screen: rows arrive', () => {
     const view = at(EVENTS, createElement(Events));
     await settle(20);
     const before = rows(view.host);
-    feed.unshift(delivery({ id: '4', jobId: 'job-4' }));
+    feed.unshift(delivery({ id: '4', requestId: '4' }));
     await poll();
     const after = rows(view.host);
     expect(after).toHaveLength(4);
-    expect(after[0].textContent).toContain('job-4');
+    expect(after[0].textContent).toContain('Request 4');
     expect(after[0].classList.contains('motion-arrive')).toBe(true);
     expect(place(after[0])).toBe('0');
     expect(after.slice(1).every((row, i) => row === before[i])).toBe(true);
@@ -75,8 +75,8 @@ describe('Events screen: rows arrive', () => {
 
   test('another filter just appears: its rows do not rise as if they were new', async () => {
     const feed = [
-      delivery({ id: '2', jobId: 'job-2' }),
-      delivery({ id: '1', jobId: 'job-1', status: 'delivered' }),
+      delivery({ id: '2', requestId: '2' }),
+      delivery({ id: '1', requestId: '1', status: 'delivered' }),
     ];
     serveGateway([route()], feed);
     const view = at(EVENTS, createElement(Events));
@@ -94,7 +94,7 @@ describe('Events screen: the event under 1280 px is a sheet', () => {
     serveGateway([route()], three());
     const view = at(EVENTS, createElement(Events));
     await settle(20);
-    const button = opener(view.host, 'job-2');
+    const button = opener(view.host, '2');
     act(() => button.focus());
     act(() => button.click());
     const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Event"]')!;
@@ -116,14 +116,14 @@ describe('Events screen: the event under 1280 px is a sheet', () => {
     serveGateway([route()], three());
     const view = at(EVENTS, createElement(Events));
     await settle(20);
-    act(() => opener(view.host, 'job-2').click());
+    act(() => opener(view.host, '2').click());
     act(() =>
       document.querySelector<HTMLButtonElement>('button[aria-label="Close event"]')!.click()
     );
     await settle(60);
     await settle(260);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    act(() => opener(view.host, 'job-2').click());
+    act(() => opener(view.host, '2').click());
     act(() => buttonByText(document.body, 'Close').click());
     await settle(60);
     await settle(260);
@@ -137,7 +137,7 @@ describe('Events screen: the event under 1280 px is a sheet', () => {
       serveGateway([route()], three());
       const view = at(EVENTS, createElement(Events));
       await settle(20);
-      act(() => opener(view.host, 'job-2').click());
+      act(() => opener(view.host, '2').click());
       expect(view.host.querySelector('section[aria-label="Event details"]')).not.toBeNull();
       expect(document.querySelector('[role="dialog"]')).toBeNull();
       expect(useGlobalModalStore.getState().active).toBeNull();
@@ -158,7 +158,7 @@ describe('Events screen: the event under 1280 px is a sheet', () => {
       serveGateway([route()], three());
       const view = at(EVENTS, createElement(Events));
       await settle(20);
-      act(() => opener(view.host, 'job-2').click());
+      act(() => opener(view.host, '2').click());
       expect(document.querySelector('[role="dialog"]')).not.toBeNull();
       act(() => buttonByText(document.body, 'Close').click());
       expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -174,7 +174,7 @@ describe('Events screen: the attempts line', () => {
     serveGateway([route()], [delivery()]);
     const view = at(EVENTS, createElement(Events));
     await settle(20);
-    act(() => opener(view.host, 'job-9').click());
+    act(() => opener(view.host, '9').click());
     const line = document.querySelector('ol[aria-label="Attempts, oldest first"]')!;
     const stops = [...line.querySelectorAll('li')].map((li) => li.textContent ?? '');
     expect(stops).toHaveLength(3);
@@ -210,7 +210,7 @@ describe('Events screen: the attempts line', () => {
     );
     const view = at(EVENTS, createElement(Events));
     await settle(20);
-    act(() => opener(view.host, 'job-9').click());
+    act(() => opener(view.host, '9').click());
     const stops = [...document.querySelectorAll('ol[aria-label="Attempts, oldest first"] li')].map(
       (li) => li.textContent ?? ''
     );
@@ -229,7 +229,7 @@ describe('Events screen: the attempts line', () => {
     );
     const view = at(EVENTS, createElement(Events));
     await settle(20);
-    act(() => opener(view.host, 'job-9').click());
+    act(() => opener(view.host, '9').click());
     const stops = [...document.querySelectorAll('ol[aria-label="Attempts, oldest first"] li')].map(
       (li) => li.textContent ?? ''
     );

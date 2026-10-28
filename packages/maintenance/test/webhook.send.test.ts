@@ -27,16 +27,13 @@ describe('webhook attempt: the request', () => {
     });
     const headers = request!.headers;
     expect(headers[WEBHOOK_HEADERS.id]).toBe('41');
-    expect(headers[WEBHOOK_HEADERS.event]).toBe('job.completed');
+    expect(headers[WEBHOOK_HEADERS.event]).toBe('webhook.test');
     expect(headers[WEBHOOK_HEADERS.attempt]).toBe('1');
     expect(headers[WEBHOOK_HEADERS.timestamp]).toBe(String(NOW));
     expect(JSON.parse(request!.body)).toEqual({
       id: '41',
-      event: 'job.completed',
+      event: 'webhook.test',
       timestamp: NOW - 1_000,
-      queue: 'emails',
-      jobId: 'j-1',
-      state: 'completed',
     });
     // The documented scheme, computed here without the sender's code: HMAC-SHA256 over "<timestamp>.<body>".
     const expected = createHmac('sha256', SECRET).update(`${NOW}.${request!.body}`).digest('hex');
@@ -74,12 +71,10 @@ describe('webhook attempt: the request', () => {
     ).toBe(false);
   });
 
-  test('the body never carries job data, whatever the event holds', async () => {
+  test('a test delivery carries only its id, event and timestamp', async () => {
     const s = script();
-    await sendDelivery(delivery({ state: 'failed', error: 'boom', progress: 50 }), s.deps());
-    expect(Object.keys(JSON.parse(s.calls[0]!.body)).sort()).toEqual(
-      ['error', 'event', 'id', 'jobId', 'progress', 'queue', 'state', 'timestamp'].sort()
-    );
+    await sendDelivery(delivery(), s.deps());
+    expect(Object.keys(JSON.parse(s.calls[0]!.body)).sort()).toEqual(['event', 'id', 'timestamp']);
   });
 
   test('an unsigned webhook carries no signature header', async () => {

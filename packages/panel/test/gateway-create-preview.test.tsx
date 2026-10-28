@@ -1,4 +1,4 @@
-import { field, page } from './gateway-create.helpers';
+import { field, page, pickSource } from './gateway-create.helpers';
 import { field as byLabel, serve, two } from './gateway-destinations.helpers';
 import { type } from './gateway.helpers';
 import {
@@ -34,21 +34,20 @@ describe('New connection: what it will do', () => {
     const view = page();
     await settle(20);
     expect(aside(view.host).textContent).toContain('Drawn from the form. Not saved.');
-    expect(aside(view.host).textContent).toContain('Qelay jobs: all queues');
-    expect(dashed(view.host)).toEqual(['Enter the address to send to']);
+    expect(dashed(view.host).sort()).toEqual(['Choose the source', 'Enter the address to send to']);
     expect(aside(view.host).querySelector('[data-wire="dotted"]')).not.toBeNull();
     expect(aside(view.host).textContent).toContain('No rules set. Always on:');
     view.unmount();
   });
 
-  test('it follows the queue, the address and the signing secret as they are typed', async () => {
+  test('it follows the source, the address and the signing secret as they are typed', async () => {
     serve([]);
     const view = page();
     await settle(20);
-    type(field(view.host, 'webhook-queue'), 'orders');
+    pickSource(view.host, 'src_1');
     type(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
     const text = aside(view.host).textContent ?? '';
-    expect(text).toContain('Qelay jobs: orders');
+    expect(text).toContain('Source: Shop checkout');
     expect(text).toContain('receiver.test');
     expect(text).toContain('unsigned');
     expect(dashed(view.host)).toEqual([]);
@@ -64,26 +63,26 @@ describe('New connection: what it will do', () => {
     const view = page();
     await settle(20);
     type(byLabel(view.host, 'Delay'), '5');
-    type(byLabel(view.host, 'Filter'), '{ "queue": "a" }');
+    type(byLabel(view.host, 'Filter'), '{ "body.kind": "a" }');
     expect(stations(view.host)).toEqual(['FilterOn', 'DelayOn']);
     type(byLabel(view.host, 'Delay'), '  ');
     expect(stations(view.host)).toEqual(['FilterOn']);
     view.unmount();
   });
 
-  test('a queue destination needs both queues, and each missing one is a placeholder with words', async () => {
+  test('a queue destination needs a source and a queue, and each missing one is a placeholder with words', async () => {
     serve([]);
     const view = page();
     await settle(20);
     act(() => buttonByText(view.host, 'Another queue').click());
     expect(dashed(view.host).sort()).toEqual([
       'Choose the queue to add jobs to',
-      'Choose the source queue',
+      'Choose the source',
     ]);
-    type(field(view.host, 'webhook-queue'), 'orders');
+    pickSource(view.host, 'src_1');
     type(field(view.host, 'route-target'), 'refunds');
     expect(aside(view.host).textContent).toContain('Queue: refunds');
-    expect(aside(view.host).textContent).toContain('Qelay jobs: orders');
+    expect(aside(view.host).textContent).toContain('Source: Shop checkout');
     expect(dashed(view.host)).toEqual([]);
     view.unmount();
   });
@@ -93,13 +92,15 @@ describe('New connection: what it will do', () => {
     const view = page();
     await settle(20);
     act(() => buttonByText(view.host, 'Saved destination').click());
-    expect(dashed(view.host)).toEqual(['Choose a destination']);
+    expect(dashed(view.host).sort()).toEqual(['Choose a destination', 'Choose the source']);
     choose(view.host, 'dest-1');
-    expect(dashed(view.host)).toEqual([]);
+    expect(dashed(view.host)).toEqual(['Choose the source']);
     expect(aside(view.host).textContent).toContain('billing.test');
     choose(view.host, 'dest-2');
     expect(aside(view.host).textContent).toContain('Queue: refunds');
-    expect(dashed(view.host)).toEqual(['Choose the source queue']);
+    expect(dashed(view.host)).toEqual(['Choose the source']);
+    pickSource(view.host, 'src_1');
+    expect(dashed(view.host)).toEqual([]);
     view.unmount();
   });
 

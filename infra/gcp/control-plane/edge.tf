@@ -1,4 +1,5 @@
-# An external HTTPS load balancer with a Cloud Armor rate limit in front of the API and the panel (F16). Opt-in: see `edge`
+# An external HTTPS load balancer with a Cloud Armor rate limit in front of the API and the panel (F16), and of the
+# ingest listener when there is one, which has its own host name and its own policy. Opt-in: see `edge`
 # in variables.tf. Cloud Armor attaches to a load balancer's backend service, never to a Cloud Run URL, which is why this
 # needs a load balancer at all, and why the services then take traffic from it alone (ingress, in main.tf).
 #
@@ -7,7 +8,8 @@
 # one. Both stay on: this is the first line, the API's is the second.
 
 locals {
-  edge_domains = local.edge ? sort([var.edge.api_hostname, var.edge.panel_hostname]) : []
+  edge_ingest  = local.edge && local.ingest
+  edge_domains = local.edge ? sort(concat([var.edge.api_hostname, var.edge.panel_hostname], local.edge_ingest ? [var.edge.ingest_hostname] : [])) : []
 }
 
 resource "google_compute_global_address" "edge" {
@@ -60,6 +62,52 @@ resource "google_compute_security_policy" "edge" {
   }
 }
 
+# The ingest's own rate rule. Senders are a few shared addresses (a payment provider's, a CI system's) posting often, so
+# their count is not the panel's: this one is sized for a webhook flood, the other for people.
+resource "google_compute_security_policy" "ingest" {
+  count = local.edge_ingest ? 1 : 0
+
+  name        = "${var.name}-edge-ingest"
+  description = "Qelay-Cloud ingest: a rate limit per client address"
+
+  rule {
+    action      = "throttle"
+    priority    = 1000
+    description = "Over ingest_rate_limit_per_minute from one address: 429"
+
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = ["*"]
+      }
+    }
+
+    rate_limit_options {
+      conform_action = "allow"
+      exceed_action  = "deny(429)"
+      enforce_on_key = "IP"
+
+      rate_limit_threshold {
+        count        = var.edge.ingest_rate_limit_per_minute
+        interval_sec = 60
+      }
+    }
+  }
+
+  rule {
+    action      = "allow"
+    priority    = 2147483647
+    description = "Default rule"
+
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = ["*"]
+      }
+    }
+  }
+}
+
 resource "google_compute_region_network_endpoint_group" "api" {
   count = local.edge ? 1 : 0
 
@@ -81,6 +129,18 @@ resource "google_compute_region_network_endpoint_group" "panel" {
 
   cloud_run {
     service = google_cloud_run_v2_service.panel.name
+  }
+}
+
+resource "google_compute_region_network_endpoint_group" "ingest" {
+  count = local.edge_ingest ? 1 : 0
+
+  name                  = "${local.ingest_name}-neg"
+  region                = var.region
+  network_endpoint_type = "SERVERLESS"
+
+  cloud_run {
+    service = google_cloud_run_v2_service.ingest[0].name
   }
 }
 
@@ -114,7 +174,21 @@ resource "google_compute_backend_service" "panel" {
   }
 }
 
-# A host name that is neither of ours is sent to the panel's name. The certificate covers only the two names anyway.
+resource "google_compute_backend_service" "ingest" {
+  count = local.edge_ingest ? 1 : 0
+
+  name                  = local.ingest_name
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = "HTTPS"
+  timeout_sec           = 60
+  security_policy       = google_compute_security_policy.ingest[0].id
+
+  backend {
+    group = google_compute_region_network_endpoint_group.ingest[0].id
+  }
+}
+
+# A host name that is none of ours is sent to the panel's name. The certificate covers only our names anyway.
 resource "google_compute_url_map" "edge" {
   count = local.edge ? 1 : 0
 
@@ -145,6 +219,22 @@ resource "google_compute_url_map" "edge" {
   path_matcher {
     name            = "panel"
     default_service = google_compute_backend_service.panel[0].id
+  }
+
+  dynamic "host_rule" {
+    for_each = local.edge_ingest ? [var.edge.ingest_hostname] : []
+    content {
+      hosts        = [host_rule.value]
+      path_matcher = "ingest"
+    }
+  }
+
+  dynamic "path_matcher" {
+    for_each = local.edge_ingest ? [1] : []
+    content {
+      name            = "ingest"
+      default_service = google_compute_backend_service.ingest[0].id
+    }
   }
 }
 

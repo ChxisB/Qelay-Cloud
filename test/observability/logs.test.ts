@@ -45,6 +45,7 @@ describe('logs: the call sites', () => {
   const roots = [
     'sdk',
     'control-api',
+    'ingest',
     'maintenance',
     'store-postgres',
     'telemetry',

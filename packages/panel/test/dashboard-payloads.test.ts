@@ -26,8 +26,7 @@ const webhook = () => ({
   id: 'hook-1',
   url: 'https://example.test/hook',
   urlRedacted: false,
-  events: ['job.completed'],
-  queue: null,
+  source: 'src_1',
   signed: false,
   createdAt: 1_000,
   lastTriggered: null,
@@ -69,8 +68,7 @@ describe('dashboard collection payload validation', () => {
             {
               ...webhook(),
               url: 'https://user:password@example.test/hook',
-              events: ['job.stalled', 'job.stalled'],
-              queue: 'q'.repeat(257),
+              source: 's'.repeat(257),
             },
           ],
         },
@@ -103,11 +101,11 @@ describe('dashboard collection payload validation', () => {
     );
   });
 
-  test('rejects malformed webhook arrays, unsafe URLs, and unknown events', () => {
+  test('rejects malformed webhook arrays, unsafe URLs, and a source that is not text', () => {
     expect(() =>
       parseWebhooksPayload({
         ok: true,
-        data: { webhooks: [{ ...webhook(), events: null }] },
+        data: { webhooks: [{ ...webhook(), source: 5 }] },
       })
     ).toThrow('Malformed webhooks response');
     expect(() =>
@@ -119,7 +117,7 @@ describe('dashboard collection payload validation', () => {
     expect(() =>
       parseWebhooksPayload({
         ok: true,
-        data: { webhooks: [{ ...webhook(), events: ['job.future'] }] },
+        data: { webhooks: [{ ...webhook(), source: undefined }] },
       })
     ).toThrow('Malformed webhooks response');
   });

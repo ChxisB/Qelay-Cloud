@@ -117,9 +117,7 @@ export const UNSUPPORTED_ACTIONS = [
   'job-discard',
   'job-retry',
   'job-move-to-delayed',
-  'dlq-retry',
   'dlq-auto-retry',
-  'dlq-retention',
 ] as const;
 
 /** `GET /capabilities`: what the panel shows or hides. */

@@ -29,6 +29,10 @@ export interface PostRequest {
   readonly path: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
+  /** Sent instead of `body`, as they are: a request's own bytes (D14). */
+  readonly bytes?: Uint8Array;
+  /** The `Content-Type` header. Absent: `application/json`. */
+  readonly contentType?: string;
   readonly timeoutMs: number;
   /** Extra trusted certificate authority (PEM), for a receiver behind a private CA and for tests. */
   readonly ca?: string;
@@ -54,12 +58,12 @@ const latin1 = new TextDecoder('latin1');
 
 /** `keepAlive` false asks the receiver to close after the answer. */
 export function encodeRequest(request: PostRequest, keepAlive: boolean): Uint8Array {
-  const body = encoder.encode(request.body);
+  const body = request.bytes ?? encoder.encode(request.body);
   const lines = [
     `POST ${request.path} HTTP/1.1`,
     `Host: ${request.hostHeader}`,
     `User-Agent: ${request.userAgent ?? DEFAULT_USER_AGENT}`,
-    'Content-Type: application/json',
+    `Content-Type: ${request.contentType ?? 'application/json'}`,
     `Content-Length: ${body.byteLength}`,
     `Connection: ${keepAlive ? 'keep-alive' : 'close'}`,
     ...Object.entries(request.headers).map(([name, value]) => `${name}: ${value}`),

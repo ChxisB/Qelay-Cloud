@@ -15,25 +15,31 @@ async function readings(ctx: OpsContext, fresh: boolean) {
   const store = ctx.jobs?.store;
   const deadline = READINESS_DEADLINE_MS;
   let latencyMs: number | null = null;
-  const [databaseOk, tick, schema, usage, workers, scan, webhooks, ignored] = await Promise.all([
-    settled(async () => {
-      const started = performance.now();
-      await readiness.database();
-      latencyMs = Math.round(performance.now() - started);
-      return true;
-    }, deadline),
-    settled(() => readiness.tick(), deadline),
-    store ? settled(() => store.deployment.schemaVersion(), deadline) : null,
-    store ? settled(() => store.deployment.connections(), deadline) : null,
-    store ? settled(() => store.workers.list(), deadline) : null,
-    store ? settled(() => scanDoorbells(ctx, fresh), deadline) : null,
-    store ? settled(() => store.webhooks.list(), deadline) : null,
-    // At most one live issue per route and 100 routes, so one page holds every ignored one.
-    store
-      ? settled(() => store.webhooks.issues({ status: 'ignored', limit: MAX_ISSUE_PAGE }), deadline)
-      : null,
-  ]);
-  return { databaseOk, latencyMs, tick, schema, usage, workers, scan, webhooks, ignored };
+  const [databaseOk, tick, schema, usage, workers, scan, webhooks, ignored, backup] =
+    await Promise.all([
+      settled(async () => {
+        const started = performance.now();
+        await readiness.database();
+        latencyMs = Math.round(performance.now() - started);
+        return true;
+      }, deadline),
+      settled(() => readiness.tick(), deadline),
+      store ? settled(() => store.deployment.schemaVersion(), deadline) : null,
+      store ? settled(() => store.deployment.connections(), deadline) : null,
+      store ? settled(() => store.workers.list(), deadline) : null,
+      store ? settled(() => scanDoorbells(ctx, fresh), deadline) : null,
+      store ? settled(() => store.webhooks.list(), deadline) : null,
+      // At most one live issue per route and 100 routes, so one page holds every ignored one.
+      store
+        ? settled(
+            () => store.webhooks.issues({ status: 'ignored', limit: MAX_ISSUE_PAGE }),
+            deadline
+          )
+        : null,
+      // Wrapped, because "nobody has declared one" is a null of its own and must not read as "could not be read".
+      store ? settled(async () => ({ policy: await store.backups.get() }), deadline) : null,
+    ]);
+  return { databaseOk, latencyMs, tick, schema, usage, workers, scan, webhooks, ignored, backup };
 }
 
 /** `GET /deployment`: version, schema, database, connections, tick, workers and the warnings from them. */
@@ -65,11 +71,13 @@ async function build(ctx: OpsContext, fresh: boolean): Promise<DeploymentRespons
         })();
 
   const rows = read.scan === null ? null : [...read.scan.rows.values()];
-  const notRung = rows === null ? null : rows.reduce((sum, row) => sum + row.notRung, 0);
+  // A paused queue and one outside its run window are held on purpose: their unrung jobs are not the tick being behind.
+  const live = rows?.filter((row) => !row.paused && !row.windowClosed) ?? null;
+  const notRung = live === null ? null : live.reduce((sum, row) => sum + row.notRung, 0);
   const oldest =
-    rows === null
+    live === null
       ? null
-      : rows.reduce<number | null>(
+      : live.reduce<number | null>(
           (max, row) =>
             row.oldestNotRungAgeMs === null ? max : Math.max(max ?? 0, row.oldestNotRungAgeMs),
           null
@@ -109,6 +117,18 @@ async function build(ctx: OpsContext, fresh: boolean): Promise<DeploymentRespons
       partial,
     },
   };
+  const interval = deployment.tickIntervalMs;
+  const enabled = read.webhooks?.filter((route) => route.enabled) ?? null;
+  const timing = {
+    tickIntervalMs: interval,
+    scheduledRoutes: enabled?.filter((route) => route.schedule !== null).length ?? null,
+    shortDelayRoutes:
+      enabled === null || interval === null
+        ? null
+        : enabled.filter((route) => route.delayMs !== null && route.delayMs < interval).length,
+    // Only queues with pending jobs are read for their window, which is where it matters.
+    closedWindows: rows === null ? null : rows.filter((row) => row.windowClosed).length,
+  };
   return {
     ok: true,
     version: config.version,
@@ -121,10 +141,12 @@ async function build(ctx: OpsContext, fresh: boolean): Promise<DeploymentRespons
     },
     warnings: deploymentWarnings({
       ...parts,
+      timing,
       webhooks: webhookCounts(
         read.webhooks,
         new Set(read.ignored?.items.map((issue) => issue.webhookId))
       ),
+      backup: read.backup === null ? null : (read.backup.policy?.mechanism ?? 'undeclared'),
     }),
     timestamp: clock.now(),
   };

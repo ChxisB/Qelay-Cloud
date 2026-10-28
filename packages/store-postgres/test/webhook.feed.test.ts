@@ -4,7 +4,7 @@ import { describeDb } from '../../../test/support/db';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore, START } from './storeHelpers';
-import { addHook, CLAIM, event, journal, KEY, outcome, rawDeliveries } from './webhookHelpers';
+import { addHook, CLAIM, KEY, outcome, rawDeliveries, send } from './webhookHelpers';
 
 const ONCE = { maxAttempts: 1, baseDelayMs: 1_000, maxDelayMs: 60_000 };
 const MINUTE = 60_000;
@@ -25,15 +25,16 @@ describeDb('webhooks: the feed across routes, bulk retry and stats', () => {
   async function seed() {
     const a = await addHook(t);
     const b = await addHook(t);
+    const ids: Record<string, string> = {};
     for (const job of ['j1', 'j2', 'j3']) {
-      await journal(t, [event('pushed', 'q', job)]);
+      ids[job] = await send(t, { id: job });
       t.clock.advance(MINUTE);
     }
     const claimed = await t.store.webhooks.claimDue(CLAIM);
     expect(claimed).toHaveLength(6);
     const of = (hook: { id: string }, job: string) =>
-      claimed.find((c) => c.webhookId === hook.id && c.jobId === job)!;
-    return { a, b, of };
+      claimed.find((c) => c.webhookId === hook.id && c.requestId === ids[job])!;
+    return { a, b, of, ids };
   }
 
   /** Records `result` for the delivery of `job` to `hook`, an attempt at the minute its event was. */
@@ -105,7 +106,7 @@ describeDb('webhooks: the feed across routes, bulk retry and stats', () => {
   });
 
   test('bulk retry puts back only the failed ones of that webhook, newest first, at most limit', async () => {
-    const { a, b, of } = await seed();
+    const { a, b, of, ids } = await seed();
     for (const job of ['j1', 'j2', 'j3']) await finish(of, a, job, { ok: false }, 10);
     await finish(of, b, 'j1', { ok: false }, 10);
     await finish(of, b, 'j2', { ok: true }, 10);
@@ -114,8 +115,11 @@ describeDb('webhooks: the feed across routes, bulk retry and stats', () => {
     expect(await feed.retryFailed(a.id, { limit: 2 })).toEqual({ retried: 2 });
     const rows = await rawDeliveries(t);
     const mine = rows.filter((r) => r.webhook_id === a.id);
-    expect(mine.filter((r) => r.status === 'pending').map((r) => r.job_id)).toEqual(['j2', 'j3']);
-    expect(mine.find((r) => r.job_id === 'j1')!.status).toBe('failed');
+    expect(mine.filter((r) => r.status === 'pending').map((r) => r.request_id)).toEqual([
+      ids.j2,
+      ids.j3,
+    ]);
+    expect(mine.find((r) => r.request_id === ids.j1)!.status).toBe('failed');
     // A full budget from here: attempt numbers go on rising.
     expect(mine.filter((r) => r.status === 'pending').every((r) => r.attempt_base === 1)).toBe(
       true
@@ -127,7 +131,7 @@ describeDb('webhooks: the feed across routes, bulk retry and stats', () => {
       'sending',
     ]);
 
-    const oldest = mine.find((r) => r.job_id === 'j1')!;
+    const oldest = mine.find((r) => r.request_id === ids.j1)!;
     expect(await feed.retryFailed(a.id, { before: oldest.id })).toEqual({ retried: 0 });
     expect(await feed.retryFailed(a.id)).toEqual({ retried: 1 });
     expect(await feed.retryFailed(a.id)).toEqual({ retried: 0 });

@@ -23,7 +23,6 @@ export function ConnectionsTable({
               <Th>Source</Th>
               <Th>Destination</Th>
               <Th>Rules</Th>
-              <Th>Events</Th>
               <Th>Status</Th>
               {trend && <Th>Last 24 hours</Th>}
               <Th right>Success / Fail</Th>

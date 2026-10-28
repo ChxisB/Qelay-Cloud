@@ -135,7 +135,7 @@ add job from one `PostgresStore`. One store is one namespace, so no request can 
 on since answers 409 `version_conflict` and nothing changes. An action the job's state does not take is 409
 `job_state` naming the state: data changes on any unfinished job (an active job's lease is untouched), priority and
 delay on a waiting, prioritized or delayed one, and removal on any but an active one. A job a live flow parent waits on
-is 409 `flow_protected`. A failed job cannot be retried from here (DESIGN.md "Parity first"). `drain`, `clean` and `obliterate` delete in batches and stop at `actionBudgetMs`:
+is 409 `flow_protected`. A failed job cannot be retried from the job routes (DESIGN.md "Parity first"); the queue's `dlq/retry` routes do it. `drain`, `clean` and `obliterate` delete in batches and stop at `actionBudgetMs`:
 `done: false` means call again.
 
 **Payloads.** `data` and `returnvalue` are JSON, with `{"$type": "bigint" | "date" | "bytes" | "map" | "set" | "number" |
@@ -161,25 +161,30 @@ change needs the `operator` role and leaves an audit entry; a read needs any rol
 | Group    | Routes                                                                                                                                         |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | DLQ      | `GET /queues/:q/dlq`, `/queues/:q/dlq/stats`; `POST /queues/:q/dlq/purge`                                                                      |
-| Settings | `GET`/`PUT /queues/:q/stall-config` and `/queues/:q/dlq-config`                                                                                |
+| Settings | `GET`/`PUT /queues/:q/stall-config`, `/queues/:q/dlq-config` and `/queues/:q/policy`; `GET`/`PUT`/`DELETE /queues/:q/run-window`                                   |
 | Cron     | `GET /crons`, `GET`/`PUT`/`DELETE /crons/:name`, `POST /crons`                                                                                 |
 | Workers  | `GET /workers`, `DELETE /workers/:id`                                                                                                          |
 | Events   | `GET /events`, `GET /events/queues/:q` (server-sent events)                                                                                    |
 | Metrics  | `GET /metrics`, `GET /metrics/queues/:q`, `GET /ping`, `GET /storage`                                                                          |
 | Audit    | `GET /audit` (operator)                                                                                                                        |
-| Closed   | `POST /queues/:q/dlq/retry`, `/queues/:q/dlq/:jobId/retry`, a change to DLQ retention or auto-retry, and `/gc`, `/heapstats`, `/prometheus`: 501 |
+| Closed   | DLQ auto-retry, and `/gc`, `/heapstats`, `/prometheus`: 501                                                                                    |
 
 **DLQ.** An entry is the failed job (the shape of the job inspector), when it entered, the reason, the last error and
 `expiresAt` (`enteredAt + maxAge`, null when the queue keeps entries without an age limit). Lists are paged like the
 others (500, `offset` capped, 400 `offset_too_large` past it). `purge` needs `{ "confirm": "<queue name>" }`, deletes in
-batches for at most `actionBudgetMs` and answers `{ count, done }`; `done: false` means call again. Retry is closed (task
-14 (k)): it answers 501 `not_supported` and `GET /capabilities` lists `dlq-retry` under `unsupported`, so the panel can
-hide the button and not discover it by failing.
+batches for at most `actionBudgetMs` and answers `{ count, done }`; `done: false` means call again. **Retry** (D16) needs the operator role. `POST /queues/:q/dlq/:jobId/retry` takes `{ expectedVersion? }` and puts the job
+back as waiting with no attempt used; it answers 404 `job_not_found`, 409 `version_conflict` (the entry changed since it was
+read), 409 `job_state` (not failed: another caller retried it first), 409 `flow_member` (retry the flow instead) or 409
+`duplicate_job` (a live job holds its deduplication key), and a refusal changes nothing. `POST /queues/:q/dlq/retry` takes
+`{ confirm: "<queue name>", limit?, reason? }`, retries up to `limit` (default and most 500) oldest first in one transaction
+and answers `{ count, remaining, done }`; `done: false` means call again. Both are audited by route and job id, never by
+payload. Nothing retries by itself: `dlq-auto-retry` stays under `unsupported`.
 
 **Settings.** The stall configuration has one setting that can change, `maxStalls`; the panel's other fields are read
 back as they are (the interval is the lease length) and a request that changes one is 400 `unsupported_option` naming
-it. DLQ settings read back `autoRetry`, `autoRetryInterval`, `maxAutoRetries`, `maxAge` and `maxEntries`; saving them as
-they are is accepted, and a change to retention (`dlq-retention`) or auto-retry (`dlq-auto-retry`) is 501.
+it. DLQ settings read back `autoRetry`, `autoRetryInterval`, `maxAutoRetries`, `maxAge` and `maxEntries`; `maxAge` and
+`maxEntries` are saved (and audited), and lowering `maxEntries` deletes the oldest entries over the new limit at once, except
+jobs a live flow waits on. Saving the rest as they are is accepted, and turning auto-retry on (`dlq-auto-retry`) is 501.
 
 **Cron.** The body is the panel's `CreateCronBody` with unknown keys refused by name. `schedule` takes the expressions
 Qelay takes (five or six fields, names, `@hourly`, `@daily`, `@weekly`) with an optional IANA `timezone`; `repeatEvery`

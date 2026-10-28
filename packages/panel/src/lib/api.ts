@@ -6,8 +6,11 @@
 import { getAuthHeaders, getBaseUrl } from '@/components/dashboard/stores/connectionStore';
 import { errorInfoFrom } from './errorBody';
 import {
+  type BackupPolicy,
+  type BackupPolicyInput,
   type DeadLettersView,
   type DeploymentView,
+  parseBackupPolicy,
   parseDeadLetters,
   parseDeployment,
   parseTransport,
@@ -239,11 +242,6 @@ export const api = {
     ),
   dlqStats: (queue: string) =>
     request<{ ok: boolean; stats: DlqStats }>(`/queues/${q(queue)}/dlq/stats`),
-  retryDlq: (_queue: string): never => {
-    throw new TypeError(
-      'DLQ retry is unavailable in Qelay because the endpoint has no atomic flow-safety precondition.'
-    );
-  },
   purgeDlq: (queue: string) => post(`/queues/${q(queue)}/dlq/purge`, { confirm: queue }),
 
   // ---- Resources ----
@@ -265,6 +263,12 @@ export const api = {
   /** Build, schema, database, connections, tick, workers and the warnings from them. */
   deployment: async (): Promise<DeploymentView> =>
     parseDeployment(await request<unknown>('/deployment')),
+  /** How the operator says the database is backed up, or null while nobody has said. */
+  backupPolicy: async (): Promise<BackupPolicy | null> =>
+    parseBackupPolicy(await request<unknown>('/backup-policy')),
+  /** Declare it. Operators only: a viewer gets 403. Qelay records the answer and takes no backup. */
+  setBackupPolicy: async (input: BackupPolicyInput): Promise<BackupPolicy | null> =>
+    parseBackupPolicy(await put('/backup-policy', input)),
 
   /** Absolute URL of the SSE activity stream. */
   eventsUrl: (queue?: string) =>

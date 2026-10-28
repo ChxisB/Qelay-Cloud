@@ -4,6 +4,7 @@
  */
 import { DEMO_CAPABILITIES } from '../capabilities/types';
 import { API_ROOTS, demoApiResponse } from './api';
+import { demoBackupPolicyReply } from './backupPolicy';
 import { dbExportResponse } from './databaseView';
 import { demoFlowReply } from './flows';
 import { createDemoQueueOperations } from './queueOperations';
@@ -71,6 +72,10 @@ export function installDemo(): () => void {
       ) {
         return dbExportResponse(decodeURIComponent(segments[2]), url.search);
       }
+    }
+    if (root === 'backup-policy') {
+      const reply = demoBackupPolicyReply(method, await readJsonBody(init, request));
+      return jsonResponse(reply.body, reply.status);
     }
     if (root === 'flows') {
       const segments = path.replace(/\/+$/, '').split('/').filter(Boolean);

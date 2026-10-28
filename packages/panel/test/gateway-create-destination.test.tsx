@@ -1,4 +1,12 @@
-import { alertOf, answerAdd, field, page, posts, stepOf } from './gateway-create.helpers';
+import {
+  alertOf,
+  answerAdd,
+  field,
+  page,
+  pickSource,
+  posts,
+  stepOf,
+} from './gateway-create.helpers';
 import { field as byLabel, serve, two } from './gateway-destinations.helpers';
 import { type } from './gateway.helpers';
 import {
@@ -55,16 +63,15 @@ describe('New connection: saved destinations', () => {
     expect(stepOf(view.host.querySelector('select[name="route-destination"]'))).toBe('Destination');
     expect(view.host.querySelector('input[name="webhook-url"]')).toBeNull();
     choose(view.host, 'dest-1');
+    pickSource(view.host, 'src_1');
     expect(view.host.textContent).toContain('https://billing.test/hook');
     save(view.host);
     await settle(30);
-    expect(calls.bodies).toEqual([
-      { destinationId: 'dest-1', events: ['job.completed', 'job.failed'] },
-    ]);
+    expect(calls.bodies).toEqual([{ destinationId: 'dest-1', source: 'src_1' }]);
     view.unmount();
   });
 
-  test('a saved queue destination needs the source queue, and has no signing secret', async () => {
+  test('a saved queue destination needs a source, and has no signing secret', async () => {
     const calls = serve(two());
     const view = page();
     await settle(20);
@@ -75,13 +82,11 @@ describe('New connection: saved destinations', () => {
     save(view.host);
     await settle(10);
     expect(posts(calls)).toEqual([]);
-    expect(alertOf(view.host)?.textContent).toContain('A source queue');
-    setInput(field(view.host, 'webhook-queue'), 'orders');
+    expect(alertOf(view.host)?.textContent).toContain('A source is required');
+    pickSource(view.host, 'src_1');
     save(view.host);
     await settle(30);
-    expect(calls.bodies).toEqual([
-      { destinationId: 'dest-2', queue: 'orders', events: ['job.completed', 'job.failed'] },
-    ]);
+    expect(calls.bodies).toEqual([{ destinationId: 'dest-2', source: 'src_1' }]);
     view.unmount();
   });
 
@@ -111,6 +116,7 @@ describe('New connection: saved destinations', () => {
     await settle(20);
     use(view.host);
     choose(view.host, 'dest-1');
+    pickSource(view.host, 'src_1');
     save(view.host);
     await settle(30);
     expect(stepOf(alertOf(view.host))).toBe('Destination');
@@ -124,6 +130,7 @@ describe('New connection: name and rules', () => {
     const view = page();
     await settle(20);
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
+    pickSource(view.host, 'src_1');
     type(byLabel(view.host, 'Name'), 'Billing');
     type(byLabel(view.host, 'Description'), 'Failed payments');
     type(byLabel(view.host, 'Delay'), '30');
@@ -133,11 +140,11 @@ describe('New connection: name and rules', () => {
     expect(calls.bodies).toEqual([
       {
         url: 'https://receiver.test/hook',
-        events: ['job.completed', 'job.failed'],
+        source: 'src_1',
         name: 'Billing',
         description: 'Failed payments',
         delayMs: 30_000,
-        dedupe: { windowMs: 600_000, fields: ['event', 'jobId'] },
+        dedupe: { windowMs: 600_000, fields: ['body.id'] },
       },
     ]);
     view.unmount();
@@ -153,21 +160,6 @@ describe('New connection: name and rules', () => {
     await settle(10);
     expect(posts(calls)).toEqual([]);
     expect(view.host.textContent).toContain('A delay is a number of seconds from 1 to 3,600.');
-    view.unmount();
-  });
-
-  test('turning every event off is refused at the events', async () => {
-    const calls = serve([]);
-    const view = page();
-    await settle(20);
-    setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
-    for (const event of ['job.completed', 'job.failed']) {
-      act(() => buttonByText(view.host, event).click());
-    }
-    save(view.host);
-    await settle(10);
-    expect(posts(calls)).toEqual([]);
-    expect(view.host.textContent).toContain('Send at least one event.');
     view.unmount();
   });
 
@@ -188,8 +180,9 @@ describe('New connection: name and rules', () => {
     );
     const view = page();
     await settle(20);
+    pickSource(view.host, 'src_1');
     setInput(field(view.host, 'webhook-url'), 'https://receiver.test/hook');
-    type(byLabel(view.host, 'Filter'), '{ "queue": { "$nope": 1 } }');
+    type(byLabel(view.host, 'Filter'), '{ "body.kind": { "$nope": 1 } }');
     save(view.host);
     await settle(30);
     expect(view.host.textContent).toContain('The filter is wrong.');

@@ -15,7 +15,9 @@ Which process reads what:
 | Process | Command | Reads |
 | --- | --- | --- |
 | Control API | `qcloud-api serve`, `qcloud-api migrate` | [Shared](#shared), [Database](#database), [Control API](#control-api), [Webhooks](#webhooks) (the key and address policy), the workflow rows marked API |
+| Ingest | `qcloud-ingest` | [Shared](#shared), [Database](#database), [Ingest](#ingest), [Webhooks](#webhooks) (the key only: it opens a source's secret) |
 | Tick | `qcloud-tick run`, `qcloud-tick serve`, `qcloud-tick send` | [Shared](#shared), [Database](#database), [Tick](#tick), [Webhooks](#webhooks), [Workflows](#workflows) |
+| Pub/Sub importer | `qcloud-import-pubsub` | `QCLOUD_NAMESPACE`, `QCLOUD_GCP_PROJECT` and `QCLOUD_DATABASE_URL` as above (the URL is not needed for `--dry-run`), and [Pub/Sub importer](#pubsub-importer) |
 | Panel | `packages/panel/serve/main.ts` | [Panel](#panel) only |
 | Your workers | the SDK in your code | the connection settings you pass to it; the SDK does not read `QCLOUD_*` |
 
@@ -129,6 +131,22 @@ The `/deployment` and `/transport` routes report on the running system. These se
 The engine queue and the idle window the API acts with are the tick's own, read by the same names:
 `QCLOUD_WORKFLOW_QUEUE` and `QCLOUD_WORKFLOW_IDLE_MS` below. Set them identically on both.
 
+## Ingest
+
+`qcloud-ingest` is the public listener (D12): `POST`, `PUT`, `PATCH` and `DELETE` to `/s/<token>` are checked against the source's
+verification, stored, and answered. It never calls a destination (the tick sends), so it needs no outbound network. It
+takes no arguments and no command, and it does not migrate (`qcloud-api migrate` owns the schema).
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `QCLOUD_INGEST_HOST` | `127.0.0.1` | Interface to listen on. Behind a load balancer set `0.0.0.0`. |
+| `QCLOUD_INGEST_PORT` | `8081` | Port to listen on; `0` lets the system pick one. |
+| `QCLOUD_INGEST_MAX_BODY_BYTES` | `262144` | Largest body taken (256 KB); this is also the most it can be set to. A larger one is answered 413 and stored as a rejection with no body. |
+| `QCLOUD_INGEST_READ_TIMEOUT_MS` | `10000` | How long a sender has to deliver its body (100 to 60,000). A slower one is answered 408. |
+| `QCLOUD_INGEST_RATE_PER_SOURCE` | `600` | Requests one source may send in a minute, per process (1 to 1,000,000). The rest are answered 429 and not stored. |
+| `QCLOUD_INGEST_RATE_GLOBAL` | `6000` | Requests all sources together may send in a minute, per process (1 to 10,000,000), counted before the database is asked. |
+| `QCLOUD_INGEST_SHUTDOWN_GRACE_MS` | `8000` | How long a stopping process lets requests finish. At most 60,000; Cloud Run kills at ten seconds. |
+
 ## Tick
 
 `qcloud-tick run` is one invocation, for a scheduler that starts a job; `qcloud-tick serve` answers
@@ -139,7 +157,7 @@ derives the bounds.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `QCLOUD_SHARD` | none | `qcloud-tick loop` only: tick every namespace of this shard, one loop each, over one pool. Needs `QCLOUD_SHARDS`; excludes `QCLOUD_NAMESPACE`; `run`, `serve`, `send` and `webhook-writer` refuse it. |
-| `QCLOUD_TICK_INTERVAL_MS` | `60000` | The longest gap between two ticks you promise: the scheduler's period. (The in-process loop of the SDK's local setup defaults to 5,000.) |
+| `QCLOUD_TICK_INTERVAL_MS` | `60000` | The longest gap between two ticks you promise: the scheduler's period. (The in-process loop of the SDK's local setup defaults to 5,000.) The Control API reads the same variable, so `/deployment` can warn when a route delays events by less than it (`delay_finer_than_tick`); unset there, it says nothing. |
 | `QCLOUD_TICK_RE_RING_AFTER_MS` | the interval | A claimable job whose last bell is this old is rung again. At most the interval. |
 | `QCLOUD_TICK_RING_GRACE_MS` | `2000` | A job created this recently with no bell yet is left alone: its publish may be in flight. |
 | `QCLOUD_TICK_WORST_LATENESS_MS` | `1000` | How late a tick may start. Part of the ring window's floor. |
@@ -158,7 +176,7 @@ derives the bounds.
 
 ## Webhooks
 
-The tick sends the deliveries (`qcloud-tick send` is the sender alone, for volume); a namespace's deliveries are made by the job's transaction, or by a writer once `qcloud-tick webhook-writer on` has switched it (no variable: a webhook's `filter` and `shape` need it); the Control API and the tick both read the key and the address policy, so set those two
+The tick sends the deliveries (`qcloud-tick send` is the sender alone, for volume); a request's deliveries are made when it is accepted (D14); the Control API and the tick both read the key and the address policy, so set those two
 identically on both. [webhooks.md](../webhooks.md) is the full design.
 
 | Variable | Default | Meaning |
@@ -172,6 +190,7 @@ identically on both. [webhooks.md](../webhooks.md) is the full design.
 | `QCLOUD_WEBHOOK_LEASE_MS` | `30000` | How long a claimed delivery is its sender's. At least the timeout plus 5,000, or a slow receiver is sent to twice. |
 | `QCLOUD_WEBHOOK_RATE_PER_MINUTE` | `60` | Attempts one webhook gets in a minute. |
 | `QCLOUD_WEBHOOK_KEEP_MS` | `172800000` | How long a finished delivery stays readable (two days). A day of deliveries is dropped whole once its end is this old. With several ticks on one database the shortest value decides. |
+| `QCLOUD_COMPLETED_RETENTION_MS` | `604800000` | How long a completed job stays before the tick deletes it (seven days); `0` keeps them for ever. Failed jobs and the dead-letter queue have their own limits. Migration 24 adds the index this uses, which locks writes to `qcloud_jobs` while it builds on a very large table. |
 | `QCLOUD_WEBHOOK_MAX_ATTEMPTS` | `8` | Attempts per delivery, the first included. |
 | `QCLOUD_WEBHOOK_DISABLE_AFTER` | `20` | Failed deliveries (every attempt used) in a row after which a webhook is paused; alert levels come at 50, 70, 90 and 100% of it. `0`: never pause. |
 | `QCLOUD_WEBHOOK_BASE_DELAY_MS` | `30000` | The wait after the first failure; each further failure doubles it. |
@@ -198,6 +217,17 @@ The tick's workflow step starts timed waits, recovers stalled runs and closes fi
 | `QCLOUD_WORKFLOW_BATCH` | `100` | Overdue waits, and stuck runs, one pass handles at most, each. `0` turns the step off. |
 | `QCLOUD_WORKFLOW_IDLE_MS` | `300000` | A run with no progress for this long is taken by recovery. Must exceed the engine's heartbeat gap. The Control API uses the same value, so an operator never takes a run the engine is still writing. |
 | `QCLOUD_WORKFLOW_WAIT_LEASE_MS` | `30000` | How long an overdue wait that one tick claimed is that tick's before another tick may claim it again. |
+
+## Pub/Sub importer
+
+`qcloud-import-pubsub` moves a subscription into a queue ([runbook](../runbooks/import-from-pubsub.md)). It reads two settings of its
+own; its other settings are flags (`--subscription`, `--queue`, `--job-name`, `--dry-run`, `--max`, `--wait`, `--project`,
+`--emulator-host`), which hold no secret.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `QCLOUD_PUBSUB_EMULATOR_HOST` | none | A Pub/Sub emulator as `host:port`, the same as `--emulator-host`. Without either, the tool reaches Google Cloud. |
+| `QCLOUD_REAL_CLOUD` | none | `1` is the owner's go-ahead to reach Google Cloud (decision D9). Without it the tool refuses to run unless an emulator is named. |
 
 ## Panel
 

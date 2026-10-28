@@ -29,4 +29,10 @@ export const PLANNED_DEPLOYMENT: readonly Planned[] = [
     sql: `SELECT id FROM qcloud_jobs WHERE namespace = 'ns' AND id = ANY(ARRAY['j1', 'j2', 'j3']::text[])`,
     index: 'qcloud_jobs_pkey',
   },
+  {
+    query:
+      "backup policy: the namespace's declaration (the Deployment page reads it on every report)",
+    sql: `SELECT mechanism, tool, location, updated_by, updated_at FROM qcloud_backup_policy WHERE namespace = 'ns'`,
+    index: 'qcloud_backup_policy_pkey',
+  },
 ];

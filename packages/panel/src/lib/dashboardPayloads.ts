@@ -14,16 +14,6 @@ import {
 
 const MAX_COLLECTION_ROWS = 10_000;
 const MAX_QUEUE_REFS = 1_000;
-const WEBHOOK_EVENT_SET = new Set([
-  'job.pushed',
-  'job.started',
-  'job.completed',
-  'job.failed',
-  'job.progress',
-  // v2.9.3 keeps this legacy value readable in persisted registries even
-  // though new registrations cannot request it and the server never emits it.
-  'job.stalled',
-]);
 
 /** `/queues/summary` is a bare array in v2.9.3, so validate it explicitly. */
 export function parseQueueSummaryPayload(value: unknown): QueueSummaryFull[] {
@@ -155,9 +145,7 @@ export function parseWebhooksPayload(value: unknown): WebhooksPayload {
       !(route.destination === 'queue' ? webhook.url === '' : upstreamWebhookUrl(webhook.url)) ||
       typeof webhook.urlRedacted !== 'boolean' ||
       typeof webhook.signed !== 'boolean' ||
-      !Array.isArray(webhook.events) ||
-      !webhook.events.every((event) => WEBHOOK_EVENT_SET.has(event)) ||
-      !(webhook.queue === null || typeof webhook.queue === 'string') ||
+      !(webhook.source === null || typeof webhook.source === 'string') ||
       !timestamp(webhook.createdAt) ||
       !(webhook.lastTriggered === null || timestamp(webhook.lastTriggered)) ||
       !count(webhook.successCount) ||
@@ -203,14 +191,13 @@ function attemptList(value: unknown): value is WebhookAttemptFull[] {
   });
 }
 
-function wellFormedDelivery(delivery: Record<string, unknown>): boolean {
+export function wellFormedDelivery(delivery: Record<string, unknown>): boolean {
   return (
     typeof delivery.id === 'string' &&
     DELIVERY_NUMBER.test(delivery.id) &&
     text(delivery.webhookId, 1_024) &&
     text(delivery.event, 64) &&
-    text(delivery.queue, 256) &&
-    text(delivery.jobId, 1_024) &&
+    (delivery.requestId === undefined || optionalText(delivery.requestId, 1_024)) &&
     (delivery.routedJobId === undefined || optionalText(delivery.routedJobId, 1_024)) &&
     timestamp(delivery.occurredAt) &&
     typeof delivery.status === 'string' &&

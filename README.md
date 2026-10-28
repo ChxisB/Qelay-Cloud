@@ -24,8 +24,9 @@ This is release **1.0.0, not yet published** (the package is `0.0.0` until the o
 - **Never run on a real cloud.** The Terraform is validated and planned without credentials, and nothing has been applied to
   a real GCP project or AWS account. The cloud quickstarts say so, and
   [what has never run](docs/limits.md#8-what-has-not-been-run) is a list, not a footnote.
-- **Not the whole of Qelay.** Repeat jobs, job-group admin methods, manual retry of failed jobs and batch processing are
-  not here. Each one fails by name, never silently ([unsupported.md](docs/unsupported.md)).
+- **Not the whole of Qelay.** Repeat jobs, job-group admin methods and re-running a completed job are not here. Each one
+  fails by name, never silently ([unsupported.md](docs/unsupported.md)). A failed job is put back from the dead-letter queue
+  with `retryDlq` or `retryDlqMany`.
 - **Open issues and what was never run:** [known-issues.md](docs/known-issues.md). Read it before you rely on a release.
 
 ## Where to start
@@ -37,7 +38,8 @@ This is release **1.0.0, not yet published** (the package is `0.0.0` until the o
 | Run it on Kubernetes | [Quickstart: Kubernetes (Helm)](docs/quickstart-kubernetes.md) |
 | Understand how it works | [Concepts](docs/concepts.md), then [Architecture](docs/architecture.md) |
 | Move an app that uses Qelay | [Moving from Qelay](docs/migration.md), then [compat.md](docs/compat.md) |
-| Operate it | [Operations](docs/operations.md), [limits](docs/limits.md), [settings](docs/reference/configuration.md) |
+| Move off Google Pub/Sub | [Import from Pub/Sub](docs/runbooks/import-from-pubsub.md) (tested on the emulator only) |
+| Operate it | [Operations](docs/operations.md), [production settings](docs/production.md), [limits](docs/limits.md), [settings](docs/reference/configuration.md) |
 | Change it | [CONTRIBUTING.md](CONTRIBUTING.md) and [DESIGN.md](DESIGN.md) |
 
 ## What you get
@@ -49,8 +51,16 @@ This is release **1.0.0, not yet published** (the package is `0.0.0` until the o
   ([how late, per hosting mode](docs/limits.md#1-delay-precision-by-hosting-mode)).
 - **A bounded cost.** The connection budget is a formula, and Terraform refuses a plan that breaks it
   ([operations](docs/operations.md#connection-budget)).
-- **A control panel and API** for queues, jobs, flows, workflows, workers, the dead-letter queue, cron and an event gateway (webhooks, and "when this happens, add a job"
-  routes), signed in with your OpenID Connect provider ([routes](docs/reference/routes.md), [event gateway](docs/event-gateway.md)).
+- **Workers that take a batch.** Give a `Worker` `batch: { size, maxWaitMs }` and its handler gets up to `size` jobs at once.
+- **Policy per queue.** Each queue has its own retry policy and run window, so a queue that should only run overnight does
+  ([production settings](docs/production.md#a-queues-retry-policy)).
+- **Inbound sources.** Whatever is posted to a source URL is stored, filtered, de-duplicated, delayed or reshaped by a route,
+  then delivered. Routes can send on a schedule or in signed batches ([event gateway](docs/event-gateway.md#sources)).
+- **A control panel and API** for queues, jobs, flows, workflows, workers, the dead-letter queue, cron, sources and an event
+  gateway (webhooks, and "when this happens, add a job" routes), signed in with your OpenID Connect provider
+  ([routes](docs/reference/routes.md)).
+- **No surprise about backups.** Qelay takes no backups, so the panel asks you to say who does. Until someone answers, the
+  Deployment and Home pages carry a warning ([operations](docs/operations.md)).
 
 ## Licence
 

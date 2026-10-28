@@ -15,28 +15,30 @@ export const navPaths = (item: NavItemDef): readonly string[] => [item.to, ...(i
 /** Whether `pathname` is a page the item stands for; `NavLink` cannot say it for `also`. */
 export const isNavCurrent = (item: NavItemDef, pathname: string): boolean =>
   navPaths(item).some((path) => matchPath({ path, end: item.end ?? false }, pathname));
-/** The four reports of the Health item: each is its own page, switched by `HealthTabs`. */
+/** The five reports of the Health item: each is its own page, switched by `HealthTabs`. */
 export const HEALTH_TABS = [
   { to: '/deployment', label: 'Deployment' },
+  { to: '/backups', label: 'Backups' },
   { to: '/diagnostics', label: 'Diagnostics' },
   { to: '/transport', label: 'Job delivery' },
   { to: '/usage', label: 'Usage' },
 ] as const;
 
-/** The five screens of the Event gateway item: each is its own page, switched by `GatewayTabs`. */
+/** The seven screens of the Event gateway item: each is its own page, switched by `GatewayTabs`. */
 export const GATEWAY_TABS = [
   { to: '/events-gateway', label: 'Connections' },
+  { to: '/events-gateway/sources', label: 'Sources' },
+  { to: '/events-gateway/requests', label: 'Requests' },
   { to: '/events-gateway/events', label: 'Events' },
   { to: '/events-gateway/metrics', label: 'Metrics' },
   { to: '/events-gateway/issues', label: 'Issues' },
   { to: '/events-gateway/destinations', label: 'Destinations' },
 ] as const;
 
-/** The six pages of the System item: each is its own page, switched by `SystemTabs`. */
+/** The five pages of the System item: each is its own page, switched by `SystemTabs`. */
 export const SYSTEM_TABS = [
   { to: '/server', label: 'Server' },
   { to: '/database', label: 'Database' },
-  { to: '/s3', label: 'Backups' },
   { to: '/mcp', label: 'MCP' },
   { to: '/benchmark', label: 'Benchmark' },
   { to: '/fleet', label: 'Fleet' },
@@ -72,7 +74,7 @@ export const NAV: NavGroupDef[] = [
   {
     section: 'Automation',
     items: [
-      // Webhooks, workflows' triggers and queue-to-queue routes are one gateway: five screens on one item.
+      // Webhooks, workflows' triggers and queue-to-queue routes are one gateway: seven screens on one item.
       {
         to: GATEWAY_TABS[0].to,
         // A connection's own page (`/connections/:id` and its tabs) is part of the item too.

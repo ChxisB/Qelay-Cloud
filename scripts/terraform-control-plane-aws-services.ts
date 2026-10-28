@@ -37,6 +37,8 @@ export interface Fixture {
 /** What differs between the plans the check makes. */
 export interface Variation {
   readonly apiInstances: number;
+  /** Where autoscaling stops; absent: the same as apiInstances, a fixed count. */
+  readonly apiMaxInstances?: number;
   readonly pooled: boolean;
   /** The one TLS variable the processes are given, and its value. */
   readonly tls: Readonly<Record<string, string>>;
@@ -80,7 +82,7 @@ const secretsOf = (c: Container) => new Map(c.secrets.map((s) => [s.name, s.valu
 const TLS = ['QCLOUD_DATABASE_TLS', 'QCLOUD_DATABASE_TLS_CA', 'QCLOUD_DATABASE_TLS_CA_FILE'];
 
 /** The checks every container shares: no credential value, nothing secret-looking in the plain environment. */
-function checkHygiene(checks: Checks, who: string, c: Container): void {
+export function checkHygiene(checks: Checks, who: string, c: Container): void {
   const env = envOf(c);
   const secrets = secretsOf(c);
   const leaked = [...env].filter(([, value]) => /:\/\/[^/]*:[^/@]*@/.test(value)).map(([n]) => n);
@@ -223,4 +225,23 @@ export function checkEcsServices(plan: Plan, checks: Checks, fx: Fixture, v: Var
   }
   const api = find(plan, 'aws_ecs_service', 'api');
   checks.ok('the API service rolls when the data plane says a secret changed', get(after(api as ResourceChange), 'triggers', 'rollout') !== undefined);
+}
+
+/**
+ * Autoscaling of the API and, with an ingest, of the ingest: the target is registered for the right service between
+ * the minimum and the maximum, one CPU target-tracking policy follows it, and the service does not fight it for the count.
+ */
+export function checkAutoscaling(plan: Plan, checks: Checks, fx: Fixture, api: { min: number; max: number }, ingest?: { min: number; max: number }): void {
+  const scaled: Array<[string, string, number, number]> = [['api', 'api', api.min, api.max]];
+  if (ingest !== undefined) scaled.push(['ingest', 'ingest', ingest.min, ingest.max]);
+  const targets = ofType(plan, 'aws_appautoscaling_target');
+  const policies = ofType(plan, 'aws_appautoscaling_policy');
+  checks.ok('autoscaling: one target and one policy for each service that takes outside load', targets.length === scaled.length && policies.length === scaled.length, `${targets.length} targets, ${policies.length} policies`);
+  for (const [name, who, min, max] of scaled) {
+    const t = after(find(plan, 'aws_appautoscaling_target', name) as ResourceChange);
+    const p = after(find(plan, 'aws_appautoscaling_policy', `${name}_cpu`) as ResourceChange);
+    checks.ok(`${who}: scaled between ${min} and ${max} tasks, on the ECS desired count`, get(t, 'min_capacity') === min && get(t, 'max_capacity') === max && get(t, 'scalable_dimension') === 'ecs:service:DesiredCount' && get(t, 'service_namespace') === 'ecs');
+    checks.ok(`${who}: the target is the service in the data plane's cluster`, get(t, 'resource_id') === `service/${fx.cluster.split('/')[1]}/${fx.name}-${who}`, String(get(t, 'resource_id')));
+    checks.ok(`${who}: one target-tracking policy on average CPU, 60 by default, slow to scale in`, get(p, 'policy_type') === 'TargetTrackingScaling' && get(p, 'target_tracking_scaling_policy_configuration', 0, 'target_value') === 60 && get(p, 'target_tracking_scaling_policy_configuration', 0, 'predefined_metric_specification', 0, 'predefined_metric_type') === 'ECSServiceAverageCPUUtilization' && Number(get(p, 'target_tracking_scaling_policy_configuration', 0, 'scale_in_cooldown')) > Number(get(p, 'target_tracking_scaling_policy_configuration', 0, 'scale_out_cooldown')));
+  }
 }

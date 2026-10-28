@@ -5,8 +5,7 @@ How to move an application that uses [Qelay](https://github.com/ChxisB/qelay)'s 
 this page lists in the order you will meet them. [compat.md](compat.md) is the reference: every method, option and event,
 with its status. [unsupported.md](unsupported.md) is the short list of what is not here.
 
-Qelay-Cloud covers the BullMQ-style core of Qelay. If you use repeat jobs, job groups' admin methods, manual retry of
-failed jobs, batch processing or the embedded mode, read [What will not move](#what-will-not-move) before anything else.
+Qelay-Cloud covers the BullMQ-style core of Qelay. If you use repeat jobs, job groups' admin methods or the embedded mode, read [What will not move](#what-will-not-move) before anything else.
 
 ## 1. Understand what changes underneath
 
@@ -66,7 +65,7 @@ process.on('SIGTERM', () => void worker.close());
 
 Check these, in this order:
 
-1. **The options you pass** against the [Worker options](compat.md#options) table. `limiter`, `batch`, `useLocks`,
+1. **The options you pass** against the [Worker options](compat.md#options) table. `limiter`, `useLocks`,
    `skipStalledCheck`, `maxStalledCount`, `removeOnComplete` and `removeOnFail` on the worker throw, and the message names
    the replacement where there is one: `queue.setGlobalRateLimit` for `limiter`, `queue.setStallConfig({ maxStalls })`
    for the stall options, and the job options of the same names for `removeOn*`.
@@ -97,7 +96,7 @@ Several events carry less than upstream's:
 
 The panel is a clone of the Qelay control panel that talks to the Control API instead of a Qelay server and a control
 agent. Point your team at the new panel ([deployment](operations.md)). Its pages follow the old ones. Actions that are not
-supported answer `501 not_supported`, and the dead-letter page can purge but not retry.
+supported answer `501 not_supported`, and the dead-letter page can retry and purge.
 
 ## 7. Move the jobs
 
@@ -113,9 +112,11 @@ supported answer `501 not_supported`, and the dead-letter page can purge but not
 | If you use | Do this instead |
 | --- | --- |
 | `repeat`, `upsertJobScheduler` | Cron entries exist in the store (`store.crons`, run by the tick), but have no producer API in v1.0.0. A job added by your own scheduler works today. |
-| `retryJob`, `retryDlq`, `retryCompleted` | Add a new job. Manual retry needs a version precondition and is a v1.1 candidate. |
+| `retryJob`, `retryCompleted` | Add a new job. |
+| `retryDlq` | `queue.retryDlq(id)` puts a failed job back with no attempt used; `queue.retryDlqMany({ limit })` does up to 500. Nothing retries by itself. |
 | Job groups' admin methods (`pauseGroup`, `setGroupConcurrency`, ...) | The `group` job option and the worker's `group` option work; the admin methods do not. |
-| `Forwarder`, `batch`, `embedded` mode, `autoBatch` | Not part of the core. |
+| `batch` | Supported: `new Worker(name, processor, { batch: { size, maxWaitMs } })`, the processor takes `jobs` ([compat](compat.md#options)). |
+| `Forwarder`, `embedded` mode, `autoBatch` | Not part of the core. |
 | `moveJobTo*`, `extendJobLock` on a `Queue` | A worker does these with its lease; a producer holds no token. |
 | `FlowProducer.addChain`, `addBulkThen`, `addTree` | `add` with `children`; read results with `job.getChildrenValues()`. |
 

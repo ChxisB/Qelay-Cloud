@@ -4,7 +4,7 @@ import { DEFAULT_WEBHOOK_KEEP_MS } from '../src/store/webhookRetention';
 import { resetTables } from './finishHelpers';
 import type { TestStore } from './storeHelpers';
 import { openTestStore } from './storeHelpers';
-import { addHook, CLAIM, event, journal, KEY, outcome } from './webhookHelpers';
+import { addHook, CLAIM, KEY, outcome, send } from './webhookHelpers';
 
 /** One attempt per delivery, so a failed attempt is a failed delivery; the pause is far off. */
 const POLICY = { maxAttempts: 1, baseDelayMs: 1_000, maxDelayMs: 60_000, disableAfter: 100 };
@@ -26,7 +26,7 @@ describeDb('webhooks: issues (migration 18)', () => {
   /** Sends one event through to a recorded result. */
   const run = async (ok: boolean, policy = POLICY) => {
     n += 1;
-    await journal(t, [event('pushed', 'q', `j${n}`)]);
+    await send(t, { id: `j${n}` });
     t.clock.advance(1);
     const claimed = await t.store.webhooks.claimDue({ ...CLAIM, limit: 1 });
     return t.store.webhooks.record(
@@ -117,7 +117,7 @@ describeDb('webhooks: issues (migration 18)', () => {
   test('a route held by an operator makes no issue', async () => {
     const hook = await addHook(t);
     n += 1;
-    await journal(t, [event('pushed', 'q', `j${n}`)]);
+    await send(t, { id: `j${n}` });
     const claimed = await t.store.webhooks.claimDue({ ...CLAIM, limit: 1 });
     await t.store.webhooks.setEnabled(hook.id, false, 'hold');
     await t.store.webhooks.record(
@@ -133,9 +133,9 @@ describeDb('webhooks: issues (migration 18)', () => {
   });
 
   test('a batch settles each route on its last delivery', async () => {
-    const a = await addHook(t, { queue: 'qa' });
-    const b = await addHook(t, { queue: 'qb' });
-    await journal(t, [event('pushed', 'qa', 'a1'), event('pushed', 'qb', 'b1')]);
+    const a = await addHook(t);
+    const b = await addHook(t);
+    await send(t, { id: 'one' });
     const first = await t.store.webhooks.claimDue(CLAIM);
     await t.store.webhooks.record(
       first.map((c) => outcome(c, { ok: false })),
@@ -144,7 +144,7 @@ describeDb('webhooks: issues (migration 18)', () => {
     expect((await list('open')).map((issue) => issue.webhookId).sort()).toEqual(
       [a.id, b.id].sort()
     );
-    await journal(t, [event('pushed', 'qa', 'a2'), event('pushed', 'qb', 'b2')]);
+    await send(t, { id: 'two' });
     const second = await t.store.webhooks.claimDue(CLAIM);
     await t.store.webhooks.record(
       second.map((c) => outcome(c, { ok: c.webhookId === a.id })),
@@ -197,10 +197,8 @@ describeDb('webhooks: issues (migration 18)', () => {
   });
 
   test('the list is newest first, pages, and filters by route', async () => {
-    const hooks = [await addHook(t, { queue: 'qa' }), await addHook(t, { queue: 'qb' })];
-    for (const queue of ['qa', 'qb']) {
-      await journal(t, [event('pushed', queue, `${queue}1`)]);
-    }
+    const hooks = [await addHook(t), await addHook(t)];
+    await send(t);
     const claimed = await t.store.webhooks.claimDue(CLAIM);
     await t.store.webhooks.record(
       claimed.map((c) => outcome(c, { ok: false })),

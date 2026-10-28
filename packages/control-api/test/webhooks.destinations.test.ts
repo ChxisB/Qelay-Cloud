@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { MAX_DESTINATIONS } from '@qelay-cloud/core';
 import { describeDb } from '../../../test/support/db';
-import { addHook, KEY } from '../../store-postgres/test/webhookHelpers';
+import { addHook, hookSource, KEY } from '../../store-postgres/test/webhookHelpers';
 import type { JobsApi, JobsFixture } from './jobsFixture';
 import { openJobsFixture } from './jobsFixture';
 
@@ -24,8 +24,8 @@ describeDb('webhook routes: saved destinations', () => {
   ) => api.call('POST', '/webhooks/destinations', body);
   const idOf = async (body?: Record<string, unknown>) =>
     (await save(body)).body.data.destination.id;
-  const connect = (body: Record<string, unknown>) =>
-    api.call('POST', '/webhooks', { events: ['job.pushed'], ...body });
+  const connect = async (body: Record<string, unknown>) =>
+    api.call('POST', '/webhooks', { source: await hookSource(f), ...body });
 
   test('a destination is saved, listed with its connection count, and read back whole to an operator', async () => {
     const created = await save();
@@ -160,17 +160,6 @@ describeDb('webhook routes: saved destinations', () => {
     );
     const renamed = await api.call('PATCH', `/webhooks/destinations/${id}`, { name: 'Payments' });
     expect(renamed.body.data.destination.name).toBe('Payments');
-  });
-
-  test('a queue address that would make a loop is a 409 and nothing changes', async () => {
-    const orders = await idOf({ name: 'Orders', kind: 'queue', target: 'b' });
-    const hook = (await connect({ destinationId: orders, queue: 'a' })).body.data.webhook;
-    expect((await connect({ destination: 'queue', queue: 'c', target: 'a' })).status).toBe(201);
-    const loop = await api.call('PATCH', `/webhooks/destinations/${orders}`, { target: 'c' });
-    expect(loop.status).toBe(409);
-    expect(loop.body.error.code).toBe('route_cycle');
-    expect((await api.call('GET', `/webhooks/${hook.id}`)).body.data.webhook.target).toBe('b');
-    expect((await f.store.webhooks.getDestination(orders))!.target).toBe('b');
   });
 
   test('a destination in use is a 409 with the count, and goes once its connections are gone', async () => {

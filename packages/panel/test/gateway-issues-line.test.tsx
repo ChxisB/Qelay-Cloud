@@ -50,7 +50,7 @@ describe('Issues screen: the line an issue is about', () => {
     await settle(20);
     const [card] = cards(view.host);
     expect(card.textContent).toContain('Still trying');
-    expect(card.textContent).toContain('Qelay jobs: emails');
+    expect(card.textContent).toContain('Source: src_1');
     expect(card.textContent).toContain('receiver.test/hook');
     expect([...card.querySelectorAll('button')]).toHaveLength(0);
     view.unmount();

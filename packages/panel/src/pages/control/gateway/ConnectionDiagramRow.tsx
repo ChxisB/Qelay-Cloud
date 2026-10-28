@@ -109,7 +109,7 @@ export function ConnectionDiagramRow({
         >
           <ConnectionCard
             name={name}
-            route={`${sourceLabel(route)} → ${destinationLabel(route)} · ${route.events.join(', ')}`}
+            route={`${sourceLabel(route)} → ${destinationLabel(route)}`}
             state={state}
             stateLabel={word}
             rules={rules}

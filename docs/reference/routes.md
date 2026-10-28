@@ -2,7 +2,7 @@
 
 > Generated from [openapi.yaml](../openapi.yaml) by `bun run docs:check --write`. Do not edit it by hand: change the source.
 
-117 operations. The schemas, parameters and every response are in [openapi.yaml](../openapi.yaml); a test
+134 operations. The schemas, parameters and every response are in [openapi.yaml](../openapi.yaml); a test
 fails when a served route is missing from it or the other way round. `GET /health` takes no token; every other route
 takes a bearer token, and a route that changes something needs the `operator` role.
 
@@ -50,6 +50,11 @@ takes a bearer token, and a route that changes something needs the `operator` ro
 | DELETE | `/queues/{queue}/concurrency` | Lift the concurrency limit |
 | GET | `/queues/{queue}/stall-config` | Stall settings of a queue |
 | PUT | `/queues/{queue}/stall-config` | Set how often a job may stall before it fails |
+| GET | `/queues/{queue}/policy` | Retry policy of a queue |
+| PUT | `/queues/{queue}/policy` | Set the retry policy of a queue |
+| GET | `/queues/{queue}/run-window` | Run window of a queue |
+| PUT | `/queues/{queue}/run-window` | Set the run window of a queue |
+| DELETE | `/queues/{queue}/run-window` | Remove the run window of a queue |
 
 ## jobs
 
@@ -79,6 +84,8 @@ takes a bearer token, and a route that changes something needs the `operator` ro
 | GET | `/queues/{queue}/dlq` | The failed jobs of a queue, with how each one failed |
 | GET | `/queues/{queue}/dlq/stats` | Counts of the dead-letter queue |
 | POST | `/queues/{queue}/dlq/purge` | Delete every entry of the dead-letter queue |
+| POST | `/queues/{queue}/dlq/retry` | Put failed jobs back in the queue |
+| POST | `/queues/{queue}/dlq/{jobId}/retry` | Put one failed job back in the queue |
 | GET | `/queues/{queue}/dlq-config` | Retention and auto-retry settings of the dead-letter queue |
 | PUT | `/queues/{queue}/dlq-config` | Save the dead-letter queue's settings |
 
@@ -115,7 +122,7 @@ takes a bearer token, and a route that changes something needs the `operator` ro
 | --- | --- | --- |
 | GET | `/webhooks` | The registered webhooks |
 | POST | `/webhooks` | Register a webhook |
-| POST | `/webhooks/preview` | Try a filter and a shape on an event |
+| POST | `/webhooks/preview` | Try a filter and a shape on a request |
 | GET | `/webhooks/deliveries` | The deliveries of every route |
 | GET | `/webhooks/stats` | Delivery counts, failure ratio and latency over a window |
 | GET | `/webhooks/issues` | The issues, one per route whose deliveries are failing |
@@ -133,6 +140,26 @@ takes a bearer token, and a route that changes something needs the `operator` ro
 | GET | `/webhooks/{id}/deliveries` | The delivery history of a webhook |
 | POST | `/webhooks/{id}/deliveries/retry` | Retry a route's failed deliveries |
 | POST | `/webhooks/{id}/deliveries/{deliveryId}/retry` | Retry a failed delivery |
+
+## sources
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| GET | `/sources` | The inbound sources |
+| POST | `/sources` | Register a source |
+| GET | `/sources/{id}` | One source |
+| PATCH | `/sources/{id}` | Rename a source or turn it on or off |
+| DELETE | `/sources/{id}` | Delete a source |
+| POST | `/sources/{id}/rotate-secret` | Rotate a source's secret |
+| POST | `/sources/{id}/rotate-token` | Give a source a new URL |
+
+## requests
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| GET | `/requests` | The requests the sources took |
+| GET | `/requests/{id}` | One request whole |
+| POST | `/requests/{id}/replay` | Send a stored request again |
 
 ## workers
 
@@ -173,6 +200,8 @@ takes a bearer token, and a route that changes something needs the `operator` ro
 | Method | Path | What it does |
 | --- | --- | --- |
 | GET | `/deployment` | What is deployed, and whether it is keeping up |
+| GET | `/backup-policy` | How the operator says this database is backed up |
+| PUT | `/backup-policy` | Declare how this database is backed up |
 
 ## unsupported
 
@@ -184,8 +213,6 @@ Qelay features with no meaning on a managed queue. Always 501 `not_supported`.
 | POST | `/jobs/{id}/discard` | Not supported: discard |
 | POST | `/jobs/{id}/move-to-wait` | Not supported: move-to-wait |
 | POST | `/jobs/{id}/move-to-delayed` | Not supported: move-to-delayed |
-| POST | `/queues/{queue}/dlq/retry` | Not supported: retry every DLQ entry |
-| POST | `/queues/{queue}/dlq/{jobId}/retry` | Not supported: retry one DLQ entry |
 | POST | `/gc` | Not supported: run the garbage collector |
 | GET | `/heapstats` | Not supported: heap statistics |
 | GET | `/prometheus` | Not supported: Prometheus scrape of a Qelay server |

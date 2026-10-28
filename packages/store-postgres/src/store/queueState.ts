@@ -12,7 +12,16 @@ export interface QueueState {
   readonly concurrencyLimit: number | null;
   /** The round-robin counter of the queue's groups (`last_served` values come from it). */
   readonly groupSequence: number;
+  /** The queue's run window as one interval of epoch milliseconds (DESIGN.md D17), null for a queue with none. */
+  readonly windowFrom: number | null;
+  readonly windowUntil: number | null;
 }
+
+/** Whether `now` is outside the queue's run window, so a claim starts nothing. A queue with no window is never closed. */
+export const windowClosed = (state: QueueState, now: number): boolean =>
+  state.windowFrom !== null &&
+  state.windowUntil !== null &&
+  !(state.windowFrom <= now && now < state.windowUntil);
 
 interface QueueStateRow {
   queue: string;
@@ -24,6 +33,8 @@ interface QueueStateRow {
   rate_count: number;
   concurrency_limit: number | null;
   group_sequence: number | string | bigint;
+  window_from: number | string | bigint | null;
+  window_until: number | string | bigint | null;
 }
 
 const optional = (value: number | string | bigint | null): number | null =>
@@ -40,6 +51,8 @@ function toState(row: QueueStateRow): QueueState {
     rateCount: row.rate_count,
     concurrencyLimit: row.concurrency_limit,
     groupSequence: Number(row.group_sequence),
+    windowFrom: optional(row.window_from),
+    windowUntil: optional(row.window_until),
   };
 }
 
@@ -59,13 +72,15 @@ export async function lockQueueState(
     exclusive
       ? tx<QueueStateRow[]>`
           SELECT queue, paused, rate_limit, rate_duration_ms, rate_window_started_at,
-                 rate_expires_at, rate_count, concurrency_limit, group_sequence
+                 rate_expires_at, rate_count, concurrency_limit, group_sequence,
+                 window_from, window_until
           FROM qcloud_queue_state
           WHERE namespace = ${namespace} AND queue = ${queue}
           FOR UPDATE`
       : tx<QueueStateRow[]>`
           SELECT queue, paused, rate_limit, rate_duration_ms, rate_window_started_at,
-                 rate_expires_at, rate_count, concurrency_limit, group_sequence
+                 rate_expires_at, rate_count, concurrency_limit, group_sequence,
+                 window_from, window_until
           FROM qcloud_queue_state
           WHERE namespace = ${namespace} AND queue = ${queue}
           FOR SHARE`;

@@ -1,8 +1,8 @@
 # Phase 0 gate: go / no-go
 
-- **Task:** [06](../../.claude/.planning/v1.0.0/06-phase0-gate.md), run on 2026-10-13.
+- **Task:** 06, run on 2026-10-13.
 - **Inputs:** the write-ups for spikes [01](01-postgres-port.md), [03](03-doorbell-gcp.md), [04](04-doorbell-aws.md) and
-  [05](05-db-access-and-delay.md), and the Result of [task 02](../../.claude/.planning/v1.0.0/02-store-model-harness.md).
+  [05](05-db-access-and-delay.md), and the Result of task 02.
 - **What was not run (D9):** nothing touched a real cloud account. Every cloud statement below comes from an emulator
   (Pub/Sub, ElasticMQ), a stand-in (PgBouncer, a TCP fault proxy) or the vendor's documentation, and says which.
 
@@ -837,7 +837,7 @@ Each item is applied to DESIGN.md in the same change as this document.
 ## Re-plan
 
 Tasks 10-22 keep their order and dependencies. No task is added or removed. What changed is recorded at the top of
-[CURRENT.md](../../.claude/.planning/v1.0.0/CURRENT.md) and as a "Gate decisions" section in each affected task:
+CURRENT.md and as a "Gate decisions" section in each affected task:
 
 | Task | Change |
 | --- | --- |
@@ -1082,6 +1082,7 @@ design was found wrong; these are the places where AWS asked for something GCP d
   as on GCP.
 - **The API cannot autoscale.** Its tasks are counted in the connection budget (`api_instances + 2 <= control_processes`, default 4), so a
   fixed count is the honest shape. A burst of console users is served by more CPU per task, not more tasks.
+  *Superseded by the scale review (2026-10-24): `api_max_instances` autoscales the API on CPU, and the budget counts the maximum.*
 - **`/transport` gained `inFlight`, `delayed` and `approximateCounts`, and the Transport page labels approximate counts.** SQS says its counts
   are approximate and gives both figures; Pub/Sub gives `delayed` as 0 and no in-flight count, and the page shows a column only when some
   queue has a value. This is an additive contract change (`docs/openapi.yaml`);

@@ -3,7 +3,7 @@ import { describeDb } from '../../../test/support/db';
 import { resetTables } from '../../store-postgres/test/finishHelpers';
 import type { TestStore } from '../../store-postgres/test/storeHelpers';
 import { openTestStore } from '../../store-postgres/test/storeHelpers';
-import { addHook, event, journal, KEY } from '../../store-postgres/test/webhookHelpers';
+import { addHook, KEY, send, sendAll } from '../../store-postgres/test/webhookHelpers';
 import type { PostResult } from '../src/webhookHttp';
 import { RecordingTransport, recordedTelemetry } from './support';
 import { PUBLIC, senderHarness, status } from './webhookSending';
@@ -29,10 +29,10 @@ describeDb('webhook sender: limits, telemetry and leases', () => {
   );
 
   test('a pass sends at most `batch`, reports moreWork, and a run drains the rest', async () => {
-    await addHook(t, { events: ['job.pushed'] });
-    await journal(
+    await addHook(t);
+    await sendAll(
       t,
-      Array.from({ length: 7 }, (_, i) => event('pushed', 'q', `j${i}`))
+      Array.from({ length: 7 }, (_, i) => ({ n: i }))
     );
     const s = sending(() => status(200), { batch: 3, concurrency: 2 });
     const first = await s.pass();
@@ -46,10 +46,10 @@ describeDb('webhook sender: limits, telemetry and leases', () => {
   });
 
   test('no new chunk starts once the pass budget is spent', async () => {
-    await addHook(t, { events: ['job.pushed'] });
-    await journal(
+    await addHook(t);
+    await sendAll(
       t,
-      Array.from({ length: 6 }, (_, i) => event('pushed', 'q', `j${i}`))
+      Array.from({ length: 6 }, (_, i) => ({ n: i }))
     );
     const s = sending(
       async () => {
@@ -64,12 +64,8 @@ describeDb('webhook sender: limits, telemetry and leases', () => {
   });
 
   test('requests within a chunk run in parallel', async () => {
-    for (const name of ['a', 'b', 'c', 'd'])
-      await addHook(t, { queue: name, events: ['job.pushed'] });
-    await journal(
-      t,
-      ['a', 'b', 'c', 'd'].map((queue) => event('pushed', queue, `j-${queue}`))
-    );
+    for (let n = 0; n < 4; n++) await addHook(t);
+    await send(t);
     const s = sending(
       async () => {
         await new Promise((resolve) => setTimeout(resolve, 150));
@@ -83,10 +79,10 @@ describeDb('webhook sender: limits, telemetry and leases', () => {
   });
 
   test('the rate limit holds a webhook back within its minute', async () => {
-    await addHook(t, { events: ['job.pushed'] });
-    await journal(
+    await addHook(t);
+    await sendAll(
       t,
-      Array.from({ length: 5 }, (_, i) => event('pushed', 'q', `j${i}`))
+      Array.from({ length: 5 }, (_, i) => ({ n: i }))
     );
     const s = sending(() => status(200), { ratePerMinute: 2 });
     expect((await s.run()).webhooks.delivered).toBe(2);
@@ -96,8 +92,8 @@ describeDb('webhook sender: limits, telemetry and leases', () => {
   });
 
   test('the tick reports the step to telemetry as gauges', async () => {
-    await addHook(t, { events: ['job.pushed'] });
-    await journal(t, [event('pushed', 'q', 'a'), event('pushed', 'q', 'b')]);
+    await addHook(t);
+    await sendAll(t, [{ n: 'a' }, { n: 'b' }]);
     const telemetry = recordedTelemetry();
     const s = sending((call) => status(call === 1 ? 200 : 500), {}, t.store, telemetry);
     await s.pass();
@@ -108,13 +104,13 @@ describeDb('webhook sender: limits, telemetry and leases', () => {
     expect(gauge('webhooks.failed')).toBe(0);
     expect(gauge('webhooks.errors')).toBe(0);
     expect(telemetry.durations.some(([step]) => step === 'webhooks')).toBe(true);
-    // Counts only: nothing names a queue, a job or an address.
+    // Counts only: nothing names a route, a request or an address.
     expect(JSON.stringify(telemetry.gauges)).not.toContain(PUBLIC);
   });
 
   test('an outcome that arrives after the lease lapsed is dropped and the newer attempt stands', async () => {
-    const hook = await addHook(t, { events: ['job.pushed'] });
-    await journal(t, [event('pushed')]);
+    const hook = await addHook(t);
+    await send(t);
     let release: (result: PostResult) => void = () => {};
     const slow = sending(() => new Promise<PostResult>((resolve) => (release = resolve)), {
       leaseMs: 40_000,

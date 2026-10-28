@@ -1,6 +1,6 @@
 # Spike 01: porting Qelay's Postgres engine without brokers
 
-- **Task:** [01](../../.claude/.planning/v1.0.0/01-spike-postgres-port.md), run on 2026-10-13.
+- **Task:** 01, run on 2026-10-13.
 - **Upstream:** `../qelay` at commit `c43442c91a9f` (2026-10-07), schema version 21.
 - **Spike code:** `packages/store-postgres/spike/`. Task 06 promotes it or deletes it.
 

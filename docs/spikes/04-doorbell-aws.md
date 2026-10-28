@@ -1,6 +1,6 @@
 # Spike 04: the doorbell on SQS
 
-- **Task:** [04](../../.claude/.planning/v1.0.0/04-spike-doorbell-aws.md), run on 2026-10-13.
+- **Task:** 04, run on 2026-10-13.
 - **Spike code:** `packages/store-postgres/spike/doorbell-aws/`, on top of the task 01 port and reusing task 03's ledger,
   invariants and store helpers. **Removed in task 40** (2026-10-15): the transport became
   [`packages/transport-aws`](../../packages/transport-aws/), the scenarios are its `test/` files (`delivery`, `crash`,

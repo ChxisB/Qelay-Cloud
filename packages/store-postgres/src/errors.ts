@@ -126,20 +126,6 @@ export class WebhookLimitError extends StoreError {
 /** A webhook secret was given and the store has no `webhookKey` to seal it with. Nothing was created. */
 export class WebhookKeyError extends StoreError {}
 
-/** A route would make queues feed each other in a loop. Nothing was saved. */
-export class RouteCycleError extends StoreError {
-  constructor() {
-    super('the route would make a loop: a queue would end up adding jobs to itself');
-  }
-}
-
-/** A route would make a chain of routes longer than `MAX_ROUTE_CHAIN`. Nothing was saved. */
-export class RouteChainError extends StoreError {
-  constructor(readonly limit: number) {
-    super(`a chain of routes can be at most ${limit} routes long`);
-  }
-}
-
 /** A test delivery was asked of a webhook that is disabled: nothing sends for a disabled webhook. */
 export class WebhookDisabledError extends StoreError {}
 
@@ -161,5 +147,26 @@ export class DestinationNameTakenError extends StoreError {
 export class DestinationInUseError extends StoreError {
   constructor(readonly connections: number) {
     super(`the destination is used by ${connections} webhook${connections === 1 ? '' : 's'}`);
+  }
+}
+
+/** The namespace already has the most inbound sources it may. Nothing was created. */
+export class SourceLimitError extends StoreError {
+  constructor(readonly limit: number) {
+    super(`a namespace can have at most ${limit} sources`);
+  }
+}
+
+/** Another source of the namespace already has this name. Nothing was saved. */
+export class SourceNameTakenError extends StoreError {
+  constructor(readonly name: string) {
+    super(`a source named "${name}" already exists`);
+  }
+}
+
+/** A source still has routes, so it was not removed. */
+export class SourceInUseError extends StoreError {
+  constructor(readonly routes: number) {
+    super(`the source is used by ${routes} route${routes === 1 ? '' : 's'}`);
   }
 }

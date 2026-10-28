@@ -239,14 +239,16 @@
           "url": "https://hooks.example.com/qelay",
           "target": null,
           "urlRedacted": false,
-          "events": ["job.completed", "job.failed"],
-          "queue": null,
+          "source": "src_demo",
           "signed": true,
           "createdAt": 1783035131363,
           "lastTriggered": 1783035120000,
           "successCount": 42,
           "failureCount": 3,
-          "enabled": true
+          "enabled": true,
+          "schedule": { "cron": "0 0 * * *", "timezone": "UTC" },
+          "nextSendAt": 1783036800000,
+          "batch": { "maxEvents": 100, "maxBytes": 262144 }
         }
       ],
       "stats": { "total": 1, "enabled": 1 }

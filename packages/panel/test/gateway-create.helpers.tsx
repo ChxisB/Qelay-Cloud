@@ -3,10 +3,20 @@ import { Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { CreateConnection } from '../src/pages/control/gateway/CreateConnection';
 import { NEW_CONNECTION } from '../src/pages/control/gateway/model';
 import { at } from './gateway.helpers';
-import { createElement } from './server-action-pages.helpers';
+import { act, createElement } from './server-action-pages.helpers';
 
 export const field = (host: HTMLElement, name: string) =>
   host.querySelector<HTMLInputElement>(`input[name="${name}"]`)!;
+export const sourceSelect = (host: HTMLElement) =>
+  host.querySelector<HTMLSelectElement>('select[name="webhook-source"]')!;
+/** Picks a source by id, the way a person would: the option has to be there, so the sources must have loaded. */
+export function pickSource(host: HTMLElement, id: string) {
+  const select = sourceSelect(host);
+  act(() => {
+    select.value = id;
+    select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  });
+}
 export const posts = (calls: { seen: string[] }) =>
   calls.seen.filter((call) => call.startsWith('POST'));
 export const alertOf = (host: HTMLElement) => host.querySelector('p[role="alert"]');

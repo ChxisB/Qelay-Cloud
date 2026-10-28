@@ -11,14 +11,9 @@ import { delivery, PUBLIC_ADDRESS } from './webhookSupport';
 /** A store that hands out `queue`, with the first `claimFaults` claims and `recordFaults` records failing. */
 function fakeStore(queue: ClaimedDelivery[], faults = { claim: 0, record: 0 }) {
   const recorded: AttemptOutcome[] = [];
-  const writes = { count: 0 };
   const limits: number[] = [];
   const store = {
     webhooks: {
-      writeDeliveries: async () => {
-        writes.count += 1;
-        return { active: false, events: 0, written: 0, more: false, gap: false };
-      },
       async claimDue(options: { limit: number }) {
         limits.push(options.limit);
         if (faults.claim-- > 0) throw new Error('db down');
@@ -37,7 +32,7 @@ function fakeStore(queue: ClaimedDelivery[], faults = { claim: 0, record: 0 }) {
       },
     },
   } as unknown as Pick<PostgresStore, 'webhooks' | 'enqueue'>;
-  return { store, recorded, limits, writes };
+  return { store, recorded, limits };
 }
 
 const hook = (id: number) =>
@@ -121,23 +116,5 @@ describe('the webhook loop', () => {
     loop.stop();
     await loop.done;
     expect(recorded.map((o) => o.deliveryId)).toEqual(['1']);
-  });
-
-  test('runs the delivery writer on its own beat, and a failing writer does not stop the sends', async () => {
-    const { store, recorded, writes } = fakeStore([hook(1)]);
-    (store.webhooks as unknown as { writeDeliveries: () => Promise<never> }).writeDeliveries =
-      async () => {
-        writes.count += 1;
-        throw new Error('writer down');
-      };
-    const errors: string[] = [];
-    const loop = run(store, async () => ok, {
-      ...noTelemetry,
-      error: (step) => void errors.push(step),
-    });
-    await until(() => recorded.length === 1 && writes.count >= 2);
-    loop.stop();
-    await loop.done;
-    expect(errors).toContain('webhook-writer');
   });
 });

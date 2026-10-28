@@ -50,17 +50,8 @@ import type {
   WebhookRecord,
   WebhookSpec,
   WebhookStats,
-  WriteOptions,
-  WriterState,
-  WriteResult,
 } from './webhookTypes';
 import { updateWebhook } from './webhookUpdate';
-import {
-  startWebhookWriter,
-  stopWebhookWriter,
-  webhookWriterState,
-  writeWebhookDeliveries,
-} from './webhookWriter';
 
 /** Webhooks (`store.webhooks`): the operator's side, and the calls the sender makes. See `webhooks.ts` and `webhookClaim.ts`. */
 export interface WebhookApi {
@@ -78,9 +69,8 @@ export interface WebhookApi {
    */
   setEnabled(id: string, enabled: boolean, mode?: WebhookPauseMode): Promise<WebhookRecord | null>;
   /**
-   * Changes the name, description, events and rules the patch names (`WebhookPatch`). Throws
-   * `UnsupportedOptionError` for an empty or invalid patch, or a writer-only rule without the writer. Null when
-   * there is no such webhook.
+   * Changes the name, description, source and rules the patch names (`WebhookPatch`). Throws
+   * `UnsupportedOptionError` for an empty or invalid patch. Null when there is no such webhook.
    */
   update(id: string, patch: WebhookPatch): Promise<WebhookRecord | null>;
   /**
@@ -119,8 +109,7 @@ export interface WebhookApi {
   /**
    * Saved destinations: a named address webhooks can be made from (`create` with `destinationId`). Saving throws
    * `DestinationNameTakenError` and `DestinationLimitError`; an update copies a new address to every webhook made from the
-   * destination, and throws `RouteCycleError` or `RouteChainError` when a queue address would loop; removing one that is
-   * used throws `DestinationInUseError`. `getDestination` and `updateDestination` give null, `deleteDestination` false, for none.
+   * destination; removing one that is used throws `DestinationInUseError`. `getDestination` and `updateDestination` give null, `deleteDestination` false, for none.
    */
   destinations(): Promise<DestinationRecord[]>;
   getDestination(id: string): Promise<DestinationRecord | null>;
@@ -133,17 +122,6 @@ export interface WebhookApi {
   record(outcomes: readonly AttemptOutcome[], policy: DeliveryPolicy): Promise<RecordSummary>;
   /** The tick's upkeep: expires stale deliveries and deletes old finished ones, at most `limit` of each. */
   prune(limit: number): Promise<WebhookRetention>;
-  /**
-   * The delivery writer (`webhookWriter.ts`): one pass makes the deliveries of the next page of journal
-   * events, for a namespace that has the writer on. `active: false` when it has not, or another
-   * writer holds the cursor.
-   */
-  writeDeliveries(options?: WriteOptions): Promise<WriteResult>;
-  writerState(): Promise<WriterState>;
-  /** Switches deliveries from the trigger to the writer, from the journal's end. Safe to repeat. */
-  startWriter(): Promise<WriterState>;
-  /** Switches back to the trigger without losing an event. Throws while a webhook has a filter, shape, delay or dedupe. */
-  stopWriter(options?: WriteOptions): Promise<WriterState>;
 }
 
 export const webhookApi = (ctx: StoreContext): WebhookApi => ({
@@ -172,8 +150,4 @@ export const webhookApi = (ctx: StoreContext): WebhookApi => ({
   claimDue: (options) => claimDueDeliveries(ctx, options),
   record: (outcomes, policy) => recordAttempts(ctx, outcomes, policy),
   prune: (limit) => pruneWebhookDeliveries(ctx, limit),
-  writeDeliveries: (options) => writeWebhookDeliveries(ctx, options),
-  writerState: () => webhookWriterState(ctx),
-  startWriter: () => startWebhookWriter(ctx),
-  stopWriter: (options) => stopWebhookWriter(ctx, options),
 });

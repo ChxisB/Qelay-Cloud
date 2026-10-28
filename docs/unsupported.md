@@ -11,14 +11,14 @@ not exist on the class. **Nothing is ignored silently.** [Moving from Qelay](mig
 | Part of the API | Supported | Differs | New | Not supported |
 | --- | ---: | ---: | ---: | ---: |
 | [Constructor and connection options](compat.md#constructor-and-connection-options) | 1 | 0 | 7 | 5 |
-| [`Queue` methods](compat.md#queue-methods) | 10 | 27 | 0 | 21 |
+| [`Queue` methods](compat.md#queue-methods) | 10 | 28 | 3 | 21 |
 | [Job](compat.md#job) | 4 | 3 | 1 | 1 |
 | [Job options](compat.md#job-options) | 2 | 0 | 0 | 5 |
-| [`Worker`](compat.md#worker) | 11 | 11 | 7 | 16 |
+| [`Worker`](compat.md#worker) | 11 | 11 | 8 | 15 |
 | [`QueueEvents`](compat.md#queueevents) | 3 | 9 | 8 | 3 |
 | [`FlowProducer`](compat.md#flowproducer) | 2 | 4 | 0 | 1 |
 | [Workflow engine](compat.md#workflow-engine) | 11 | 12 | 4 | 3 |
-| **All** | 44 | 66 | 27 | 55 |
+| **All** | 44 | 67 | 31 | 54 |
 
 Supported: same name, arguments and result. Differs: same name, and compat.md states the difference. New: exists here
 and not upstream. Not supported: listed below.
@@ -43,10 +43,10 @@ Table: [compat.md](compat.md#queue-methods).
 | --- | --- |
 | `getChildrenValues(id)` | Read it through the job: `(await queue.getJob(id))?.getChildrenValues()`. See [`FlowProducer`](compat.md#flowproducer). |
 | `extendJobLock(id, token, duration)` | A job's lease belongs to the `Worker` that holds it, which renews it by itself; a producer has no token. |
-| `retryJob(id)`, `retryJobs(opts?)` | A failed job is retried by the store's retry rules (`attempts`, `backoff`) or lands in the DLQ. Manual retry of a failed job needs the version precondition of task 14 (k) and is a v1.1 candidate. |
+| `retryJob(id)`, `retryJobs(opts?)` | A failed job is retried by the store's retry rules (`attempts`, `backoff`) or lands in the DLQ, and `retryDlq` or `retryDlqMany` puts it back from there (D16). A job that is not in the DLQ has nothing to retry. |
 | `getCountsPerPriority`, `getCountsPerPriorityAsync` | There is no read model of counts per priority; it would be a scan. |
 | `getCountsPerPriorityForGroup` | Group methods: see [Groups](compat.md#groups). |
-| `retryDlq`, `retryDlqAsync`, `retryDlqByFilter`, `retryDlqByFilterAsync` | **DLQ retry is closed, fail-closed**, as the Phase 0 gate decided (task 14 (k)): reopening it needs the `version` precondition and an entry fence, a v1.1 candidate. |
+| `retryDlqAsync`, `retryDlqByFilter`, `retryDlqByFilterAsync` | `retryDlq` is already async. Upstream's filter (`olderThan`, `retriable`, and so on) is replaced by `retryDlqMany({ limit, reason })`. Nothing retries by itself: `autoRetry` stays closed. |
 | `retryCompleted`, `retryCompletedAsync` | Same reason: re-running a finished job needs the same precondition. Add a new job instead. |
 | `rateLimit(expireTimeMs)`, `getRateLimitTtl()`, `isMaxed()` | These belong to a running worker (a handler asking the queue to back off), and the store has no time-boxed rate limit to ask. Use `setGlobalRateLimit`. |
 | `getGroupJobsCount`, `getGroupsJobsCount`, `getGroupActiveCount`, `getGroupJobs`, `getCountsPerPriorityForGroup` | The `group` **job option** is supported (`{ id, maxSize?, priority? }`), and claims honor the group state the store keeps. There is no store facet that reads or writes group state for a producer yet; a v1.1 candidate. |
@@ -96,7 +96,6 @@ Table: [compat.md](compat.md#worker).
 | `useLocks`, `skipLockRenewal` | A job is always leased and renewed. |
 | `skipStalledCheck`, `maxStalledCount` | Recovery is the tick's, not the worker's. The limit is per queue: `queue.setStallConfig({ maxStalls })`. |
 | `limiter` | A rate limit is the queue's and holds across workers: `queue.setGlobalRateLimit`. |
-| `batch` | Batch processing is not supported. |
 | `removeOnComplete`, `removeOnFail` | Give them to the job: `JobOptions.removeOnComplete`, `removeOnFail`. |
 | `closing` | Keep the promise `close()` returns. |
 | `cancelJob(id, reason?)`, `cancelAllJobs(reason?)`, `isJobCancelled(id)` | Stop work through the processor's `signal`; it aborts when the lease is lost and when `close` runs out of grace. |
